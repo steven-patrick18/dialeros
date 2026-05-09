@@ -16,8 +16,7 @@ import {
   type UserRecord,
 } from './db';
 
-export const RoleSchema = z.enum(['admin', 'supervisor', 'operator']);
-export type Role = z.infer<typeof RoleSchema>;
+// RoleSchema lives in user-mgmt.ts now (broader set incl. 'agent').
 
 export const SetupInputSchema = z.object({
   username: z
@@ -123,6 +122,7 @@ export function login(
 ): LoginResult | null {
   const user = getUserByUsername(input.username);
   if (!user) return null;
+  if (user.is_active === 0) return null; // deactivated → indistinguishable from "wrong password"
   if (!verifyPassword(input.password, user.password_hash)) return null;
   const sessionId = createSession({
     userId: user.id,
@@ -143,7 +143,15 @@ export function getUserBySession(sessionId: string): UserRecord | null {
     deleteSession(sessionId);
     return null;
   }
-  return getUserById(session.user_id) ?? null;
+  const user = getUserById(session.user_id);
+  if (!user) return null;
+  // Deactivated users get logged out on the next request — defense in depth
+  // even though deactivateUser() also deletes their existing sessions.
+  if (user.is_active === 0) {
+    deleteSession(sessionId);
+    return null;
+  }
+  return user;
 }
 
 export type { UserRecord } from './db';

@@ -36,6 +36,7 @@ export function Nav({
         <NavLink href="/leads">Lead Lists</NavLink>
         <NavLink href="/campaigns">Campaigns</NavLink>
         <NavLink href="/in-groups">In-Groups</NavLink>
+        <NavLink href="/users">Users</NavLink>
         <NavLink href="/audit">Audit Log</NavLink>
       </ul>
 

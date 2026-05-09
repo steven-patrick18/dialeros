@@ -46,6 +46,9 @@ function db(): DatabaseSync {
       email TEXT,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL,
+      display_name TEXT,
+      skill_tier TEXT NOT NULL DEFAULT 'new',
+      is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -221,6 +224,26 @@ function db(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_dial_intents_campaign_id
       ON dial_intents(campaign_id, id);
   `);
+
+  // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
+  // try each one; "duplicate column name" errors mean it's already
+  // applied (harmless). Any other error gets propagated.
+  const migrations: string[] = [
+    "ALTER TABLE users ADD COLUMN display_name TEXT",
+    "ALTER TABLE users ADD COLUMN skill_tier TEXT NOT NULL DEFAULT 'new'",
+    "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
+  ];
+  for (const sql of migrations) {
+    try {
+      d.exec(sql);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('duplicate column name')) {
+        throw e;
+      }
+    }
+  }
+
   _db = d;
   return d;
 }
@@ -315,6 +338,9 @@ export interface UserRecord {
   email: string | null;
   password_hash: string;
   role: string;
+  display_name: string | null;
+  skill_tier: string;
+  is_active: number;
   created_at: string;
   updated_at: string;
 }
@@ -326,18 +352,104 @@ export function countUsers(): number {
   return row.n;
 }
 
+export function countActiveAdmins(): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_active = 1`,
+    )
+    .get() as { n: number };
+  return row.n;
+}
+
 export function insertUser(rec: {
   id: string;
   username: string;
   email: string | null;
   password_hash: string;
   role: string;
+  display_name?: string | null;
+  skill_tier?: string;
 }): void {
   db()
     .prepare(
-      `INSERT INTO users (id, username, email, password_hash, role) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO users (id, username, email, password_hash, role, display_name, skill_tier) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(rec.id, rec.username, rec.email, rec.password_hash, rec.role);
+    .run(
+      rec.id,
+      rec.username,
+      rec.email,
+      rec.password_hash,
+      rec.role,
+      rec.display_name ?? null,
+      rec.skill_tier ?? 'new',
+    );
+}
+
+export function listUsersFromDb(includeInactive = false): UserRecord[] {
+  const where = includeInactive ? '' : 'WHERE is_active = 1';
+  return db()
+    .prepare(`SELECT * FROM users ${where} ORDER BY username ASC`)
+    .all() as unknown as UserRecord[];
+}
+
+export function updateUserFields(
+  id: string,
+  updates: Partial<{
+    email: string | null;
+    role: string;
+    display_name: string | null;
+    skill_tier: string;
+    is_active: boolean;
+    password_hash: string;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    if (key === 'is_active') values.push(value ? 1 : 0);
+    else values.push(value as string | null);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+// Soft delete via is_active=0. Refuse if it would leave 0 active admins.
+export function deactivateUser(id: string): { ok: true } | { ok: false; reason: string } {
+  const u = db().prepare(`SELECT * FROM users WHERE id = ?`).get(id) as
+    | UserRecord
+    | undefined;
+  if (!u) return { ok: false, reason: 'not found' };
+  if (u.is_active === 0) return { ok: false, reason: 'already inactive' };
+  if (u.role === 'admin' && countActiveAdmins() <= 1) {
+    return {
+      ok: false,
+      reason: 'cannot deactivate the last active admin',
+    };
+  }
+  db()
+    .prepare(
+      `UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    )
+    .run(id);
+  // Also kill any open sessions for this user.
+  db().prepare(`DELETE FROM sessions WHERE user_id = ?`).run(id);
+  return { ok: true };
+}
+
+export function reactivateUser(id: string): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE users SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    )
+    .run(id);
+  return Number(result.changes) > 0;
 }
 
 export function getUserByUsername(username: string): UserRecord | undefined {

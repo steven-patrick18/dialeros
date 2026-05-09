@@ -46,7 +46,6 @@ export type {
 
 // Auth
 export {
-  RoleSchema,
   SetupInputSchema,
   LoginInputSchema,
   isSetupComplete,
@@ -57,11 +56,32 @@ export {
   getUserBySession,
 } from './auth';
 export type {
-  Role,
   SetupInput,
   LoginInput,
   LoginResult,
 } from './auth';
+
+// User management (admin-managed users; iter 12)
+export {
+  RoleSchema,
+  SkillTierSchema,
+  CreateUserInputSchema,
+  UpdateUserInputSchema,
+  createUser,
+  updateUser,
+  deactivate as deactivateUser,
+  reactivate as reactivateUser,
+  listUsers,
+  getUser,
+} from './user-mgmt';
+export type {
+  Role,
+  SkillTier,
+  CreateUserInput,
+  UpdateUserInput,
+  CreateUserResult,
+  UpdateUserResult,
+} from './user-mgmt';
 
 // Audit
 export { appendAudit, queryAudit } from './audit';
