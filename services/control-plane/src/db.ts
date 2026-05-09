@@ -223,6 +223,24 @@ function db(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_dial_intents_campaign_id
       ON dial_intents(campaign_id, id);
+
+    CREATE TABLE IF NOT EXISTS user_campaigns (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      PRIMARY KEY (user_id, campaign_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_campaigns_campaign
+      ON user_campaigns(campaign_id);
+
+    CREATE TABLE IF NOT EXISTS user_in_groups (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
+      PRIMARY KEY (user_id, in_group_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_in_groups_in_group
+      ON user_in_groups(in_group_id);
   `);
 
   // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
@@ -863,6 +881,118 @@ export function insertLeadsBulk(
     throw e;
   }
   return { inserted, skipped: rows.length - inserted };
+}
+
+// =====================================================================
+// user attachments (user → campaigns / in-groups)
+// =====================================================================
+
+export function getUserCampaignIds(userId: string): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT campaign_id FROM user_campaigns WHERE user_id = ? ORDER BY campaign_id ASC`,
+    )
+    .all(userId) as Array<{ campaign_id: string }>;
+  return rows.map((r) => r.campaign_id);
+}
+
+export function getUserInGroupIds(userId: string): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT in_group_id FROM user_in_groups WHERE user_id = ? ORDER BY in_group_id ASC`,
+    )
+    .all(userId) as Array<{ in_group_id: string }>;
+  return rows.map((r) => r.in_group_id);
+}
+
+export function getCampaignAllowedUserIds(campaignId: string): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT user_id FROM user_campaigns WHERE campaign_id = ? ORDER BY user_id ASC`,
+    )
+    .all(campaignId) as Array<{ user_id: string }>;
+  return rows.map((r) => r.user_id);
+}
+
+export function getInGroupAllowedUserIds(inGroupId: string): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT user_id FROM user_in_groups WHERE in_group_id = ? ORDER BY user_id ASC`,
+    )
+    .all(inGroupId) as Array<{ user_id: string }>;
+  return rows.map((r) => r.user_id);
+}
+
+/**
+ * Replace the user's allowed-campaign set with the given list.
+ * Returns the diff (added, removed) — useful for audit logs.
+ */
+export function setUserCampaigns(
+  userId: string,
+  campaignIds: string[],
+): { added: string[]; removed: string[] } {
+  const d = db();
+  const current = new Set(getUserCampaignIds(userId));
+  const target = new Set(campaignIds);
+  const added = [...target].filter((id) => !current.has(id));
+  const removed = [...current].filter((id) => !target.has(id));
+
+  d.exec('BEGIN');
+  try {
+    if (removed.length > 0) {
+      const placeholders = removed.map(() => '?').join(',');
+      d.prepare(
+        `DELETE FROM user_campaigns WHERE user_id = ? AND campaign_id IN (${placeholders})`,
+      ).run(userId, ...removed);
+    }
+    if (added.length > 0) {
+      const stmt = d.prepare(
+        `INSERT OR IGNORE INTO user_campaigns (user_id, campaign_id) VALUES (?, ?)`,
+      );
+      for (const cid of added) {
+        stmt.run(userId, cid);
+      }
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return { added, removed };
+}
+
+export function setUserInGroups(
+  userId: string,
+  inGroupIds: string[],
+): { added: string[]; removed: string[] } {
+  const d = db();
+  const current = new Set(getUserInGroupIds(userId));
+  const target = new Set(inGroupIds);
+  const added = [...target].filter((id) => !current.has(id));
+  const removed = [...current].filter((id) => !target.has(id));
+
+  d.exec('BEGIN');
+  try {
+    if (removed.length > 0) {
+      const placeholders = removed.map(() => '?').join(',');
+      d.prepare(
+        `DELETE FROM user_in_groups WHERE user_id = ? AND in_group_id IN (${placeholders})`,
+      ).run(userId, ...removed);
+    }
+    if (added.length > 0) {
+      const stmt = d.prepare(
+        `INSERT OR IGNORE INTO user_in_groups (user_id, in_group_id) VALUES (?, ?)`,
+      );
+      for (const igid of added) {
+        stmt.run(userId, igid);
+      }
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return { added, removed };
 }
 
 // =====================================================================

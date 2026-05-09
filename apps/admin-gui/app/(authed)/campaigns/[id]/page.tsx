@@ -2,9 +2,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   getCampaign,
+  getCampaignAllowedUserIds,
   getCampaignLeadLists,
   getLeadList,
   getRoutePlan,
+  getUser,
   leadCountFor,
   totalIntentsFor,
 } from '@dialeros/control-plane';
@@ -166,6 +168,8 @@ export default async function CampaignDetail({
         />
       </div>
 
+      <AllowedUsersCard campaignId={c.id} />
+
       <dl className="grid grid-cols-2 gap-3 text-xs max-w-4xl">
         <Detail label="ID" value={<span className="font-mono">{c.id}</span>} />
         <Detail
@@ -213,6 +217,47 @@ function Detail({
     <div className="flex justify-between gap-4 text-sm">
       <dt className="text-fg-subtle">{label}</dt>
       <dd className="text-fg text-right">{value}</dd>
+    </div>
+  );
+}
+
+function AllowedUsersCard({ campaignId }: { campaignId: string }) {
+  const userIds = getCampaignAllowedUserIds(campaignId);
+  const users = userIds.map((id) => getUser(id)).filter(Boolean);
+  return (
+    <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+      <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+        Attached agents ({users.length})
+      </h2>
+      {users.length === 0 ? (
+        <p className="text-fg-subtle text-sm">
+          No users attached. Edit a user&apos;s detail page to attach them to
+          this campaign.
+        </p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {users.map((u) =>
+            u ? (
+              <li key={u.id} className="flex items-center gap-3">
+                <Link
+                  href={`/users/${u.id}`}
+                  className="hover:underline"
+                >
+                  {u.username}
+                </Link>
+                <span className="text-fg-subtle text-xs uppercase">
+                  {u.role}
+                </span>
+                {u.is_active === 0 && (
+                  <span className="bg-error/10 text-error border border-error/50 px-2 py-0.5 rounded text-xs">
+                    INACTIVE
+                  </span>
+                )}
+              </li>
+            ) : null,
+          )}
+        </ul>
+      )}
     </div>
   );
 }

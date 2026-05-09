@@ -74,6 +74,16 @@ export {
   listUsers,
   getUser,
 } from './user-mgmt';
+
+// User attachments (iter 13: user ↔ campaigns / in-groups)
+export {
+  getUserCampaignIds,
+  getUserInGroupIds,
+  getCampaignAllowedUserIds,
+  getInGroupAllowedUserIds,
+  setUserCampaigns,
+  setUserInGroups,
+} from './db';
 export type {
   Role,
   SkillTier,

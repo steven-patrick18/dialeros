@@ -1,9 +1,16 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { getUser } from '@dialeros/control-plane';
+import {
+  getUser,
+  getUserCampaignIds,
+  getUserInGroupIds,
+  listCampaigns,
+  listInGroups,
+} from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { EditUserForm } from './edit-form';
 import { DeactivateButton } from './deactivate-button';
+import { AttachmentsForm } from './attachments-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,6 +73,33 @@ export default async function UserDetail({
             skill_tier: u.skill_tier,
           }}
           isSelf={isMe}
+        />
+      </div>
+
+      <div className="border border-border rounded p-4 max-w-2xl mb-6">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          Attachments
+        </h2>
+        <p className="text-xs text-fg-subtle mb-3">
+          {u.role === 'admin' || u.role === 'supervisor' ? (
+            <>
+              {u.role === 'admin' ? 'Admins' : 'Supervisors'} can join all
+              campaigns + in-groups by default. Explicit attachments below are
+              advisory and have no enforcement effect for this role.
+            </>
+          ) : (
+            <>
+              Agents can only join campaigns + receive from in-groups they&apos;re
+              attached to here. Empty = no access.
+            </>
+          )}
+        </p>
+        <AttachmentsForm
+          userId={u.id}
+          campaigns={listCampaigns().map((c) => ({ id: c.id, name: c.name }))}
+          inGroups={listInGroups().map((g) => ({ id: g.id, name: g.name }))}
+          initialCampaignIds={getUserCampaignIds(u.id)}
+          initialInGroupIds={getUserInGroupIds(u.id)}
         />
       </div>
 
