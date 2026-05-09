@@ -135,6 +135,28 @@ export type {
   LeadStatusBreakdown,
 } from './lead';
 
+// Campaigns
+export {
+  CampaignTypeSchema,
+  CampaignStatusSchema,
+  CampaignInputSchema,
+  createCampaign,
+  listCampaigns,
+  getCampaign,
+  getCampaignLeadLists,
+  deleteCampaign,
+  setCampaignStatus,
+  getCampaignsForRoutePlan,
+  getCampaignsForLeadList,
+} from './campaign';
+export type {
+  CampaignType,
+  CampaignStatus,
+  CampaignInput,
+  CreateCampaignResult,
+  CampaignRecord,
+} from './campaign';
+
 // Event bus
 export {
   emitProvisioningEvent,

@@ -1,5 +1,6 @@
 ﻿import {
   leadCountFor,
+  listCampaigns,
   listCarriers,
   listLeadLists,
   listNodesFromDb,
@@ -13,10 +14,12 @@ export default async function Home() {
   const carriers = listCarriers();
   const routePlans = listRoutePlans();
   const leadLists = listLeadLists();
+  const campaigns = listCampaigns();
   const ready = nodes.filter((n) => n.status === 'READY').length;
   const carriersEnabled = carriers.filter((c) => c.enabled === 1).length;
   const plansEnabled = routePlans.filter((p) => p.enabled === 1).length;
   const totalLeads = leadLists.reduce((acc, l) => acc + leadCountFor(l.id), 0);
+  const activeCampaigns = campaigns.filter((c) => c.status === 'active').length;
 
   return (
     <div>
@@ -26,7 +29,7 @@ export default async function Home() {
         carriers, route plans, and lead lists.
       </p>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 max-w-4xl">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-4xl">
         <Stat
           label="Nodes ready"
           value={`${ready} / ${nodes.length}`}
@@ -51,6 +54,11 @@ export default async function Home() {
           label="Total leads"
           value={totalLeads.toLocaleString()}
           accent={totalLeads > 0 ? 'text-success' : 'text-fg'}
+        />
+        <Stat
+          label="Campaigns active"
+          value={`${activeCampaigns} / ${campaigns.length}`}
+          accent={activeCampaigns > 0 ? 'text-success' : 'text-fg'}
         />
       </div>
 

@@ -34,6 +34,7 @@ export function Nav({
         <NavLink href="/carriers">Carriers</NavLink>
         <NavLink href="/route-plans">Route Plans</NavLink>
         <NavLink href="/leads">Lead Lists</NavLink>
+        <NavLink href="/campaigns">Campaigns</NavLink>
         <NavLink href="/audit">Audit Log</NavLink>
       </ul>
 

@@ -154,6 +154,33 @@ function db(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_leads_list_status ON leads(list_id, status);
     CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone);
+
+    CREATE TABLE IF NOT EXISTS campaigns (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      type TEXT NOT NULL DEFAULT 'outbound_manual',
+      status TEXT NOT NULL DEFAULT 'paused',
+      route_plan_id TEXT NOT NULL REFERENCES route_plans(id),
+      base_ratio REAL NOT NULL DEFAULT 1.0,
+      call_window_start TEXT,
+      call_window_end TEXT,
+      max_abandon_pct REAL NOT NULL DEFAULT 3.0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_campaigns_route_plan ON campaigns(route_plan_id);
+    CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
+
+    CREATE TABLE IF NOT EXISTS campaign_lead_lists (
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      lead_list_id TEXT NOT NULL REFERENCES lead_lists(id) ON DELETE CASCADE,
+      priority INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (campaign_id, lead_list_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cll_lead_list ON campaign_lead_lists(lead_list_id);
   `);
   _db = d;
   return d;
@@ -685,6 +712,130 @@ export function insertLeadsBulk(
     throw e;
   }
   return { inserted, skipped: rows.length - inserted };
+}
+
+// =====================================================================
+// campaigns
+// =====================================================================
+
+export interface CampaignRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  type: string;
+  status: string;
+  route_plan_id: string;
+  base_ratio: number;
+  call_window_start: string | null;
+  call_window_end: string | null;
+  max_abandon_pct: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function insertCampaign(rec: {
+  id: string;
+  name: string;
+  description: string | null;
+  type: string;
+  route_plan_id: string;
+  base_ratio: number;
+  call_window_start: string | null;
+  call_window_end: string | null;
+  max_abandon_pct: number;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO campaigns (
+        id, name, description, type, route_plan_id,
+        base_ratio, call_window_start, call_window_end, max_abandon_pct
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.name,
+      rec.description,
+      rec.type,
+      rec.route_plan_id,
+      rec.base_ratio,
+      rec.call_window_start,
+      rec.call_window_end,
+      rec.max_abandon_pct,
+    );
+}
+
+export function attachCampaignLeadLists(
+  campaignId: string,
+  leadListIds: string[],
+): void {
+  if (leadListIds.length === 0) return;
+  const stmt = db().prepare(
+    `INSERT OR IGNORE INTO campaign_lead_lists (campaign_id, lead_list_id, priority) VALUES (?, ?, ?)`,
+  );
+  for (let i = 0; i < leadListIds.length; i++) {
+    stmt.run(campaignId, leadListIds[i]!, i);
+  }
+}
+
+export function listCampaignsFromDb(): CampaignRecord[] {
+  return db()
+    .prepare(`SELECT * FROM campaigns ORDER BY created_at DESC`)
+    .all() as unknown as CampaignRecord[];
+}
+
+export function getCampaignFromDb(id: string): CampaignRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM campaigns WHERE id = ?`)
+    .get(id) as unknown as CampaignRecord | undefined;
+}
+
+export function deleteCampaignFromDb(id: string): boolean {
+  const result = db().prepare(`DELETE FROM campaigns WHERE id = ?`).run(id);
+  return Number(result.changes) > 0;
+}
+
+export function updateCampaignStatusInDb(
+  id: string,
+  status: string,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE campaigns SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    )
+    .run(status, id);
+  return Number(result.changes) > 0;
+}
+
+export function getCampaignLeadListIds(campaignId: string): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT lead_list_id FROM campaign_lead_lists WHERE campaign_id = ? ORDER BY priority ASC`,
+    )
+    .all(campaignId) as Array<{ lead_list_id: string }>;
+  return rows.map((r) => r.lead_list_id);
+}
+
+export function listCampaignsUsingRoutePlan(
+  routePlanId: string,
+): CampaignRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM campaigns WHERE route_plan_id = ? ORDER BY created_at DESC`,
+    )
+    .all(routePlanId) as unknown as CampaignRecord[];
+}
+
+export function listCampaignsUsingLeadList(
+  leadListId: string,
+): CampaignRecord[] {
+  return db()
+    .prepare(
+      `SELECT c.* FROM campaigns c
+       JOIN campaign_lead_lists cll ON cll.campaign_id = c.id
+       WHERE cll.lead_list_id = ?
+       ORDER BY c.created_at DESC`,
+    )
+    .all(leadListId) as unknown as CampaignRecord[];
 }
 
 // Returns route plans where the given carrier appears as primary OR failover.

@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   appendAudit,
-  deleteRoutePlan,
-  getCampaignsForRoutePlan,
-  getRoutePlan,
-  parseCidPool,
-  parseFailoverIds,
+  deleteCampaign,
+  getCampaign,
+  getCampaignLeadLists,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -21,24 +19,13 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const { id } = await ctx.params;
-  const plan = getRoutePlan(id);
-  if (!plan) {
+  const c = getCampaign(id);
+  if (!c) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   return NextResponse.json({
-    id: plan.id,
-    name: plan.name,
-    description: plan.description,
-    primary_carrier_id: plan.primary_carrier_id,
-    failover_carrier_ids: parseFailoverIds(plan),
-    cid_strategy: plan.cid_strategy,
-    cid_single: plan.cid_single,
-    cid_pool: parseCidPool(plan),
-    transform_strip_prefix: plan.transform_strip_prefix,
-    transform_add_prefix: plan.transform_add_prefix,
-    enabled: plan.enabled === 1,
-    created_at: plan.created_at,
-    updated_at: plan.updated_at,
+    ...c,
+    lead_list_ids: getCampaignLeadLists(id),
   });
 }
 
@@ -54,30 +41,28 @@ export async function DELETE(
     return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
   }
   const { id } = await ctx.params;
-  const existing = getRoutePlan(id);
+  const existing = getCampaign(id);
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
-
-  const usedBy = getCampaignsForRoutePlan(id);
-  if (usedBy.length > 0) {
+  if (existing.status === 'active') {
     return NextResponse.json(
       {
-        error: `Route plan is referenced by ${usedBy.length} campaign${usedBy.length === 1 ? '' : 's'}: ${usedBy.map((c) => c.name).join(', ')}. Delete or reassign those first.`,
+        error:
+          'Cannot delete an active campaign. Pause it first, then delete.',
       },
       { status: 409 },
     );
   }
-
-  const ok = deleteRoutePlan(id);
+  const ok = deleteCampaign(id);
   if (!ok) {
     return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
   appendAudit({
     actorUserId: user.id,
     actorIp: clientIp(req),
-    action: 'route_plan.deleted',
-    targetType: 'route_plan',
+    action: 'campaign.deleted',
+    targetType: 'campaign',
     targetId: id,
     payload: { name: existing.name },
   });
