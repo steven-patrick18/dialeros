@@ -157,6 +157,35 @@ export type {
   CampaignRecord,
 } from './campaign';
 
+// In-Groups
+export {
+  InGroupTypeSchema,
+  WhitelistModeSchema,
+  RoutingStrategySchema,
+  OffListActionSchema,
+  InGroupInputSchema,
+  DidInputSchema,
+  createInGroup,
+  listInGroups,
+  getInGroup,
+  deleteInGroup,
+  getInGroupDids,
+  parseStaticWhitelist,
+  addDidToInGroup,
+  removeDidFromInGroup,
+} from './in-group';
+export type {
+  InGroupType,
+  WhitelistMode,
+  RoutingStrategy,
+  OffListAction,
+  InGroupInput,
+  DidInput,
+  CreateInGroupResult,
+  AddDidResult,
+  InGroupRecord,
+} from './in-group';
+
 // Event bus
 export {
   emitProvisioningEvent,

@@ -181,6 +181,30 @@ function db(): DatabaseSync {
     );
 
     CREATE INDEX IF NOT EXISTS idx_cll_lead_list ON campaign_lead_lists(lead_list_id);
+
+    CREATE TABLE IF NOT EXISTS in_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      type TEXT NOT NULL DEFAULT 'inbound_queue',
+      whitelist_mode TEXT NOT NULL DEFAULT 'none',
+      whitelist_static_json TEXT NOT NULL DEFAULT '[]',
+      routing_strategy TEXT NOT NULL DEFAULT 'ring_all',
+      max_wait_seconds INTEGER NOT NULL DEFAULT 60,
+      wrap_up_seconds INTEGER NOT NULL DEFAULT 10,
+      off_list_action TEXT NOT NULL DEFAULT 'reject',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS in_group_dids (
+      in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
+      did TEXT NOT NULL UNIQUE,
+      PRIMARY KEY (in_group_id, did)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_in_group_dids_did ON in_group_dids(did);
   `);
   _db = d;
   return d;
@@ -712,6 +736,118 @@ export function insertLeadsBulk(
     throw e;
   }
   return { inserted, skipped: rows.length - inserted };
+}
+
+// =====================================================================
+// in-groups
+// =====================================================================
+
+export interface InGroupRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  type: string;
+  whitelist_mode: string;
+  whitelist_static_json: string;
+  routing_strategy: string;
+  max_wait_seconds: number;
+  wrap_up_seconds: number;
+  off_list_action: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InGroupDidRecord {
+  in_group_id: string;
+  did: string;
+}
+
+export function insertInGroup(rec: {
+  id: string;
+  name: string;
+  description: string | null;
+  type: string;
+  whitelist_mode: string;
+  whitelist_static_json: string;
+  routing_strategy: string;
+  max_wait_seconds: number;
+  wrap_up_seconds: number;
+  off_list_action: string;
+  enabled: boolean;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO in_groups (
+        id, name, description, type,
+        whitelist_mode, whitelist_static_json,
+        routing_strategy, max_wait_seconds, wrap_up_seconds,
+        off_list_action, enabled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.name,
+      rec.description,
+      rec.type,
+      rec.whitelist_mode,
+      rec.whitelist_static_json,
+      rec.routing_strategy,
+      rec.max_wait_seconds,
+      rec.wrap_up_seconds,
+      rec.off_list_action,
+      rec.enabled ? 1 : 0,
+    );
+}
+
+export function listInGroupsFromDb(): InGroupRecord[] {
+  return db()
+    .prepare(`SELECT * FROM in_groups ORDER BY created_at DESC`)
+    .all() as unknown as InGroupRecord[];
+}
+
+export function getInGroupFromDb(id: string): InGroupRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM in_groups WHERE id = ?`)
+    .get(id) as unknown as InGroupRecord | undefined;
+}
+
+export function deleteInGroupFromDb(id: string): boolean {
+  const result = db().prepare(`DELETE FROM in_groups WHERE id = ?`).run(id);
+  return Number(result.changes) > 0;
+}
+
+export function listDidsForInGroup(inGroupId: string): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT did FROM in_group_dids WHERE in_group_id = ? ORDER BY did ASC`,
+    )
+    .all(inGroupId) as Array<{ did: string }>;
+  return rows.map((r) => r.did);
+}
+
+export function findDidOwner(did: string): string | undefined {
+  const row = db()
+    .prepare(`SELECT in_group_id FROM in_group_dids WHERE did = ?`)
+    .get(did) as { in_group_id: string } | undefined;
+  return row?.in_group_id;
+}
+
+export function attachDidToInGroup(inGroupId: string, did: string): void {
+  db()
+    .prepare(
+      `INSERT INTO in_group_dids (in_group_id, did) VALUES (?, ?)`,
+    )
+    .run(inGroupId, did);
+}
+
+export function detachDidFromInGroup(inGroupId: string, did: string): boolean {
+  const result = db()
+    .prepare(
+      `DELETE FROM in_group_dids WHERE in_group_id = ? AND did = ?`,
+    )
+    .run(inGroupId, did);
+  return Number(result.changes) > 0;
 }
 
 // =====================================================================

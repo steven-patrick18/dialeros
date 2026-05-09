@@ -4,14 +4,32 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
-const TYPES = ['outbound_manual', 'outbound_progressive'] as const;
+const TYPES = [
+  'outbound_manual',
+  'outbound_progressive',
+  'outbound_predictive',
+  'outbound_preview',
+  'inbound_queue',
+  'survey',
+  'blended',
+] as const;
 type Type = (typeof TYPES)[number];
 
 const TYPE_HINTS: Record<Type, string> = {
   outbound_manual:
-    'Agent decides when to dial each lead. Lowest concurrency, highest control.',
+    'Agent triggers each dial. Lowest concurrency, highest control. Works today.',
   outbound_progressive:
-    'System dials when an agent is available. 1:1 ratio, no abandoned calls.',
+    'System dials 1:1 when an agent becomes available. No abandoned calls. Activates once the pacing engine lands (iter 11).',
+  outbound_predictive:
+    'System dials more lines than agents (ratio > 1.0) and manages drop rate against the FCC threshold. Activates with the pacing engine (iter 11).',
+  outbound_preview:
+    'Agent previews the lead, then triggers the dial. For high-touch sales. Activates once the in-call agent UI lands (iter 12+).',
+  inbound_queue:
+    "No outbound dialing. DIDs you attach to an in-group route inbound calls to this campaign's pool. Configure DIDs under In-Groups.",
+  survey:
+    'Outbound calls connect to a call menu (IVR) instead of an agent. For NPS or automated outreach. Needs the IVR builder (iter 12+).',
+  blended:
+    'Same agent pool handles inbound and outbound. Switches based on inbound queue depth. Needs in-groups + pacing engine.',
 };
 
 export function AddCampaignForm({

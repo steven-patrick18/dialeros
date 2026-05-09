@@ -35,6 +35,7 @@ export function Nav({
         <NavLink href="/route-plans">Route Plans</NavLink>
         <NavLink href="/leads">Lead Lists</NavLink>
         <NavLink href="/campaigns">Campaigns</NavLink>
+        <NavLink href="/in-groups">In-Groups</NavLink>
         <NavLink href="/audit">Audit Log</NavLink>
       </ul>
 

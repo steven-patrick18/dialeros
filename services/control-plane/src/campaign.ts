@@ -15,11 +15,24 @@ import {
   type CampaignRecord,
 } from './db';
 
-// Iter 9: just outbound types. Inbound queue + survey + blended come later
-// alongside the in-groups feature.
+// All seven campaign types from spec §6. Some require features that arrive
+// in later iters — the type can be CONFIGURED today, the runtime behavior
+// activates once the dependency lands:
+//   outbound_manual       — agent triggers each dial (works today)
+//   outbound_progressive  — system dials 1:1 when agent ready (needs pacing, iter 11)
+//   outbound_predictive   — >1:1, manages drop rate (needs pacing, iter 11)
+//   outbound_preview      — agent previews before dial (needs in-call UI, iter 12+)
+//   inbound_queue         — DIDs route to this campaign (needs in-groups, this iter)
+//   survey                — outbound to call menu, no agent (needs IVR, iter 12+)
+//   blended               — same pool handles inbound + outbound (needs both)
 export const CampaignTypeSchema = z.enum([
   'outbound_manual',
   'outbound_progressive',
+  'outbound_predictive',
+  'outbound_preview',
+  'inbound_queue',
+  'survey',
+  'blended',
 ]);
 export type CampaignType = z.infer<typeof CampaignTypeSchema>;
 
