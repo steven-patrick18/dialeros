@@ -4,6 +4,8 @@ import {
   appendAudit,
   getCampaign,
   setCampaignStatus,
+  startPacer,
+  stopPacer,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -36,14 +38,21 @@ export async function PATCH(
     );
   }
 
-  // Iter 9: 'active' just flips the flag. The pacing engine + dial loop
-  // (iter 10+) is what will actually pick up active campaigns and dial.
   const newStatus = parsed.data;
   if (newStatus === existing.status) {
     return NextResponse.json({ ok: true, status: newStatus });
   }
 
   setCampaignStatus(id, newStatus);
+
+  // Iter 11: pacer lifecycle is tied to status. Becoming 'active' starts
+  // the simulated dial loop; anything else stops it.
+  if (newStatus === 'active') {
+    startPacer(id);
+  } else {
+    stopPacer(id);
+  }
+
   appendAudit({
     actorUserId: user.id,
     actorIp: clientIp(req),

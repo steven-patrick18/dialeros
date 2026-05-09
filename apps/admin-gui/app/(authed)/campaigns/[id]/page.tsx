@@ -6,9 +6,11 @@ import {
   getLeadList,
   getRoutePlan,
   leadCountFor,
+  totalIntentsFor,
 } from '@dialeros/control-plane';
 import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
+import { PacingPanel } from './pacing-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -148,9 +150,20 @@ export default async function CampaignDetail({
         </h2>
         <StatusToggle id={c.id} current={c.status} />
         <p className="text-xs text-fg-subtle mt-3">
-          Activating signals the pacing engine to start dialing this campaign.
-          Until iter 10 lands, &quot;active&quot; is just a flag.
+          ACTIVE starts the simulated pacer (one dial intent every ~3s).
+          PAUSED / ARCHIVED stops it.
         </p>
+      </div>
+
+      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          Dial intents (live)
+        </h2>
+        <PacingPanel
+          campaignId={c.id}
+          isActive={c.status === 'active'}
+          initialTotal={totalIntentsFor(c.id)}
+        />
       </div>
 
       <dl className="grid grid-cols-2 gap-3 text-xs max-w-4xl">

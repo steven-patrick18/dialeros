@@ -205,6 +205,21 @@ function db(): DatabaseSync {
     );
 
     CREATE INDEX IF NOT EXISTS idx_in_group_dids_did ON in_group_dids(did);
+
+    CREATE TABLE IF NOT EXISTS dial_intents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+      route_plan_id TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      transformed_phone TEXT NOT NULL,
+      cid_used TEXT,
+      kind TEXT NOT NULL DEFAULT 'simulated'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_dial_intents_campaign_id
+      ON dial_intents(campaign_id, id);
   `);
   _db = d;
   return d;
@@ -736,6 +751,114 @@ export function insertLeadsBulk(
     throw e;
   }
   return { inserted, skipped: rows.length - inserted };
+}
+
+// =====================================================================
+// dial intents (pacing engine output)
+// =====================================================================
+
+export interface DialIntentRecord {
+  id: number;
+  ts: string;
+  campaign_id: string;
+  lead_id: string;
+  route_plan_id: string;
+  phone: string;
+  transformed_phone: string;
+  cid_used: string | null;
+  kind: string;
+}
+
+export function insertDialIntent(rec: {
+  campaign_id: string;
+  lead_id: string;
+  route_plan_id: string;
+  phone: string;
+  transformed_phone: string;
+  cid_used: string | null;
+  kind?: string;
+}): DialIntentRecord {
+  const result = db()
+    .prepare(
+      `INSERT INTO dial_intents (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.campaign_id,
+      rec.lead_id,
+      rec.route_plan_id,
+      rec.phone,
+      rec.transformed_phone,
+      rec.cid_used,
+      rec.kind ?? 'simulated',
+    );
+  const id = Number(result.lastInsertRowid);
+  return db()
+    .prepare(`SELECT * FROM dial_intents WHERE id = ?`)
+    .get(id) as unknown as DialIntentRecord;
+}
+
+export function listDialIntentsForCampaign(
+  campaignId: string,
+  limit = 100,
+  sinceId = 0,
+): DialIntentRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM dial_intents WHERE campaign_id = ? AND id > ? ORDER BY id DESC LIMIT ?`,
+    )
+    .all(campaignId, sinceId, limit) as unknown as DialIntentRecord[];
+}
+
+export function countDialIntentsForCampaign(campaignId: string): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents WHERE campaign_id = ?`,
+    )
+    .get(campaignId) as { n: number };
+  return row.n;
+}
+
+/**
+ * Pacing's lead picker. Returns the next dialable lead from the campaign's
+ * attached lists, ordered by priority. A lead is dialable if:
+ *   - status in (NEW, CALLED_NO_ANSWER, CALLBACK_SCHEDULED)
+ *   - last_called_at is NULL OR older than `cooldownSeconds` ago
+ */
+export function pickNextDialableLead(
+  campaignId: string,
+  cooldownSeconds: number,
+): { lead_id: string; list_id: string; phone: string; name: string | null } | undefined {
+  const cutoff = new Date(
+    Date.now() - cooldownSeconds * 1000,
+  ).toISOString();
+  return db()
+    .prepare(
+      `SELECT l.id AS lead_id, l.list_id, l.phone, l.name
+       FROM leads l
+       JOIN campaign_lead_lists cll ON cll.lead_list_id = l.list_id
+       WHERE cll.campaign_id = ?
+         AND l.status IN ('NEW', 'CALLED_NO_ANSWER', 'CALLBACK_SCHEDULED')
+         AND (l.last_called_at IS NULL OR l.last_called_at < ?)
+       ORDER BY cll.priority ASC,
+                CASE WHEN l.last_called_at IS NULL THEN 0 ELSE 1 END,
+                l.last_called_at ASC,
+                l.created_at ASC
+       LIMIT 1`,
+    )
+    .get(campaignId, cutoff) as
+    | { lead_id: string; list_id: string; phone: string; name: string | null }
+    | undefined;
+}
+
+export function markLeadDialed(
+  leadId: string,
+  newStatus = 'CALLED_NO_ANSWER',
+): void {
+  db()
+    .prepare(
+      `UPDATE leads SET status = ?, last_called_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    )
+    .run(newStatus, leadId);
 }
 
 // =====================================================================

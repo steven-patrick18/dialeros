@@ -157,6 +157,20 @@ export type {
   CampaignRecord,
 } from './campaign';
 
+// Pacing engine (iter 11 — simulation, no real telephony yet)
+export {
+  paceCampaignOnce,
+  startPacer,
+  stopPacer,
+  isPacing,
+  listPacingCampaignIds,
+  subscribeToIntents,
+  resumeActivePacers,
+  listIntentsForCampaign,
+  totalIntentsFor,
+} from './pacing';
+export type { PacingTickResult, DialIntentRecord } from './pacing';
+
 // In-Groups
 export {
   InGroupTypeSchema,
