@@ -7,19 +7,31 @@ A next-generation cloud dialer platform — ViciDial replacement with AI agents,
 
 ## Quick start
 
+### Production / VPS (Ubuntu 24.04)
+
+Full procedure in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Three commands:
+
+```bash
+git clone https://github.com/steven-patrick18/dialeros.git /opt/dialeros
+cd /opt/dialeros
+bash scripts/bootstrap.sh && bash infra/scripts/harden.sh && systemctl enable --now dialeros-admin
+```
+
+Then browse to `http://<VPS_IP>:1111` — first hit redirects to `/setup` to create the admin account.
+
+### Local development (Windows / macOS / Linux)
+
 Prerequisites:
 
-- Node.js 22+ (`.nvmrc` says 22)
-- pnpm 10+ — run `corepack enable && corepack prepare pnpm@10 --activate`
-
-From this directory:
+- Node.js 22.5+ (`.nvmrc` says 22; tested on 24)
+- pnpm 10+ — `npm i -g pnpm@10` (corepack route fails without admin on Windows)
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Open <http://localhost:1111>. Click **Cluster Nodes → + Add Node** and submit the form. Provisioning is a 5-second stub in iter 1 (no real SSH yet) — see [docs/PHASE-0-NOTES.md](docs/PHASE-0-NOTES.md).
+Open <http://localhost:1111>. Provisioning is mocked locally — see [docs/PHASE-0-NOTES.md](docs/PHASE-0-NOTES.md) for what's real vs stubbed.
 
 ## What this is
 
