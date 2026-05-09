@@ -33,6 +33,7 @@ export function Nav({
         <NavLink href="/cluster/nodes">Cluster Nodes</NavLink>
         <NavLink href="/carriers">Carriers</NavLink>
         <NavLink href="/route-plans">Route Plans</NavLink>
+        <NavLink href="/leads">Lead Lists</NavLink>
         <NavLink href="/audit">Audit Log</NavLink>
       </ul>
 

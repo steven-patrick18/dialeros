@@ -113,6 +113,28 @@ export type {
   CreateRoutePlanResult,
 } from './route-plan';
 
+// Lead lists + leads
+export {
+  LeadListInputSchema,
+  createLeadList,
+  listLeadLists,
+  getLeadList,
+  deleteLeadList,
+  leadCountFor,
+  leadBreakdown,
+  pageLeads,
+  ingestCsv,
+  normalizePhone,
+} from './lead';
+export type {
+  LeadListInput,
+  CreateLeadListResult,
+  CsvIngestResult,
+  LeadListRecord,
+  LeadRecord,
+  LeadStatusBreakdown,
+} from './lead';
+
 // Event bus
 export {
   emitProvisioningEvent,

@@ -128,6 +128,32 @@ function db(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_route_plans_primary ON route_plans(primary_carrier_id);
     CREATE INDEX IF NOT EXISTS idx_route_plans_enabled ON route_plans(enabled);
+
+    CREATE TABLE IF NOT EXISTS lead_lists (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS leads (
+      id TEXT PRIMARY KEY,
+      list_id TEXT NOT NULL REFERENCES lead_lists(id) ON DELETE CASCADE,
+      phone TEXT NOT NULL,
+      name TEXT,
+      email TEXT,
+      custom_fields_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'NEW',
+      last_called_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (list_id, phone)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_leads_list_status ON leads(list_id, status);
+    CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone);
   `);
   _db = d;
   return d;
@@ -537,6 +563,128 @@ export function getRoutePlanFromDb(id: string): RoutePlanRecord | undefined {
 export function deleteRoutePlanFromDb(id: string): boolean {
   const result = db().prepare(`DELETE FROM route_plans WHERE id = ?`).run(id);
   return Number(result.changes) > 0;
+}
+
+// =====================================================================
+// lead lists + leads
+// =====================================================================
+
+export interface LeadListRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LeadRecord {
+  id: string;
+  list_id: string;
+  phone: string;
+  name: string | null;
+  email: string | null;
+  custom_fields_json: string;
+  status: string;
+  last_called_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function insertLeadList(rec: {
+  id: string;
+  name: string;
+  description: string | null;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO lead_lists (id, name, description) VALUES (?, ?, ?)`,
+    )
+    .run(rec.id, rec.name, rec.description);
+}
+
+export function listLeadListsFromDb(): LeadListRecord[] {
+  return db()
+    .prepare(`SELECT * FROM lead_lists ORDER BY created_at DESC`)
+    .all() as unknown as LeadListRecord[];
+}
+
+export function getLeadListFromDb(id: string): LeadListRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM lead_lists WHERE id = ?`)
+    .get(id) as unknown as LeadListRecord | undefined;
+}
+
+export function deleteLeadListFromDb(id: string): boolean {
+  const result = db().prepare(`DELETE FROM lead_lists WHERE id = ?`).run(id);
+  return Number(result.changes) > 0;
+}
+
+export function countLeadsInList(listId: string): number {
+  const row = db()
+    .prepare(`SELECT COUNT(*) AS n FROM leads WHERE list_id = ?`)
+    .get(listId) as { n: number };
+  return row.n;
+}
+
+export interface LeadStatusBreakdown {
+  status: string;
+  count: number;
+}
+
+export function leadStatusBreakdown(listId: string): LeadStatusBreakdown[] {
+  return db()
+    .prepare(
+      `SELECT status, COUNT(*) AS count FROM leads WHERE list_id = ? GROUP BY status ORDER BY count DESC`,
+    )
+    .all(listId) as unknown as LeadStatusBreakdown[];
+}
+
+export function listLeadsInList(
+  listId: string,
+  limit = 50,
+  offset = 0,
+): LeadRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM leads WHERE list_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    )
+    .all(listId, limit, offset) as unknown as LeadRecord[];
+}
+
+/**
+ * Bulk-insert leads. Uses INSERT OR IGNORE on UNIQUE (list_id, phone)
+ * so duplicates within a list are silently dropped.
+ *
+ * Returns { inserted, skipped } where skipped = duplicates of (list_id, phone).
+ */
+export function insertLeadsBulk(
+  rows: Array<{
+    id: string;
+    list_id: string;
+    phone: string;
+    name: string | null;
+    email: string | null;
+  }>,
+): { inserted: number; skipped: number } {
+  if (rows.length === 0) return { inserted: 0, skipped: 0 };
+  const d = db();
+  const stmt = d.prepare(
+    `INSERT OR IGNORE INTO leads (id, list_id, phone, name, email) VALUES (?, ?, ?, ?, ?)`,
+  );
+  let inserted = 0;
+  d.exec('BEGIN');
+  try {
+    for (const r of rows) {
+      const result = stmt.run(r.id, r.list_id, r.phone, r.name, r.email);
+      if (Number(result.changes) > 0) inserted++;
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return { inserted, skipped: rows.length - inserted };
 }
 
 // Returns route plans where the given carrier appears as primary OR failover.
