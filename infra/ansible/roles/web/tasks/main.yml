@@ -1,0 +1,16 @@
+---
+# Web node — admin GUI, agent UI, supervisor cockpit, REST API.
+# Stateless behind a load balancer. Multiple instances for HA.
+#
+# STATUS: stub. Real Node.js + nginx setup lands in Phase 0 iter 2.
+
+- name: Phase 0 iter 1 — web role is a stub
+  debug:
+    msg: |
+      The web role is not yet implemented.
+      Phase 0 iter 2 / Phase 1 will add:
+        - Node.js 22 LTS install
+        - nginx reverse proxy with TLS
+        - DialerOS app deployment via systemd unit
+        - Health check endpoints
+        - Log shipping to master

@@ -1,0 +1,46 @@
+---
+# DialerOS — provision a single node into the cluster.
+#
+# Required variables (passed as -e by the control-plane runner):
+#   role        — one of: telephony, web, database, ai-worker
+#   node_name   — friendly hostname for this node
+#
+# Required SSH config (env or -e):
+#   ansible_user           — SSH user (default: root)
+#   ansible_ssh_pass       — SSH password (bootstrap only; key replaces it)
+#
+# Invocation example:
+#   ansible-playbook -i 'HOST,' \
+#     -u root \
+#     --extra-vars "role=telephony node_name=tel-01" \
+#     playbooks/provision-node.yml
+
+- name: Provision DialerOS node
+  hosts: all
+  gather_facts: yes
+  become: yes
+  vars:
+    role: "{{ role | default('web') }}"
+    node_name: "{{ node_name | default(inventory_hostname) }}"
+
+  pre_tasks:
+    - name: Validate role is recognized
+      assert:
+        that: role in ['telephony', 'web', 'database', 'ai-worker']
+        fail_msg: "Unknown role '{{ role }}'. Must be one of: telephony, web, database, ai-worker."
+
+  tasks:
+    - name: Apply common base hardening + tooling
+      include_role:
+        name: common
+
+    - name: Apply role-specific provisioning
+      include_role:
+        name: "{{ role }}"
+
+  post_tasks:
+    - name: Mark node bootstrap complete
+      file:
+        path: /etc/dialeros/bootstrap.done
+        state: touch
+        mode: "0644"

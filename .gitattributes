@@ -1,0 +1,23 @@
+* text=auto eol=lf
+
+# Files that must always have LF (never converted)
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.cfg       text eol=lf
+
+# Binary files
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.gz        binary
+*.zip       binary
+*.tar       binary
+*.dkb       binary
+*.wav       binary
+*.mp3       binary
+*.opus      binary

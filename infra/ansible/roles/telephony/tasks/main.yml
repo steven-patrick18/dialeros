@@ -1,0 +1,16 @@
+---
+# Telephony node — Kamailio (SIP proxy) + FreeSWITCH (media server).
+# Capacity target: 500 concurrent calls per node.
+#
+# STATUS: stub. Real package install + DialerOS configs land in Phase 1.
+
+- name: Phase 0 iter 1 — telephony role is a stub
+  debug:
+    msg: |
+      The telephony role is not yet implemented.
+      Phase 1 will add:
+        - Kamailio install + DialerOS routing modules
+        - FreeSWITCH install + mod_verto + mod_recording
+        - SIP/RTP firewall rules (5060, 5061, 16384-32768/udp)
+        - Carrier endpoint registration
+        - Recording storage volume mount

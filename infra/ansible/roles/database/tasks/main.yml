@@ -1,0 +1,18 @@
+---
+# Database node — PostgreSQL 16+ primary.
+# Optional read replicas. Backup with WAL archiving.
+#
+# STATUS: stub. Real Postgres install + DialerOS schema migrations land in
+# Phase 0 iter 2.
+
+- name: Phase 0 iter 1 — database role is a stub
+  debug:
+    msg: |
+      The database role is not yet implemented.
+      Phase 0 iter 2 will add:
+        - PostgreSQL 16 install + apt repo
+        - DialerOS dedicated database + role
+        - pg_hba.conf restricted to cluster CIDR
+        - Initial schema migrations (run from master via psql)
+        - WAL archiving to S3-compatible storage
+        - Backup cron with pg_basebackup

@@ -1,0 +1,20 @@
+---
+# AI worker node — runs the AI agent runtime.
+# whisper.cpp (STT) + llama.cpp (LLM) + Piper (TTS) + Pipecat (orchestrator).
+# CPU-only by default; optional GPU for faster TTFA.
+#
+# STATUS: stub. Real toolchain install lands in Phase 4.
+
+- name: Phase 0 iter 1 — ai-worker role is a stub
+  debug:
+    msg: |
+      The ai-worker role is not yet implemented.
+      Phase 4 will add:
+        - Python 3.12 + venv setup
+        - Pipecat install + DialerOS worker package
+        - whisper.cpp build (CPU-optimized)
+        - llama.cpp build (with conditional CUDA/Metal)
+        - Piper TTS install + voice models
+        - Model cache volume mount
+        - GPU detection + driver check (optional path)
+        - SIP leg handler systemd unit

@@ -1,0 +1,65 @@
+---
+# Common base for every DialerOS node.
+# Applied before any role-specific tasks.
+
+- name: Set hostname to friendly node name
+  hostname:
+    name: "{{ node_name }}"
+
+- name: Ensure /etc/dialeros directory exists
+  file:
+    path: /etc/dialeros
+    state: directory
+    mode: "0755"
+
+- name: Install base packages
+  package:
+    name:
+      - python3
+      - sudo
+      - curl
+      - rsync
+      - ufw
+      - chrony
+    state: present
+
+- name: Ensure chrony (NTP) is running
+  service:
+    name: chrony
+    state: started
+    enabled: yes
+
+- name: Create dialeros service user
+  user:
+    name: dialeros
+    system: yes
+    create_home: yes
+    shell: /bin/bash
+    state: present
+
+- name: Allow dialeros to manage systemd services without password
+  copy:
+    dest: /etc/sudoers.d/dialeros
+    content: |
+      dialeros ALL=(root) NOPASSWD: /usr/bin/systemctl, /usr/sbin/service
+    mode: "0440"
+    validate: "visudo -cf %s"
+
+- name: Open SSH in firewall
+  ufw:
+    rule: allow
+    port: "{{ ansible_port | default(22) }}"
+    proto: tcp
+
+- name: Enable UFW with default-deny inbound
+  ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+
+# TODO Phase 0 iter 2:
+#   - generate per-node SSH key on master
+#   - install master's pubkey in dialeros user authorized_keys
+#   - disable root SSH login + password auth in /etc/ssh/sshd_config
+#   - restart sshd
+#   - rotate to dialeros user for subsequent runs
