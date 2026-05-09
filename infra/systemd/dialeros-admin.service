@@ -25,12 +25,12 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ReadWritePaths=/opt/dialeros/apps/admin-gui/data /opt/dialeros/.next /opt/dialeros/apps/admin-gui/.next
-ReadOnlyPaths=/opt/dialeros
+ReadWritePaths=/opt/dialeros/apps/admin-gui/data /opt/dialeros/apps/admin-gui/.next
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK needed for uv_interface_addresses (Next.js startup network introspection)
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 LockPersonality=yes
 RestrictRealtime=yes
 

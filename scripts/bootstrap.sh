@@ -45,6 +45,11 @@ log "DialerOS bootstrap on Ubuntu ${UBUNTU_VERSION} (repo: ${REPO_ROOT})"
 log "Updating apt + installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
+
+# Some minimal Debian/Ubuntu images don't ship sudo. Install it first
+# since we drop privileges to the dialeros user later via `sudo -u`.
+apt-get install -y --no-install-recommends sudo >/dev/null
+
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg lsb-release \
   build-essential pkg-config \

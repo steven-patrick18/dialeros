@@ -6,7 +6,12 @@ import {
   isSetupComplete,
   login,
 } from '@dialeros/control-plane';
-import { SESSION_COOKIE, SESSION_MAX_AGE_SECONDS, clientIp } from '@/lib/session';
+import {
+  SESSION_COOKIE,
+  SESSION_MAX_AGE_SECONDS,
+  clientIp,
+  cookieSecureForRequest,
+} from '@/lib/session';
 
 export const runtime = 'nodejs';
 
@@ -59,7 +64,7 @@ export async function POST(req: Request) {
   const c = await cookies();
   c.set(SESSION_COOKIE, result.sessionId, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: cookieSecureForRequest(req),
     sameSite: 'lax',
     path: '/',
     maxAge: SESSION_MAX_AGE_SECONDS,
