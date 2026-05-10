@@ -50,7 +50,9 @@ export async function POST(req: NextRequest) {
     targetId: result.id,
     payload: {
       name: parsed.data.name,
-      sip_uri: parsed.data.sip_uri,
+      telephony_node_id: parsed.data.telephony_node_id,
+      extension: parsed.data.extension,
+      campaign_id: parsed.data.campaign_id ?? null,
       lines: parsed.data.lines,
     },
   });

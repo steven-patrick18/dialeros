@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
   getRemoteAgent,
+  listCampaigns,
   listNodesFromDb,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
@@ -28,12 +29,16 @@ export default async function RemoteAgentDetail({
   const r = getRemoteAgent(id);
   if (!r) notFound();
 
-  const telephonyNodes = listNodesFromDb().filter(
-    (n) => n.role === 'telephony',
-  );
-  const nodeOptions = [
-    { value: '', label: '(any node)' },
-    ...telephonyNodes.map((n) => ({ value: n.id, label: n.name })),
+  const telephonyNodes = listNodesFromDb()
+    .filter((n) => n.role === 'telephony')
+    .map((n) => ({ value: n.id, label: `${n.name} (${n.host})` }));
+
+  const campaignOptions = [
+    { value: '', label: '(any campaign — shared pool)' },
+    ...listCampaigns().map((c) => ({
+      value: c.id,
+      label: `${c.name} · ${c.status}`,
+    })),
   ];
 
   return (
@@ -74,12 +79,29 @@ export default async function RemoteAgentDetail({
               hint: 'Internal identifier. Alphanumeric, dashes / underscores.',
             },
             {
+              type: 'select',
+              name: 'telephony_node_id',
+              label: 'Telephony node',
+              value: r.telephony_node_id ?? '',
+              options: telephonyNodes,
+              hint: 'The node the SIP INVITE goes to. SIP URI rebuilds when this changes.',
+            },
+            {
               type: 'text',
-              name: 'sip_uri',
-              label: 'SIP URI',
-              value: r.sip_uri,
-              placeholder: 'sip:1500@10.0.0.5',
-              hint: 'Destination for the pacer-originated INVITE. sip:user@host[:port].',
+              name: 'extension',
+              label: 'Extension',
+              value: r.extension ?? '',
+              maxLength: 64,
+              placeholder: '1500',
+              hint: 'User portion of the SIP URI. SIP URI rebuilds to sip:<extension>@<node-host> when this changes.',
+            },
+            {
+              type: 'select',
+              name: 'campaign_id',
+              label: 'Campaign',
+              value: r.campaign_id ?? '',
+              options: campaignOptions,
+              hint: 'Pin this remote agent to one campaign, or leave on (any campaign) to share across every active campaign.',
             },
             {
               type: 'number',
@@ -89,15 +111,7 @@ export default async function RemoteAgentDetail({
               min: 1,
               max: 64,
               step: 1,
-              hint: 'Maximum concurrent calls this remote agent will accept. Multiplied into the pacer\'s dial-level math.',
-            },
-            {
-              type: 'select',
-              name: 'telephony_node_id',
-              label: 'Telephony node',
-              value: r.telephony_node_id ?? '',
-              options: nodeOptions,
-              hint: 'Bind to a specific telephony node. Leave on (any node) to let the pacer pick.',
+              hint: "Max concurrent calls this remote agent will accept. Counted into the pacer's dial-level math.",
             },
             {
               type: 'boolean',
@@ -112,6 +126,7 @@ export default async function RemoteAgentDetail({
 
       <dl className="grid grid-cols-2 gap-3 text-xs max-w-2xl mb-6">
         <Detail label="ID" value={<span className="font-mono">{r.id}</span>} />
+        <Detail label="SIP URI" value={<span className="font-mono">{r.sip_uri}</span>} />
         <Detail
           label="Created"
           value={new Date(r.created_at).toLocaleString()}

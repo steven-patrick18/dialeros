@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
+  getCampaign,
   inFlightForRemoteAgent,
   listRemoteAgents,
   remoteLineCapacity,
@@ -64,6 +65,7 @@ export default async function RemoteAgentsPage() {
             <tr>
               <th className="py-2 font-medium">Name</th>
               <th className="font-medium">SIP URI</th>
+              <th className="font-medium">Campaign</th>
               <th className="font-medium tabular-nums">In-flight / Lines</th>
               <th className="font-medium">Status</th>
             </tr>
@@ -72,6 +74,7 @@ export default async function RemoteAgentsPage() {
             {agents.map((a) => {
               const inFlight = inFlightForRemoteAgent(a.id);
               const atCap = a.enabled === 1 && inFlight >= a.lines;
+              const campaign = a.campaign_id ? getCampaign(a.campaign_id) : null;
               return (
                 <tr key={a.id} className="border-b border-border/50">
                   <td className="py-3">
@@ -84,6 +87,18 @@ export default async function RemoteAgentsPage() {
                   </td>
                   <td className="text-fg-muted font-mono text-xs break-all">
                     {a.sip_uri}
+                  </td>
+                  <td className="text-fg-muted text-xs">
+                    {campaign ? (
+                      <Link
+                        href={`/campaigns/${campaign.id}`}
+                        className="hover:underline"
+                      >
+                        {campaign.name}
+                      </Link>
+                    ) : (
+                      <span className="text-fg-subtle">(shared)</span>
+                    )}
                   </td>
                   <td className="tabular-nums">
                     <span className={atCap ? 'text-warn' : 'text-fg'}>

@@ -397,6 +397,15 @@ function db(): DatabaseSync {
     // bridge target was a local agent.
     "ALTER TABLE dial_intents ADD COLUMN remote_agent_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_dial_intents_remote_agent ON dial_intents(remote_agent_id, hangup_at)",
+    // Iter 59: per-campaign scoping for remote agents + structured
+    // extension storage so the create form can be a node-dropdown +
+    // extension input instead of raw sip:user@host. NULL campaign
+    // = available to every campaign (shared pool, existing behavior).
+    // extension is nullable for back-compat with iter-57 agents whose
+    // raw sip_uri was hand-entered.
+    "ALTER TABLE remote_agents ADD COLUMN campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL",
+    "ALTER TABLE remote_agents ADD COLUMN extension TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_remote_agents_campaign ON remote_agents(campaign_id)",
   ];
   for (const sql of migrations) {
     try {
@@ -2719,6 +2728,8 @@ export interface RemoteAgentRecord {
   name: string;
   sip_uri: string;
   telephony_node_id: string | null;
+  extension: string | null;
+  campaign_id: string | null;
   lines: number;
   enabled: number;
   created_at: string;
@@ -2730,20 +2741,24 @@ export function insertRemoteAgent(rec: {
   name: string;
   sip_uri: string;
   telephony_node_id: string | null;
+  extension: string | null;
+  campaign_id: string | null;
   lines: number;
   enabled: boolean;
 }): void {
   db()
     .prepare(
       `INSERT INTO remote_agents
-         (id, name, sip_uri, telephony_node_id, lines, enabled)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (id, name, sip_uri, telephony_node_id, extension, campaign_id, lines, enabled)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
       rec.name,
       rec.sip_uri,
       rec.telephony_node_id,
+      rec.extension,
+      rec.campaign_id,
       rec.lines,
       rec.enabled ? 1 : 0,
     );
@@ -2767,6 +2782,8 @@ export function updateRemoteAgentFields(
     name: string;
     sip_uri: string;
     telephony_node_id: string | null;
+    extension: string | null;
+    campaign_id: string | null;
     lines: number;
     enabled: boolean;
   }>,

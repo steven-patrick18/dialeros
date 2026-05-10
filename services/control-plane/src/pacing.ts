@@ -305,7 +305,9 @@ export async function paceCampaignOnce(
   // slots have a backing user (assigned_user_id, user/<ext> bridge);
   // remote slots have no local user (assigned_user_id stays NULL,
   // remote_agent_id is set, bridge goes to the raw SIP URI).
-  const remoteSlots = listRemoteAgentsWithCapacity();
+  // Iter 59 — remote agents scoped to a campaign: matching agents
+  // OR the shared pool (campaign_id IS NULL).
+  const remoteSlots = listRemoteAgentsWithCapacity(campaignId);
   const bridgePool = buildBridgePool(agents, remoteSlots);
   const bridgeTarget = pickBridgeTarget(campaignId, bridgePool);
   if (!bridgeTarget) return { outcome: 'no_agents' };
@@ -478,7 +480,7 @@ export function startPacer(campaignId: string): boolean {
       const c = getCampaignFromDb(campaignId);
       if (!c) return;
       const localAgents = getAvailableAgentsForCampaign(campaignId);
-      const remoteAvailable = listRemoteAgentsWithCapacity().reduce(
+      const remoteAvailable = listRemoteAgentsWithCapacity(campaignId).reduce(
         (sum, r) => sum + r.available,
         0,
       );

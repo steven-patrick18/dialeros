@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { listNodesFromDb } from '@dialeros/control-plane';
+import { listCampaigns, listNodesFromDb } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { AddRemoteAgentForm } from './add-form';
 
@@ -16,9 +16,14 @@ export default async function AddRemoteAgentPage() {
       </div>
     );
   }
-  const telephonyNodes = listNodesFromDb().filter(
-    (n) => n.role === 'telephony',
-  );
+  const telephonyNodes = listNodesFromDb()
+    .filter((n) => n.role === 'telephony')
+    .map((n) => ({ id: n.id, name: n.name, host: n.host }));
+  const campaigns = listCampaigns().map((c) => ({
+    id: c.id,
+    name: c.name,
+    status: c.status,
+  }));
 
   return (
     <div>
@@ -33,14 +38,28 @@ export default async function AddRemoteAgentPage() {
       <h1 className="text-2xl font-semibold mb-4">New Remote Agent</h1>
       <p className="text-fg-subtle text-sm mb-6 max-w-2xl">
         Register an external SIP endpoint as a member of the pacing
-        pool. Each remote agent has a <span className="font-mono">lines</span>{' '}
-        capacity that the pacer multiplies by the campaign&apos;s{' '}
-        <span className="font-mono">dial_level</span> when deciding how
-        many calls to originate per tick.
+        pool. Pick the telephony node where this endpoint lives, type
+        the extension or user, and the SIP URI is constructed for you.
       </p>
-      <AddRemoteAgentForm
-        nodes={telephonyNodes.map((n) => ({ id: n.id, name: n.name }))}
-      />
+      {telephonyNodes.length === 0 ? (
+        <div className="border border-warn/40 bg-warn/5 text-warn rounded p-4 max-w-2xl text-sm">
+          <div className="font-medium mb-1">
+            No telephony nodes registered yet.
+          </div>
+          <p className="text-fg-muted text-xs mb-2">
+            Remote agents bind to a telephony node so the pacer knows
+            where to send the SIP INVITE. Add one first:
+          </p>
+          <Link
+            href="/cluster/nodes/add"
+            className="text-accent hover:underline text-xs"
+          >
+            Add a telephony node →
+          </Link>
+        </div>
+      ) : (
+        <AddRemoteAgentForm nodes={telephonyNodes} campaigns={campaigns} />
+      )}
     </div>
   );
 }

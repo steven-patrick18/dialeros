@@ -5,12 +5,22 @@ import { useState } from 'react';
 
 export function AddRemoteAgentForm({
   nodes,
+  campaigns,
 }: {
-  nodes: Array<{ id: string; name: string }>;
+  nodes: Array<{ id: string; name: string; host: string }>;
+  campaigns: Array<{ id: string; name: string; status: string }>;
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nodeId, setNodeId] = useState<string>(nodes[0]?.id ?? '');
+  const [extension, setExtension] = useState('');
+
+  const selectedNode = nodes.find((n) => n.id === nodeId);
+  const previewUri =
+    selectedNode && extension
+      ? `sip:${extension}@${selectedNode.host}`
+      : null;
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -19,11 +29,12 @@ export function AddRemoteAgentForm({
 
     const fd = new FormData(e.currentTarget);
     const linesRaw = String(fd.get('lines') ?? '1');
+    const campaignId = String(fd.get('campaign_id') ?? '').trim();
     const body = {
       name: String(fd.get('name') ?? '').trim(),
-      sip_uri: String(fd.get('sip_uri') ?? '').trim(),
-      telephony_node_id:
-        String(fd.get('telephony_node_id') ?? '').trim() || undefined,
+      telephony_node_id: nodeId,
+      extension: extension.trim(),
+      campaign_id: campaignId || null,
       lines: Math.max(1, parseInt(linesRaw, 10) || 1),
       enabled: fd.get('enabled') === 'on',
     };
@@ -61,16 +72,56 @@ export function AddRemoteAgentForm({
       </Field>
 
       <Field
-        label="SIP URI"
-        hint="Where the pacer will send the INVITE. Format: sip:user@host[:port]."
+        label="Telephony node"
+        hint="Where this endpoint lives. The SIP INVITE goes to this node's host."
       >
-        <input
-          name="sip_uri"
+        <select
+          value={nodeId}
+          onChange={(e) => setNodeId(e.target.value)}
           required
           className="input"
-          placeholder="sip:1500@10.0.0.5"
+        >
+          {nodes.map((n) => (
+            <option key={n.id} value={n.id}>
+              {n.name} ({n.host})
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field
+        label="Extension"
+        hint="The user portion of the SIP URI (e.g. 1500, or a username like agent42)."
+      >
+        <input
+          value={extension}
+          onChange={(e) => setExtension(e.target.value)}
+          required
+          maxLength={64}
+          pattern="[a-zA-Z0-9._\-+*#@]+"
+          className="input"
+          placeholder="1500"
           autoComplete="off"
         />
+        {previewUri && (
+          <div className="mt-1 text-[11px] text-fg-subtle font-mono">
+            SIP URI: <span className="text-fg">{previewUri}</span>
+          </div>
+        )}
+      </Field>
+
+      <Field
+        label="Campaign"
+        hint="Restrict this remote agent to one campaign, or leave on (any campaign) to share across all of them."
+      >
+        <select name="campaign_id" defaultValue="" className="input">
+          <option value="">(any campaign — shared pool)</option>
+          {campaigns.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} · {c.status}
+            </option>
+          ))}
+        </select>
       </Field>
 
       <Field
@@ -87,22 +138,6 @@ export function AddRemoteAgentForm({
           className="input w-32 tabular-nums"
         />
       </Field>
-
-      {nodes.length > 0 && (
-        <Field
-          label="Telephony node (optional)"
-          hint="Bind this remote agent to a specific telephony node so the pacer originates locally to it when possible. Leave blank for any node."
-        >
-          <select name="telephony_node_id" className="input" defaultValue="">
-            <option value="">(any node)</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
 
       <label className="inline-flex items-center gap-2">
         <input
