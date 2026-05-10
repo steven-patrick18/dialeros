@@ -26,6 +26,39 @@ const KEYPAD: Array<{ digit: string; letters?: string }> = [
 
 type AgentStatus = 'AVAILABLE' | 'PAUSED';
 
+interface HistoryEntry {
+  destination: string;
+  cid: string | null;
+  ts: number;
+}
+
+const HISTORY_KEY = 'dialeros_dial_history';
+const HISTORY_MAX = 10;
+
+function loadHistory(): HistoryEntry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.slice(0, HISTORY_MAX);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(entries: HistoryEntry[]): void {
+  try {
+    window.localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify(entries.slice(0, HISTORY_MAX)),
+    );
+  } catch {
+    /* quota exceeded / disabled — silently ignore */
+  }
+}
+
 export function AgentSoftphonePanel() {
   const sp = useSoftphone();
   const [elapsed, setElapsed] = useState(0);
@@ -40,6 +73,8 @@ export function AgentSoftphonePanel() {
   const [cid, setCid] = useState('');
   const [dialBusy, setDialBusy] = useState(false);
   const [dialMsg, setDialMsg] = useState<string | null>(null);
+
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
 
   useEffect(() => {
     let cancelled = false;
@@ -128,12 +163,12 @@ export function AgentSoftphonePanel() {
     }
   }
 
-  async function placeManualCall() {
-    if (!buffer || sp.inCall || dialBusy) return;
+  async function placeCallTo(destination: string, cidOverride: string | null) {
+    if (!destination || sp.inCall || dialBusy) return;
     setDialBusy(true);
     setDialMsg(null);
-    const body: Record<string, unknown> = { destination: buffer };
-    if (cid.trim().length > 0) body.cid = cid.trim();
+    const body: Record<string, unknown> = { destination };
+    if (cidOverride && cidOverride.length > 0) body.cid = cidOverride;
     try {
       const res = await fetch('/api/agent/dial', {
         method: 'POST',
@@ -149,12 +184,33 @@ export function AgentSoftphonePanel() {
       } else {
         setDialMsg('dialing…');
         setBuffer('');
+        // Iter 50 — push to local history. Dedup by destination+cid:
+        // a redial of the same number bumps the existing entry rather
+        // than creating a duplicate.
+        const entry: HistoryEntry = {
+          destination,
+          cid: cidOverride && cidOverride.length > 0 ? cidOverride : null,
+          ts: Date.now(),
+        };
+        setHistory((prev) => {
+          const filtered = prev.filter(
+            (h) =>
+              !(h.destination === entry.destination && h.cid === entry.cid),
+          );
+          const next = [entry, ...filtered].slice(0, HISTORY_MAX);
+          saveHistory(next);
+          return next;
+        });
       }
     } catch (e) {
       setDialMsg(e instanceof Error ? e.message : 'dial failed');
     } finally {
       setDialBusy(false);
     }
+  }
+
+  async function placeManualCall() {
+    return placeCallTo(buffer, cid.trim() || null);
   }
 
   function pressDigit(d: string) {
@@ -319,6 +375,13 @@ export function AgentSoftphonePanel() {
             {statusLine}
           </div>
         </div>
+
+        {sp.inCall && (
+          <div className="mt-2 space-y-1">
+            <Vu label="MIC" level={sp.micLevel} />
+            <Vu label="SPK" level={sp.spkLevel} />
+          </div>
+        )}
       </div>
 
       {showingManual && (
@@ -418,6 +481,48 @@ export function AgentSoftphonePanel() {
           </div>
         )}
       </div>
+
+      {showingManual && history.length > 0 && (
+        <div className="px-5 pt-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[9px] uppercase tracking-[0.18em] text-slate-500">
+              Recent
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setHistory([]);
+                saveHistory([]);
+              }}
+              className="text-[9px] uppercase tracking-[0.15em] text-slate-600 hover:text-slate-400"
+            >
+              Clear
+            </button>
+          </div>
+          <ul className="space-y-0.5">
+            {history.slice(0, 5).map((h, i) => (
+              <li
+                key={`${h.destination}-${h.ts}-${i}`}
+                onClick={() => {
+                  setBuffer(h.destination);
+                  setCid(h.cid ?? '');
+                  setDialMsg(null);
+                }}
+                onDoubleClick={() => {
+                  void placeCallTo(h.destination, h.cid);
+                }}
+                className="cursor-pointer text-[11px] font-mono text-slate-300 hover:bg-slate-800/60 hover:text-emerald-300 px-2 py-1 rounded flex items-center justify-between gap-2 select-none"
+                title="Click to fill — double-click to redial"
+              >
+                <span className="truncate">{h.destination}</span>
+                <span className="text-slate-600 text-[10px]">
+                  {formatRelative(h.ts)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="px-5 pt-3">
         <button
@@ -592,4 +697,38 @@ function formatClock(d: Date): string {
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${hh}:${mm}`;
+}
+
+function formatRelative(ts: number): string {
+  const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return `${diffSec}s`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h`;
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function Vu({ label, level }: { label: string; level: number }) {
+  const pct = Math.round(Math.min(1, Math.max(0, level)) * 100);
+  // Green / yellow / red bands match a typical hardware VU meter.
+  const bg = pct > 80 ? '#ef4444' : pct > 50 ? '#fbbf24' : '#34d399';
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[9px] uppercase tracking-[0.18em] text-slate-500 w-8">
+        {label}
+      </span>
+      <div className="relative flex-1 h-1.5 rounded overflow-hidden border border-slate-800/80 bg-slate-900/80">
+        <div
+          className="absolute inset-y-0 left-0"
+          style={{
+            width: `${pct}%`,
+            background: bg,
+            transition: 'width 60ms linear',
+          }}
+        />
+      </div>
+    </div>
+  );
 }

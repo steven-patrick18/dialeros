@@ -47,6 +47,11 @@ export interface SoftphoneState {
   remoteIdentity: string | null;
   error: string | null;
   extension: string | null;
+  /** Iter 50 — instantaneous level 0..1 sampled by Web Audio Analysers
+   * on the mic sender and remote receiver. Driven by RAF, so consumers
+   * can render VU bars without managing AudioContext themselves. */
+  micLevel: number;
+  spkLevel: number;
 }
 
 export interface SoftphoneApi extends SoftphoneState {
@@ -84,12 +89,20 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     remoteIdentity: null,
     error: null,
     extension: null,
+    micLevel: 0,
+    spkLevel: 0,
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const uaRef = useRef<UserAgent | null>(null);
   const registererRef = useRef<Registerer | null>(null);
   const sessionRef = useRef<Session | null>(null);
+  // Iter 50 — Web Audio plumbing for VU meters. Lazily-created shared
+  // AudioContext; per-call analyser nodes torn down on hangup.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const micAnalyserRef = useRef<AnalyserNode | null>(null);
+  const spkAnalyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   // Set up the UA once.
   useEffect(() => {
@@ -134,8 +147,9 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
           },
           delegate: {
             onInvite: (invitation: Invitation) => {
-              // Test-call's bridge(user/<ext>) lands here. Auto-answer.
-              attachAudio(invitation);
+              // Pacer / test-call / agent-dial all reach the agent
+              // via FS bridge → INVITE here. Auto-answer; media wires
+              // up on stateChange → Established (see wireSessionState).
               wireSessionState(invitation);
               invitation
                 .accept({
@@ -215,50 +229,171 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const attachAudio = useCallback((session: Session) => {
+  // Iter 50 — robust media attach. Earlier versions wired pc.ontrack
+  // BEFORE invitation.accept() completed, which raced with sip.js
+  // populating receivers during SDP processing — by the time our
+  // listener was set the ontrack event for the remote audio had
+  // already fired and we lost it. Customer audio came up silent.
+  // Now we run on stateChange → Established (peer connection is
+  // active, receivers populated) and assemble the remote stream
+  // ourselves from getReceivers(). ontrack still listens for late
+  // additions (re-INVITEs, etc.).
+  const attachMedia = useCallback((session: Session) => {
     const sdh = session.sessionDescriptionHandler;
     if (!sdh || !('peerConnection' in sdh)) return;
     const pc = (sdh as { peerConnection: RTCPeerConnection }).peerConnection;
+
+    const remoteStream = new MediaStream();
+    pc.getReceivers().forEach((r) => {
+      if (r.track && r.track.kind === 'audio') remoteStream.addTrack(r.track);
+    });
     pc.ontrack = (event) => {
-      if (!audioRef.current) return;
-      if (event.streams[0]) {
-        audioRef.current.srcObject = event.streams[0];
+      if (event.track && event.track.kind === 'audio') {
+        remoteStream.addTrack(event.track);
       }
     };
-  }, []);
 
-  const wireSessionState = useCallback((session: Session) => {
-    sessionRef.current = session;
-    const remoteUri = session.remoteIdentity?.uri?.user ?? 'unknown';
-    setState((prev) => ({
-      ...prev,
-      inCall: true,
-      remoteIdentity: remoteUri,
-      muted: false,
-      onHold: false,
-    }));
+    if (audioRef.current) {
+      audioRef.current.srcObject = remoteStream;
+      audioRef.current.muted = false;
+      // Browsers can throw NotAllowedError on play() if autoplay
+      // policy decided not to allow it. Safe to swallow — user can
+      // toggle the volume slider to nudge it.
+      audioRef.current.play().catch(() => {
+        /* autoplay policy */
+      });
+    }
 
-    const onStateChange = (s: SessionState) => {
-      if (s === SessionState.Established) {
-        setState((prev) => ({ ...prev, inCall: true }));
+    // VU meters. AudioContext requires a user gesture on Chrome —
+    // by the time a call connects the agent has already clicked
+    // Call / accepted, so this is fine.
+    try {
+      if (!audioCtxRef.current) {
+        const Ctx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext })
+            .webkitAudioContext;
+        audioCtxRef.current = new Ctx();
       }
-      if (s === SessionState.Terminated) {
-        setState((prev) => ({
-          ...prev,
-          inCall: false,
-          muted: false,
-          onHold: false,
-          remoteIdentity: null,
-        }));
-        if (audioRef.current) {
-          audioRef.current.srcObject = null;
-          audioRef.current.muted = false;
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') void ctx.resume();
+
+      const localStream = new MediaStream();
+      pc.getSenders().forEach((s) => {
+        if (s.track && s.track.kind === 'audio') localStream.addTrack(s.track);
+      });
+      if (localStream.getAudioTracks().length > 0) {
+        const src = ctx.createMediaStreamSource(localStream);
+        const an = ctx.createAnalyser();
+        an.fftSize = 256;
+        src.connect(an);
+        micAnalyserRef.current = an;
+      }
+      if (remoteStream.getAudioTracks().length > 0) {
+        const src = ctx.createMediaStreamSource(remoteStream);
+        const an = ctx.createAnalyser();
+        an.fftSize = 256;
+        src.connect(an);
+        spkAnalyserRef.current = an;
+      }
+
+      const buf = new Uint8Array(256);
+      const sample = () => {
+        let mic = 0;
+        let spk = 0;
+        const m = micAnalyserRef.current;
+        const s = spkAnalyserRef.current;
+        if (m) {
+          m.getByteTimeDomainData(buf);
+          let peak = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = Math.abs(buf[i]! - 128) / 128;
+            if (v > peak) peak = v;
+          }
+          mic = peak;
         }
-        sessionRef.current = null;
+        if (s) {
+          s.getByteTimeDomainData(buf);
+          let peak = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = Math.abs(buf[i]! - 128) / 128;
+            if (v > peak) peak = v;
+          }
+          spk = peak;
+        }
+        setState((prev) => {
+          if (
+            Math.abs(prev.micLevel - mic) < 0.02 &&
+            Math.abs(prev.spkLevel - spk) < 0.02
+          ) {
+            return prev;
+          }
+          return { ...prev, micLevel: mic, spkLevel: spk };
+        });
+        rafRef.current = requestAnimationFrame(sample);
+      };
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(sample);
       }
-    };
-    session.stateChange.addListener(onStateChange);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('softphone: VU setup failed', e);
+    }
   }, []);
+
+  const detachMedia = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    micAnalyserRef.current?.disconnect();
+    spkAnalyserRef.current?.disconnect();
+    micAnalyserRef.current = null;
+    spkAnalyserRef.current = null;
+    setState((prev) => ({ ...prev, micLevel: 0, spkLevel: 0 }));
+  }, []);
+
+  const wireSessionState = useCallback(
+    (session: Session) => {
+      sessionRef.current = session;
+      const remoteUri = session.remoteIdentity?.uri?.user ?? 'unknown';
+      setState((prev) => ({
+        ...prev,
+        inCall: true,
+        remoteIdentity: remoteUri,
+        muted: false,
+        onHold: false,
+      }));
+
+      const onStateChange = (s: SessionState) => {
+        if (s === SessionState.Established) {
+          // Iter 50 — attach media here, NOT on onInvite. By the time
+          // we hit Established the peer connection has finished
+          // negotiation and getReceivers() returns the remote audio
+          // track, so the customer's audio actually plays.
+          attachMedia(session);
+          setState((prev) => ({ ...prev, inCall: true }));
+        }
+        if (s === SessionState.Terminated) {
+          detachMedia();
+          setState((prev) => ({
+            ...prev,
+            inCall: false,
+            muted: false,
+            onHold: false,
+            remoteIdentity: null,
+          }));
+          if (audioRef.current) {
+            audioRef.current.srcObject = null;
+            audioRef.current.muted = false;
+          }
+          sessionRef.current = null;
+        }
+      };
+      session.stateChange.addListener(onStateChange);
+    },
+    [attachMedia, detachMedia],
+  );
 
   const toggleMute = useCallback(() => {
     const session = sessionRef.current;
