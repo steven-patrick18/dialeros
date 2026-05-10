@@ -29,14 +29,41 @@ export type InlineField =
       label: string;
       value: string | null; // 'HH:MM' or null
       hint?: string;
+    }
+  | {
+      type: 'select';
+      name: string;
+      label: string;
+      value: string;
+      options: Array<{ value: string; label: string }>;
+      hint?: string;
+    }
+  | {
+      type: 'boolean';
+      name: string;
+      label: string;
+      value: boolean;
+      hint?: string;
+    }
+  | {
+      type: 'lines';
+      // Free-text multiline input that splits to a string[] on save.
+      // Useful for whitelist phone numbers, CID pool, etc.
+      name: string;
+      label: string;
+      value: string[];
+      hint?: string;
+      placeholder?: string;
     };
 
 /**
- * Iter 25 — ViciDial-style inline editor for a card. Each field is
- * always-edit (no separate "Edit" button). The Save button enables when
- * any field diverges from the initial value, and PUTs the full diff
- * to `endpoint` in one request. Fields not in the diff are omitted so
- * partial-update validators stay happy.
+ * Iter 25/26 — ViciDial-style always-edit card.
+ *
+ * Every field is rendered as its native input (no separate Edit button).
+ * The Save button enables when the desired set diverges from the
+ * initial values, and POSTs ONLY the diff so the API's partial-update
+ * validators stay happy. Default method is PUT — pass `method` to
+ * override.
  */
 export function InlineCardForm({
   title,
@@ -52,17 +79,14 @@ export function InlineCardForm({
   helpText?: string;
 }) {
   const router = useRouter();
-  const initial = useMemo(
-    () =>
-      Object.fromEntries(fields.map((f) => [f.name, normalizeForState(f)])) as Record<
-        string,
-        string | number | null
-      >,
-    [fields],
-  );
-  const [values, setValues] = useState<Record<string, string | number | null>>(
-    () => ({ ...initial }),
-  );
+  const initial = useMemo(() => {
+    const out: Record<string, FieldValue> = {};
+    for (const f of fields) out[f.name] = normalizeForState(f);
+    return out;
+  }, [fields]);
+  const [values, setValues] = useState<Record<string, FieldValue>>(() => ({
+    ...initial,
+  }));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(
     null,
@@ -70,21 +94,29 @@ export function InlineCardForm({
 
   const dirty = useMemo(() => {
     for (const f of fields) {
-      if (!shallowEq(values[f.name], initial[f.name])) return true;
+      if (!fieldEq(values[f.name], initial[f.name])) return true;
     }
     return false;
   }, [values, initial, fields]);
 
-  function set(name: string, raw: string) {
+  function setRaw(name: string, raw: string | boolean) {
     const f = fields.find((x) => x.name === name)!;
-    let v: string | number | null;
+    let v: FieldValue;
     if (f.type === 'number') {
-      v = raw === '' ? NaN : Number(raw);
-      if (Number.isNaN(v)) v = NaN; // keep NaN to flag invalid
+      const n = raw === '' ? NaN : Number(raw);
+      v = n;
     } else if (f.type === 'time') {
-      v = raw === '' ? null : raw;
+      v = raw === '' ? null : (raw as string);
+    } else if (f.type === 'boolean') {
+      v = !!raw;
+    } else if (f.type === 'lines') {
+      // Split on newlines, trim, drop empties.
+      v = String(raw)
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
     } else {
-      v = raw;
+      v = raw as string;
     }
     setValues((prev) => ({ ...prev, [name]: v }));
     setMsg(null);
@@ -94,26 +126,27 @@ export function InlineCardForm({
     setBusy(true);
     setMsg(null);
     try {
-      // Build diff payload — only changed fields, normalized for the API.
       const payload: Record<string, unknown> = {};
       for (const f of fields) {
         const cur = values[f.name];
         const orig = initial[f.name];
-        if (shallowEq(cur, orig)) continue;
+        if (fieldEq(cur, orig)) continue;
         if (f.type === 'number') {
           if (typeof cur !== 'number' || Number.isNaN(cur)) {
-            setMsg({
-              tone: 'err',
-              text: `${f.label} must be a number.`,
-            });
+            setMsg({ tone: 'err', text: `${f.label} must be a number.` });
             return;
           }
           payload[f.name] = cur;
         } else if (f.type === 'time') {
-          // Empty time → '' so server treats it as cleared.
-          payload[f.name] = cur ?? '';
+          payload[f.name] = (cur as string | null) ?? '';
+        } else if (f.type === 'boolean') {
+          payload[f.name] = !!cur;
+        } else if (f.type === 'lines') {
+          payload[f.name] = cur as string[];
+        } else if (f.type === 'select') {
+          payload[f.name] = cur as string;
         } else {
-          payload[f.name] = cur ?? '';
+          payload[f.name] = (cur as string | null) ?? '';
         }
       }
       const res = await fetch(endpoint, {
@@ -151,7 +184,7 @@ export function InlineCardForm({
                 <span>{f.label}</span>
                 {f.hint && <Hint text={f.hint} />}
               </div>
-              {renderInput(f, values[f.name] ?? null, (raw) => set(f.name, raw))}
+              {renderInput(f, values[f.name], (raw) => setRaw(f.name, raw))}
             </label>
           </div>
         ))}
@@ -191,10 +224,12 @@ export function InlineCardForm({
   );
 }
 
+type FieldValue = string | number | boolean | string[] | null;
+
 function renderInput(
   f: InlineField,
-  value: string | number | null,
-  onChange: (raw: string) => void,
+  value: FieldValue | undefined,
+  onChange: (raw: string | boolean) => void,
 ) {
   if (f.type === 'textarea') {
     return (
@@ -208,10 +243,11 @@ function renderInput(
     );
   }
   if (f.type === 'number') {
+    const n = value as number;
     return (
       <input
         type="number"
-        value={Number.isNaN(value as number) ? '' : (value as number)}
+        value={Number.isNaN(n) ? '' : n}
         onChange={(e) => onChange(e.target.value)}
         min={f.min}
         max={f.max}
@@ -227,6 +263,46 @@ function renderInput(
         value={(value as string | null) ?? ''}
         onChange={(e) => onChange(e.target.value)}
         className="input text-sm w-32 font-mono"
+      />
+    );
+  }
+  if (f.type === 'select') {
+    return (
+      <select
+        value={(value as string) ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        className="input text-sm"
+      >
+        {f.options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  if (f.type === 'boolean') {
+    const checked = !!value;
+    return (
+      <label className="inline-flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="cursor-pointer"
+        />
+        <span className="text-sm">{checked ? 'Enabled' : 'Disabled'}</span>
+      </label>
+    );
+  }
+  if (f.type === 'lines') {
+    const v = (value as string[]) ?? [];
+    return (
+      <textarea
+        value={v.join('\n')}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={f.placeholder}
+        className="input h-32 text-sm w-full font-mono"
       />
     );
   }
@@ -254,18 +330,25 @@ function Hint({ text }: { text: string }) {
   );
 }
 
-function normalizeForState(f: InlineField): string | number | null {
+function normalizeForState(f: InlineField): FieldValue {
   if (f.type === 'number') return f.value as number;
+  if (f.type === 'boolean') return f.value;
+  if (f.type === 'lines') return f.value;
+  if (f.type === 'select') return f.value;
   return (f.value as string | null) ?? null;
 }
 
-function shallowEq(a: unknown, b: unknown): boolean {
+function fieldEq(a: FieldValue | undefined, b: FieldValue | undefined): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
   if (typeof a === 'number' && typeof b === 'number') {
     if (Number.isNaN(a) && Number.isNaN(b)) return true;
     return a === b;
   }
-  // Treat null and '' as equivalent for text/time fields so a never-set
-  // field that the user clears doesn't read as dirty.
+  // Treat null and '' as equivalent for text/time fields.
   if ((a == null || a === '') && (b == null || b === '')) return true;
   return a === b;
 }

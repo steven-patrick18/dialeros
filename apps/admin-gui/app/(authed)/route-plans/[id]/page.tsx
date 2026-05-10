@@ -6,6 +6,7 @@ import {
   parseCidPool,
   parseFailoverIds,
 } from '@dialeros/control-plane';
+import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteRoutePlanButton } from './delete-button';
 
 export const dynamic = 'force-dynamic';
@@ -53,9 +54,37 @@ export default async function RoutePlanDetail({
           </span>
         )}
       </div>
-      {plan.description && (
-        <p className="text-fg-muted text-sm mb-6">{plan.description}</p>
-      )}
+      <div className="max-w-4xl mb-6">
+        <InlineCardForm
+          title="Basics"
+          endpoint={`/api/route-plans/${plan.id}`}
+          fields={[
+            {
+              type: 'text',
+              name: 'name',
+              label: 'Name',
+              value: plan.name,
+              maxLength: 64,
+              hint: 'Internal identifier. Letters, digits, dashes, underscores. Shown in campaign Route plan picker.',
+            },
+            {
+              type: 'textarea',
+              name: 'description',
+              label: 'Description',
+              value: plan.description,
+              maxLength: 500,
+              hint: 'Free-form notes. 500 chars max.',
+            },
+            {
+              type: 'boolean',
+              name: 'enabled',
+              label: 'Enabled',
+              value: plan.enabled === 1,
+              hint: 'Disabling stops new dials from using this plan. Existing campaigns referencing it keep working until paused or moved.',
+            },
+          ]}
+        />
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
         <Card title="Primary carrier">
@@ -102,72 +131,75 @@ export default async function RoutePlanDetail({
           )}
         </Card>
 
-        <Card title="Caller ID">
-          <Detail label="Strategy" value={plan.cid_strategy} />
-          {plan.cid_strategy === 'single' && (
-            <Detail
-              label="Number"
-              value={
-                <span className="font-mono text-xs">
-                  {plan.cid_single ?? 'â€”'}
-                </span>
-              }
-            />
-          )}
-          {plan.cid_strategy === 'rotate' && (
-            <>
-              <Detail
-                label="Pool size"
-                value={<span className="tabular-nums">{cidPool.length}</span>}
-              />
-              <details className="mt-2 text-xs">
-                <summary className="cursor-pointer text-fg-subtle hover:text-fg-muted">
-                  Show pool
-                </summary>
-                <ul className="mt-2 max-h-40 overflow-y-auto space-y-0.5 font-mono text-fg-muted">
-                  {cidPool.map((n, i) => (
-                    <li key={i}>{n}</li>
-                  ))}
-                </ul>
-              </details>
-            </>
-          )}
-        </Card>
+        <InlineCardForm
+          title="Caller ID"
+          endpoint={`/api/route-plans/${plan.id}`}
+          fields={[
+            {
+              type: 'select',
+              name: 'cid_strategy',
+              label: 'Strategy',
+              value: plan.cid_strategy,
+              options: [
+                {
+                  value: 'passthrough',
+                  label: 'passthrough — use lead\'s assigned CID',
+                },
+                {
+                  value: 'single',
+                  label: 'single — always present one number',
+                },
+                {
+                  value: 'rotate',
+                  label: 'rotate — cycle through a pool',
+                },
+              ],
+              hint: 'How the outbound caller-ID is chosen. passthrough = whatever the lead row has; single = the cid_single field; rotate = cycle cid_pool round-robin.',
+            },
+            {
+              type: 'text',
+              name: 'cid_single',
+              label: 'Single CID',
+              value: plan.cid_single,
+              placeholder: '+14155551234',
+              hint: 'Used only when strategy is single. E.164 or digits.',
+            },
+            {
+              type: 'lines',
+              name: 'cid_pool',
+              label: `CID pool (${cidPool.length} numbers)`,
+              value: cidPool,
+              placeholder: '+14155551234\n+14155551235',
+              hint: 'One phone per line. Used only when strategy is rotate. Pacer cycles through this pool round-robin per campaign.',
+            },
+          ]}
+        />
 
-        <Card title="Number transform">
-          <Detail
-            label="Strip prefix"
-            value={
-              plan.transform_strip_prefix ? (
-                <span className="font-mono text-xs">
-                  {plan.transform_strip_prefix}
-                </span>
-              ) : (
-                'â€”'
-              )
-            }
-          />
-          <Detail
-            label="Add prefix"
-            value={
-              plan.transform_add_prefix ? (
-                <span className="font-mono text-xs">
-                  {plan.transform_add_prefix}
-                </span>
-              ) : (
-                'â€”'
-              )
-            }
-          />
-          <div className="mt-3 pt-3 border-t border-border text-xs">
-            <div className="text-fg-subtle mb-1">Example</div>
-            <div className="font-mono">
-              <span className="text-fg-muted">{exampleNumber}</span>
-              <span className="text-fg-subtle mx-2">â†’</span>
-              <span className="text-fg">{transformed}</span>
-            </div>
-          </div>
-        </Card>
+        <InlineCardForm
+          title="Number transform"
+          endpoint={`/api/route-plans/${plan.id}`}
+          fields={[
+            {
+              type: 'text',
+              name: 'transform_strip_prefix',
+              label: 'Strip prefix',
+              value: plan.transform_strip_prefix,
+              maxLength: 20,
+              placeholder: '+1',
+              hint: 'Removed from the start of the dialed number if present. Common: strip "+1" before sending to a domestic-only carrier.',
+            },
+            {
+              type: 'text',
+              name: 'transform_add_prefix',
+              label: 'Add prefix',
+              value: plan.transform_add_prefix,
+              maxLength: 20,
+              placeholder: '9',
+              hint: 'Prepended to the dialed number after stripping. Common: add a "9" for outbound from a PBX, or "00" for international.',
+            },
+          ]}
+          helpText={`Example: ${exampleNumber} → ${transformed}`}
+        />
       </div>
 
       <dl className="mt-6 grid grid-cols-2 gap-3 text-xs max-w-4xl">
@@ -179,12 +211,6 @@ export default async function RoutePlanDetail({
       </dl>
 
       <div className="mt-8 max-w-4xl flex items-center gap-4">
-        <Link
-          href={`/route-plans/${plan.id}/edit`}
-          className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm"
-        >
-          Edit route plan
-        </Link>
         <DeleteRoutePlanButton id={plan.id} name={plan.name} />
       </div>
     </div>

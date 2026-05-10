@@ -8,6 +8,7 @@ import {
   listCampaignsUsingInGroup,
   parseStaticWhitelist,
 } from '@dialeros/control-plane';
+import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteInGroupButton } from './delete-button';
 
 export const dynamic = 'force-dynamic';
@@ -46,54 +47,129 @@ export default async function InGroupDetail({
           </span>
         )}
       </div>
-      <p className="text-fg-subtle text-sm font-mono mb-1">{g.type}</p>
-      {g.description && (
-        <p className="text-fg-muted text-sm mb-6">{g.description}</p>
-      )}
+      <p className="text-fg-subtle text-sm font-mono mb-4">{g.type}</p>
+
+      <div className="max-w-4xl mb-6">
+        <InlineCardForm
+          title="Basics"
+          endpoint={`/api/in-groups/${g.id}`}
+          fields={[
+            {
+              type: 'text',
+              name: 'name',
+              label: 'Name',
+              value: g.name,
+              maxLength: 64,
+              hint: 'Internal identifier. Letters, digits, dashes, underscores only — what agents and admins see in nav.',
+            },
+            {
+              type: 'textarea',
+              name: 'description',
+              label: 'Description',
+              value: g.description,
+              maxLength: 500,
+              hint: 'Free-form notes for other admins. 500 characters max.',
+            },
+            {
+              type: 'boolean',
+              name: 'enabled',
+              label: 'Enabled',
+              value: g.enabled === 1,
+              hint: 'Disabled in-groups still exist but reject inbound calls. Used to take a queue offline without deleting.',
+            },
+          ]}
+        />
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mb-6">
-        <Card title="Whitelist">
-          <Detail label="Mode" value={<span className="font-mono text-xs">{g.whitelist_mode}</span>} />
-          {g.whitelist_mode === 'static' && (
-            <Detail
-              label="Allowed numbers"
-              value={
-                <span className="tabular-nums">{staticList.length}</span>
-              }
-            />
-          )}
-          {g.whitelist_mode === 'static' && staticList.length > 0 && (
-            <details className="mt-2 text-xs">
-              <summary className="cursor-pointer text-fg-subtle hover:text-fg-muted">
-                Show numbers
-              </summary>
-              <ul className="mt-2 max-h-40 overflow-y-auto space-y-0.5 font-mono text-fg-muted">
-                {staticList.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
-            </details>
-          )}
-          <Detail
-            label="Off-list action"
-            value={<span className="font-mono text-xs">{g.off_list_action}</span>}
-          />
-        </Card>
+        <InlineCardForm
+          title="Whitelist"
+          endpoint={`/api/in-groups/${g.id}`}
+          fields={[
+            {
+              type: 'select',
+              name: 'whitelist_mode',
+              label: 'Mode',
+              value: g.whitelist_mode,
+              options: [
+                { value: 'none', label: 'none — anyone can call' },
+                {
+                  value: 'static',
+                  label: 'static — only listed callers',
+                },
+                {
+                  value: 'cluster_wide_leads',
+                  label: 'cluster_wide_leads — only callers in any lead list',
+                },
+              ],
+              hint: 'none allows every inbound caller; static checks the list below; cluster_wide_leads accepts callers whose number is in any lead list across the system.',
+            },
+            {
+              type: 'select',
+              name: 'off_list_action',
+              label: 'Off-list action',
+              value: g.off_list_action,
+              options: [
+                { value: 'reject', label: 'reject (hangup)' },
+                {
+                  value: 'fallback_announcement',
+                  label: 'fallback_announcement — play notice + drop',
+                },
+              ],
+              hint: 'What to do when a caller fails the whitelist. reject = silent drop; fallback_announcement = play a configured notice then drop.',
+            },
+            {
+              type: 'lines',
+              name: 'whitelist_static',
+              label: `Allowed numbers (${staticList.length})`,
+              value: staticList,
+              placeholder: '+14155551234\n+14155551235',
+              hint: 'One phone number per line. Only used when mode is static. Empty lines ignored.',
+            },
+          ]}
+        />
 
-        <Card title="Routing">
-          <Detail
-            label="Strategy"
-            value={<span className="font-mono text-xs">{g.routing_strategy}</span>}
-          />
-          <Detail
-            label="Max wait"
-            value={<span className="tabular-nums">{g.max_wait_seconds}s</span>}
-          />
-          <Detail
-            label="Wrap-up"
-            value={<span className="tabular-nums">{g.wrap_up_seconds}s</span>}
-          />
-        </Card>
+        <InlineCardForm
+          title="Routing"
+          endpoint={`/api/in-groups/${g.id}`}
+          fields={[
+            {
+              type: 'select',
+              name: 'routing_strategy',
+              label: 'Strategy',
+              value: g.routing_strategy,
+              options: [
+                { value: 'ring_all', label: 'ring_all — every available agent rings' },
+                {
+                  value: 'longest_idle',
+                  label: 'longest_idle — agent waiting longest gets it',
+                },
+                { value: 'random', label: 'random' },
+              ],
+              hint: 'How a free agent is picked when a call lands. ring_all rings every available agent at once (first to pick wins); longest_idle picks who has been waiting longest; random distributes uniformly.',
+            },
+            {
+              type: 'number',
+              name: 'max_wait_seconds',
+              label: 'Max wait (seconds)',
+              value: g.max_wait_seconds,
+              min: 5,
+              max: 3600,
+              step: 1,
+              hint: 'How long a caller waits in queue before off_list_action fires. 5–3600.',
+            },
+            {
+              type: 'number',
+              name: 'wrap_up_seconds',
+              label: 'Wrap-up (seconds)',
+              value: g.wrap_up_seconds,
+              min: 0,
+              max: 600,
+              step: 1,
+              hint: 'How long an agent is held after a call ends, to disposition before the next call lands. 0–600.',
+            },
+          ]}
+        />
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
@@ -149,12 +225,6 @@ export default async function InGroupDetail({
       </dl>
 
       <div className="mt-8 max-w-4xl flex items-center gap-4">
-        <Link
-          href={`/in-groups/${g.id}/edit`}
-          className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm"
-        >
-          Edit in-group
-        </Link>
         <DeleteInGroupButton id={g.id} name={g.name} didCount={dids.length} />
       </div>
     </div>

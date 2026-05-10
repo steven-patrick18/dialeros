@@ -20,7 +20,7 @@ import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
 import { PacingPanel } from './pacing-panel';
 import { AttachmentPicker } from './attachment-picker';
-import { InlineCardForm } from './inline-card-form';
+import { InlineCardForm } from '@/components/inline-card-form';
 
 export const dynamic = 'force-dynamic';
 
