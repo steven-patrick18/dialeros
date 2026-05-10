@@ -8,11 +8,13 @@ import {
   getCarrierFromDb,
   getPrimaryPhoneForUser,
   getRoutePlanFromDb,
+  hopperSize,
   insertDialIntent,
   listCampaignsFromDb,
   listDialIntentsForCampaign,
   markLeadDialed,
-  pickNextDialableLead,
+  popHopperLead,
+  refillHopper,
   type CampaignRecord,
   type DialIntentRecord,
 } from './db';
@@ -244,7 +246,16 @@ export async function paceCampaignOnce(
   const agents = getAvailableAgentsForCampaign(campaignId);
   if (agents.length === 0) return { outcome: 'no_agents' };
 
-  const lead = pickNextDialableLead(campaignId, COOLDOWN_SECONDS);
+  // Iter 49 — pop from the campaign hopper. If it's empty (or below
+  // half-full), refill on demand and try again. The refill query is
+  // INSERT-OR-IGNORE-driven so concurrent ticks won't double-add.
+  let lead = popHopperLead(campaignId);
+  if (!lead) {
+    refillHopper(campaignId, campaign.hopper_level, COOLDOWN_SECONDS);
+    lead = popHopperLead(campaignId);
+  } else if (hopperSize(campaignId) < Math.floor(campaign.hopper_level / 2)) {
+    refillHopper(campaignId, campaign.hopper_level, COOLDOWN_SECONDS);
+  }
   if (!lead) return { outcome: 'no_lead' };
 
   const assigned = pickAgent(campaignId, agents)!;
@@ -379,15 +390,30 @@ export function startPacer(campaignId: string): boolean {
   const camp = getCampaignFromDb(campaignId);
   if (camp?.type === 'inbound_queue') return false;
 
-  const tick = () => {
-    // paceCampaignOnce is async (iter 32 — may await ESL). We treat each
-    // tick as fire-and-forget here: errors are logged but never crash the
-    // pacer loop. setInterval doesn't await, but a tick that takes longer
-    // than DEMO_INTERVAL_MS just overlaps the next one — bgapi is fast
-    // enough (~50ms) that this is fine.
-    paceCampaignOnce(campaignId).catch((e: unknown) => {
+  const tick = async () => {
+    // Iter 49 — burst per tick. Originate up to
+    // floor(active_agents × dial_level) calls per interval (ViciDial
+    // standard pacing formula, sans remote-agent lines for now —
+    // those land in iter 50). With dial_level=1.0 and N agents that's
+    // power-dial 1:1; with dial_level=1.5 it's predictive 1.5x.
+    // Stop the loop early if a tick returns anything other than
+    // 'dialed' so we don't spin uselessly when the hopper or agent
+    // pool is exhausted.
+    try {
+      const c = getCampaignFromDb(campaignId);
+      if (!c) return;
+      const agents = getAvailableAgentsForCampaign(campaignId);
+      const target = Math.max(
+        1,
+        Math.floor(agents.length * (c.dial_level || 1)),
+      );
+      for (let i = 0; i < target; i++) {
+        const result = await paceCampaignOnce(campaignId);
+        if (result.outcome !== 'dialed') break;
+      }
+    } catch (e) {
       console.error(`[pacing] tick failed for ${campaignId}:`, e);
-    });
+    }
   };
 
   // Run one tick immediately so the user sees activity right away,

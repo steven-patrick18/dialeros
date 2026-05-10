@@ -314,6 +314,13 @@ export type { AgentStatusValue, AgentStatusRecord } from './agent-status';
 // Pacer-helper that filters out paused agents (iter 40)
 export { getAvailableAgentsForCampaign } from './db';
 
+// Hopper (iter 49 — pre-load queue per campaign)
+export {
+  hopperSize,
+  refillHopper,
+  popHopperLead,
+} from './db';
+
 // DIDs (iter 22) — standalone management
 export {
   SingleDidInputSchema,

@@ -236,6 +236,9 @@ export const CampaignUpdateInputSchema = z
       .optional()
       .or(z.literal('').transform(() => null)),
     max_abandon_pct: z.number().min(0).max(100).optional(),
+    // Iter 49 — hopper + dial level.
+    hopper_level: z.number().int().min(1).max(10000).optional(),
+    dial_level: z.number().min(0.1).max(10).optional(),
   })
   .refine(
     (d) => {
@@ -282,6 +285,8 @@ export function updateCampaign(
   if (input.max_abandon_pct !== undefined) {
     updates.max_abandon_pct = input.max_abandon_pct;
   }
+  if (input.hopper_level !== undefined) updates.hopper_level = input.hopper_level;
+  if (input.dial_level !== undefined) updates.dial_level = input.dial_level;
   return updateCampaignFields(id, updates);
 }
 

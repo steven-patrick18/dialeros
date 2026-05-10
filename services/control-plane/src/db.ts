@@ -264,6 +264,17 @@ function db(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_cig_in_group
       ON campaign_in_groups(in_group_id);
 
+    CREATE TABLE IF NOT EXISTS lead_hopper (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+      queued_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      UNIQUE(campaign_id, lead_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lead_hopper_campaign
+      ON lead_hopper(campaign_id, id);
+
     CREATE TABLE IF NOT EXISTS phones (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -354,6 +365,13 @@ function db(): DatabaseSync {
     // call (e.g. spread 0805XXXX traffic across 310/311/312/...).
     // NULL or empty array means no rewrite — destination dialed as-is.
     "ALTER TABLE carriers ADD COLUMN dial_plan_rules TEXT",
+    // Iter 49: per-campaign hopper + dial level. hopper_level is the
+    // target queue depth (number of leads to keep pre-loaded);
+    // dial_level scales how many calls the pacer originates per tick
+    // relative to the active-agent count (1.0 = 1:1 power dial,
+    // 1.5 = predictive 1.5x, etc.).
+    "ALTER TABLE campaigns ADD COLUMN hopper_level INTEGER NOT NULL DEFAULT 100",
+    "ALTER TABLE campaigns ADD COLUMN dial_level REAL NOT NULL DEFAULT 1.0",
   ];
   for (const sql of migrations) {
     try {
@@ -1910,6 +1928,8 @@ export interface CampaignRecord {
   call_window_end: string | null;
   max_abandon_pct: number;
   dial_mode: string;
+  hopper_level: number;
+  dial_level: number;
   created_at: string;
   updated_at: string;
 }
@@ -2175,6 +2195,8 @@ export function updateCampaignFields(
     call_window_end: string | null;
     max_abandon_pct: number;
     dial_mode: string;
+    hopper_level: number;
+    dial_level: number;
   }>,
 ): boolean {
   const fields: string[] = [];
@@ -2312,6 +2334,136 @@ export function listRoutePlansUsingCarrier(
        ORDER BY created_at DESC`,
     )
     .all(carrierId, pattern) as unknown as RoutePlanRecord[];
+}
+
+// =====================================================================
+// lead_hopper (iter 49)
+// =====================================================================
+//
+// ViciDial-style pre-load queue. The pacer pops from here on each
+// originate; a separate refill step keeps the depth at hopper_level.
+// Insert order is preserved by the auto-increment id, so callback-due
+// leads (queued first in each refill) come out before fresh
+// NEW/CALLED_NO_ANSWER leads queued in the same refill.
+
+export function hopperSize(campaignId: string): number {
+  const row = db()
+    .prepare(`SELECT COUNT(*) AS n FROM lead_hopper WHERE campaign_id = ?`)
+    .get(campaignId) as { n: number };
+  return row.n;
+}
+
+/**
+ * Iter 49 — refill the hopper up to `target`. Inserts are
+ * INSERT-OR-IGNORE against the UNIQUE(campaign_id, lead_id) constraint
+ * so re-running this is harmless. Returns the number of leads added.
+ *
+ * Pass 1 inserts callback-due leads (priority by callback_at).
+ * Pass 2 inserts dialable NEW / CALLED_NO_ANSWER / BUSY leads
+ * (priority by last_called_at, NULLs first). Cooldown matches
+ * pickNextDialableLead so the hopper never pre-loads a lead the
+ * cooldown would skip.
+ */
+export function refillHopper(
+  campaignId: string,
+  target: number,
+  cooldownSeconds: number,
+): number {
+  const d = db();
+  const current = hopperSize(campaignId);
+  const slots = Math.max(0, target - current);
+  if (slots === 0) return 0;
+
+  const now = new Date().toISOString();
+  const cooldownCutoff = new Date(
+    Date.now() - cooldownSeconds * 1000,
+  ).toISOString();
+
+  let added = 0;
+
+  // Pass 1: callback-due
+  const cbResult = d
+    .prepare(
+      `INSERT OR IGNORE INTO lead_hopper (campaign_id, lead_id)
+       SELECT ?, l.id
+         FROM leads l
+         JOIN lead_lists ll ON ll.id = l.list_id
+        WHERE ll.campaign_id = ?
+          AND l.status = 'CALLBACK_SCHEDULED'
+          AND l.callback_at IS NOT NULL
+          AND l.callback_at <= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_hopper h
+             WHERE h.campaign_id = ? AND h.lead_id = l.id
+          )
+        ORDER BY l.callback_at ASC, l.created_at ASC
+        LIMIT ?`,
+    )
+    .run(campaignId, campaignId, now, campaignId, slots);
+  added += Number(cbResult.changes);
+
+  const remaining = slots - added;
+  if (remaining <= 0) return added;
+
+  // Pass 2: NEW / CALLED_NO_ANSWER / BUSY
+  const dResult = d
+    .prepare(
+      `INSERT OR IGNORE INTO lead_hopper (campaign_id, lead_id)
+       SELECT ?, l.id
+         FROM leads l
+         JOIN lead_lists ll ON ll.id = l.list_id
+        WHERE ll.campaign_id = ?
+          AND l.status IN ('NEW', 'CALLED_NO_ANSWER', 'BUSY')
+          AND (l.last_called_at IS NULL OR l.last_called_at < ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_hopper h
+             WHERE h.campaign_id = ? AND h.lead_id = l.id
+          )
+        ORDER BY CASE WHEN l.last_called_at IS NULL THEN 0 ELSE 1 END,
+                 l.last_called_at ASC,
+                 l.created_at ASC
+        LIMIT ?`,
+    )
+    .run(campaignId, campaignId, cooldownCutoff, campaignId, remaining);
+  added += Number(dResult.changes);
+
+  return added;
+}
+
+/**
+ * Iter 49 — atomic pop. Returns the next lead in the hopper for this
+ * campaign and removes its row in the same statement. Returns
+ * `undefined` when the hopper is empty so the caller can decide
+ * whether to refill + retry.
+ */
+export function popHopperLead(
+  campaignId: string,
+):
+  | { lead_id: string; list_id: string; phone: string; name: string | null }
+  | undefined {
+  const d = db();
+  const row = d
+    .prepare(
+      `DELETE FROM lead_hopper
+        WHERE id = (
+          SELECT id FROM lead_hopper
+           WHERE campaign_id = ?
+           ORDER BY id ASC
+           LIMIT 1
+        )
+       RETURNING lead_id`,
+    )
+    .get(campaignId) as { lead_id: string } | undefined;
+  if (!row) return undefined;
+
+  const lead = d
+    .prepare(
+      `SELECT id AS lead_id, list_id, phone, name FROM leads WHERE id = ?`,
+    )
+    .get(row.lead_id) as
+    | { lead_id: string; list_id: string; phone: string; name: string | null }
+    | undefined;
+  return lead;
 }
 
 // =====================================================================

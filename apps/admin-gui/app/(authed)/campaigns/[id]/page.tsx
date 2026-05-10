@@ -10,6 +10,7 @@ import {
   getLeadList,
   getRoutePlan,
   getUser,
+  hopperSize,
   isCampaignWithinCallWindow,
   leadCountFor,
   listInGroups,
@@ -48,6 +49,7 @@ export default async function CampaignDetail({
   );
   const activeAgents = getActiveAgentsForCampaign(id);
   const insideWindow = isCampaignWithinCallWindow(c);
+  const hopperDepth = hopperSize(id);
   const inGroupIds = getCampaignInGroups(id);
   const inGroups = inGroupIds.map((gid) => getInGroup(gid)).filter(Boolean);
   const isInbound = c.type === 'inbound_queue';
@@ -186,8 +188,28 @@ export default async function CampaignDetail({
               step: 0.1,
               hint: 'Maximum % of calls allowed to drop because no agent was free. Predictive pacers throttle when this ceiling is hit. US TCPA compliance is typically ≤3%.',
             },
+            {
+              type: 'number',
+              name: 'dial_level',
+              label: 'Dial level',
+              value: c.dial_level,
+              min: 0.1,
+              max: 10,
+              step: 0.1,
+              hint: 'ViciDial-style multiplier. Per tick the pacer originates floor(active_agents × dial_level) calls. 1.0 = power dial 1:1; 1.5 = predictive 1.5x; 2.0 = aggressive predictive. Combined later with remote-agent line counts.',
+            },
+            {
+              type: 'number',
+              name: 'hopper_level',
+              label: 'Hopper level',
+              value: c.hopper_level,
+              min: 1,
+              max: 10000,
+              step: 1,
+              hint: 'How many leads to keep pre-loaded into the campaign hopper. The pacer pops from the hopper each call; refills automatically when it drops below half. Higher = larger pre-fetch buffer; lower = leads picked just-in-time.',
+            },
           ]}
-          helpText="Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart."
+          helpText={`Hopper currently holds ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} target leads. Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart.`}
         />
 
         <InlineCardForm
