@@ -71,20 +71,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Pick a campaign: prefer active outbound ones the user is attached to.
+  // Iter 48 — any active campaign the agent is attached to is fair
+  // game for manual outbound. The campaign's `type` is about how it
+  // gets paced (auto-dial vs wait-for-incoming), not about whether
+  // outbound is allowed: every campaign carries a route_plan + cid
+  // strategy, and a manual call can ride that. Outbound types still
+  // sort first when the user is in both kinds.
   const myIds = new Set(getUserCampaignIds(me.id));
-  const campaigns = listCampaigns().filter(
-    (c) =>
-      c.status === 'active' &&
-      c.type !== 'inbound_queue' &&
-      (myIds.has(c.id) || me.role === 'admin'),
-  );
+  const campaigns = listCampaigns()
+    .filter(
+      (c) =>
+        c.status === 'active' && (myIds.has(c.id) || me.role === 'admin'),
+    )
+    .sort((a, b) => {
+      const inboundA = a.type === 'inbound_queue' ? 1 : 0;
+      const inboundB = b.type === 'inbound_queue' ? 1 : 0;
+      return inboundA - inboundB;
+    });
   const campaign = campaigns[0];
   if (!campaign) {
     return NextResponse.json(
       {
-        error:
-          'No active outbound campaign attached. Ask an admin to attach one.',
+        error: 'No active campaign attached. Ask an admin to attach one.',
       },
       { status: 409 },
     );

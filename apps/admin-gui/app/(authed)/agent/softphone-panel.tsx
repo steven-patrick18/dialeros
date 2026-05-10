@@ -168,6 +168,61 @@ export function AgentSoftphonePanel() {
     }
   }
 
+  // Iter 48 — global keyboard input. While the agent panel is mounted
+  // any keypad-shaped key (digits / * / # / +) populates the dial
+  // buffer or sends DTMF. Backspace deletes; Enter places the call.
+  // Skipped when the user is typing into an input/textarea so the CID
+  // field, wrap-up notes, etc don't double-route.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName;
+      if (
+        t?.isContentEditable ||
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT'
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // Digits + symbols
+      if (/^[0-9*#]$/.test(e.key)) {
+        e.preventDefault();
+        pressDigit(e.key);
+        return;
+      }
+      if (e.key === '+' && !sp.inCall && manualDial) {
+        e.preventDefault();
+        setDialMsg(null);
+        setBuffer((b) => (b + '+').slice(0, 24));
+        return;
+      }
+      if (e.key === 'Backspace' && !sp.inCall && manualDial) {
+        e.preventDefault();
+        setBuffer((b) => b.slice(0, -1));
+        setDialMsg(null);
+        return;
+      }
+      if (e.key === 'Enter' && !sp.inCall && manualDial && buffer.length > 0) {
+        e.preventDefault();
+        void placeManualCall();
+        return;
+      }
+      if (e.key === 'Escape' && !sp.inCall && manualDial && buffer.length > 0) {
+        e.preventDefault();
+        setBuffer('');
+        setDialMsg(null);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // pressDigit / placeManualCall close over current state, so re-bind
+    // when those-relevant deps change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sp.inCall, manualDial, buffer]);
+
   function startTransfer() {
     if (!sp.inCall) return;
     const target = window.prompt(
