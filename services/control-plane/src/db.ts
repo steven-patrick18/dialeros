@@ -272,6 +272,10 @@ function db(): DatabaseSync {
     // iter 19: schedule-aware picker. Mirrors callback_at onto the lead so
     // pickNextDialableLead can compare without joining to dial_intents.
     "ALTER TABLE leads ADD COLUMN callback_at TEXT",
+    // iter 23: a lead list now belongs to AT MOST ONE campaign. The join
+    // table campaign_lead_lists stays around (silently ignored) so old
+    // installations migrate cleanly; the new column is the source of truth.
+    "ALTER TABLE lead_lists ADD COLUMN campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL",
   ];
   for (const sql of migrations) {
     try {
@@ -283,6 +287,24 @@ function db(): DatabaseSync {
       }
     }
   }
+
+  // Iter 23 backfill — copy each list's first attached campaign (if any)
+  // into the new column. Idempotent: only fills NULLs, so repeat startups
+  // are no-ops. Picks the lowest-priority entry to break ties deterministically.
+  d.exec(`
+    UPDATE lead_lists
+       SET campaign_id = (
+         SELECT campaign_id FROM campaign_lead_lists cll
+          WHERE cll.lead_list_id = lead_lists.id
+          ORDER BY cll.priority ASC, cll.campaign_id ASC
+          LIMIT 1
+       )
+     WHERE campaign_id IS NULL
+  `);
+
+  d.exec(
+    `CREATE INDEX IF NOT EXISTS idx_lead_lists_campaign ON lead_lists(campaign_id)`,
+  );
 
   _db = d;
   return d;
@@ -918,6 +940,7 @@ export interface LeadListRecord {
   name: string;
   description: string | null;
   status: string;
+  campaign_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -939,12 +962,13 @@ export function insertLeadList(rec: {
   id: string;
   name: string;
   description: string | null;
+  campaign_id?: string | null;
 }): void {
   db()
     .prepare(
-      `INSERT INTO lead_lists (id, name, description) VALUES (?, ?, ?)`,
+      `INSERT INTO lead_lists (id, name, description, campaign_id) VALUES (?, ?, ?, ?)`,
     )
-    .run(rec.id, rec.name, rec.description);
+    .run(rec.id, rec.name, rec.description, rec.campaign_id ?? null);
 }
 
 export function listLeadListsFromDb(): LeadListRecord[] {
@@ -1380,16 +1404,17 @@ export function pickNextDialableLead(
   ).toISOString();
   const d = db();
 
+  // Iter 23 — lists belong to a campaign directly via lead_lists.campaign_id.
   const callback = d
     .prepare(
       `SELECT l.id AS lead_id, l.list_id, l.phone, l.name
        FROM leads l
-       JOIN campaign_lead_lists cll ON cll.lead_list_id = l.list_id
-       WHERE cll.campaign_id = ?
+       JOIN lead_lists ll ON ll.id = l.list_id
+       WHERE ll.campaign_id = ?
          AND l.status = 'CALLBACK_SCHEDULED'
          AND l.callback_at IS NOT NULL
          AND l.callback_at <= ?
-       ORDER BY l.callback_at ASC, cll.priority ASC, l.created_at ASC
+       ORDER BY l.callback_at ASC, l.created_at ASC
        LIMIT 1`,
     )
     .get(campaignId, now) as
@@ -1401,12 +1426,11 @@ export function pickNextDialableLead(
     .prepare(
       `SELECT l.id AS lead_id, l.list_id, l.phone, l.name
        FROM leads l
-       JOIN campaign_lead_lists cll ON cll.lead_list_id = l.list_id
-       WHERE cll.campaign_id = ?
+       JOIN lead_lists ll ON ll.id = l.list_id
+       WHERE ll.campaign_id = ?
          AND l.status IN ('NEW', 'CALLED_NO_ANSWER')
          AND (l.last_called_at IS NULL OR l.last_called_at < ?)
-       ORDER BY cll.priority ASC,
-                CASE WHEN l.last_called_at IS NULL THEN 0 ELSE 1 END,
+       ORDER BY CASE WHEN l.last_called_at IS NULL THEN 0 ELSE 1 END,
                 l.last_called_at ASC,
                 l.created_at ASC
        LIMIT 1`,
@@ -1644,17 +1668,46 @@ export function insertCampaign(rec: {
     );
 }
 
+/**
+ * Iter 23 — attach lead lists to a campaign. The relationship is
+ * one-to-many (each list lives in at most one campaign), so this is
+ * an UPDATE of the list row, not an INSERT into a join table. Stealing
+ * a list from another campaign is intentional ("move"), audited by the
+ * caller.
+ */
 export function attachCampaignLeadLists(
   campaignId: string,
   leadListIds: string[],
 ): void {
   if (leadListIds.length === 0) return;
   const stmt = db().prepare(
-    `INSERT OR IGNORE INTO campaign_lead_lists (campaign_id, lead_list_id, priority) VALUES (?, ?, ?)`,
+    `UPDATE lead_lists SET campaign_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
   );
-  for (let i = 0; i < leadListIds.length; i++) {
-    stmt.run(campaignId, leadListIds[i]!, i);
+  for (const lid of leadListIds) {
+    stmt.run(campaignId, lid);
   }
+}
+
+export function moveLeadListToCampaign(
+  leadListId: string,
+  campaignId: string | null,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE lead_lists SET campaign_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    )
+    .run(campaignId, leadListId);
+  return Number(result.changes) > 0;
+}
+
+export function listLeadListsForCampaign(
+  campaignId: string,
+): LeadListRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM lead_lists WHERE campaign_id = ? ORDER BY created_at ASC`,
+    )
+    .all(campaignId) as unknown as LeadListRecord[];
 }
 
 // ----- iter 21: campaign ↔ in-group -----
@@ -1863,13 +1916,18 @@ export function updateInGroupFields(
   return Number(result.changes) > 0;
 }
 
+/**
+ * Iter 23 — reads lead_lists.campaign_id directly. The old
+ * campaign_lead_lists join table is no longer authoritative; queries
+ * that need the list of attached lists go through this helper.
+ */
 export function getCampaignLeadListIds(campaignId: string): string[] {
   const rows = db()
     .prepare(
-      `SELECT lead_list_id FROM campaign_lead_lists WHERE campaign_id = ? ORDER BY priority ASC`,
+      `SELECT id FROM lead_lists WHERE campaign_id = ? ORDER BY created_at ASC`,
     )
-    .all(campaignId) as Array<{ lead_list_id: string }>;
-  return rows.map((r) => r.lead_list_id);
+    .all(campaignId) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
 }
 
 export function listCampaignsUsingRoutePlan(
@@ -1882,15 +1940,18 @@ export function listCampaignsUsingRoutePlan(
     .all(routePlanId) as unknown as CampaignRecord[];
 }
 
+/**
+ * Iter 23 — at most one campaign owns a list (lead_lists.campaign_id).
+ * Returns an array for API back-compat, but in practice has 0 or 1 entry.
+ */
 export function listCampaignsUsingLeadList(
   leadListId: string,
 ): CampaignRecord[] {
   return db()
     .prepare(
       `SELECT c.* FROM campaigns c
-       JOIN campaign_lead_lists cll ON cll.campaign_id = c.id
-       WHERE cll.lead_list_id = ?
-       ORDER BY c.created_at DESC`,
+       JOIN lead_lists ll ON ll.campaign_id = c.id
+       WHERE ll.id = ?`,
     )
     .all(leadListId) as unknown as CampaignRecord[];
 }

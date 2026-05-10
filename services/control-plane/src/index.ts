@@ -186,6 +186,8 @@ export {
   leadBreakdown,
   pageLeads,
   ingestCsv,
+  moveLeadList,
+  leadListsForCampaign,
   normalizePhone,
 } from './lead';
 export type {

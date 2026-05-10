@@ -3,12 +3,15 @@ import { z } from 'zod';
 import {
   countLeadsInList,
   deleteLeadListFromDb,
+  getCampaignFromDb,
   getLeadListFromDb,
   insertLeadList,
   insertLeadsBulk,
   leadStatusBreakdown,
+  listLeadListsForCampaign,
   listLeadListsFromDb,
   listLeadsInList,
+  moveLeadListToCampaign,
   type LeadListRecord,
   type LeadRecord,
   type LeadStatusBreakdown,
@@ -40,6 +43,10 @@ export const LeadListInputSchema = z.object({
     .max(64)
     .regex(/^[a-zA-Z0-9_-]+$/, 'Alphanumeric, dashes, underscores only.'),
   description: z.string().max(500).optional(),
+  // Iter 23 — a list optionally belongs to a campaign at creation time.
+  // Omit (or pass null) to create the list unattached and assign it later
+  // from the campaign create form or the lead-list move flow.
+  campaign_id: z.string().uuid().nullable().optional(),
 });
 export type LeadListInput = z.infer<typeof LeadListInputSchema>;
 
@@ -53,6 +60,7 @@ export function createLeadList(input: LeadListInput): CreateLeadListResult {
     id,
     name: input.name,
     description: input.description ?? null,
+    campaign_id: input.campaign_id ?? null,
   });
   return { id };
 }
@@ -63,6 +71,32 @@ export function listLeadLists(): LeadListRecord[] {
 
 export function getLeadList(id: string): LeadListRecord | undefined {
   return getLeadListFromDb(id);
+}
+
+/**
+ * Iter 23 — move a list to a different campaign, or detach it (null).
+ * The pacer reads lead_lists.campaign_id every tick, so this is enough
+ * to redirect dialing on the next tick — no service restart needed.
+ *
+ * Returns false if the list doesn't exist, throws if the target campaign
+ * doesn't exist (to surface bad input loudly rather than silently
+ * orphaning a list).
+ */
+export function moveLeadList(
+  leadListId: string,
+  campaignId: string | null,
+): boolean {
+  if (!getLeadListFromDb(leadListId)) return false;
+  if (campaignId !== null && !getCampaignFromDb(campaignId)) {
+    throw new Error(`Campaign ${campaignId} not found.`);
+  }
+  return moveLeadListToCampaign(leadListId, campaignId);
+}
+
+export function leadListsForCampaign(
+  campaignId: string,
+): LeadListRecord[] {
+  return listLeadListsForCampaign(campaignId);
 }
 
 export function deleteLeadList(id: string): boolean {

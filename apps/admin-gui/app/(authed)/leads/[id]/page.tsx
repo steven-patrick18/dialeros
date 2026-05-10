@@ -1,13 +1,16 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  getCampaign,
   getLeadList,
   leadBreakdown,
   leadCountFor,
+  listCampaigns,
   pageLeads,
 } from '@dialeros/control-plane';
 import { UploadCsvForm } from './upload-form';
 import { DeleteLeadListButton } from './delete-button';
+import { MoveListPicker } from './move-picker';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +33,10 @@ export default async function LeadListDetail({
   const page = Math.max(1, Number(sp.page ?? 1));
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const leads = pageLeads(id, page, PAGE_SIZE);
+  const ownerCampaign = list.campaign_id
+    ? getCampaign(list.campaign_id)
+    : null;
+  const allCampaigns = listCampaigns();
 
   return (
     <div>
@@ -49,6 +56,39 @@ export default async function LeadListDetail({
         {total.toLocaleString()} leads · created{' '}
         {new Date(list.created_at).toLocaleString()}
       </p>
+
+      <div className="border border-border rounded p-4 max-w-4xl mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+            Campaign assignment
+          </h2>
+          <span className="text-fg text-sm">
+            {ownerCampaign ? (
+              <Link
+                href={`/campaigns/${ownerCampaign.id}`}
+                className="hover:underline"
+              >
+                {ownerCampaign.name}
+              </Link>
+            ) : (
+              <span className="text-fg-subtle">unattached</span>
+            )}
+          </span>
+        </div>
+        <p className="text-xs text-fg-subtle mb-3">
+          A list belongs to at most one campaign. Moving it points the pacer
+          at this list&apos;s leads on the next tick — no service restart.
+        </p>
+        <MoveListPicker
+          listId={list.id}
+          currentCampaignId={list.campaign_id}
+          campaigns={allCampaigns.map((c) => ({
+            id: c.id,
+            name: c.name,
+            status: c.status,
+          }))}
+        />
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mb-6">
         <div className="border border-border rounded p-4">
