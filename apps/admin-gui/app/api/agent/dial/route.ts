@@ -1,0 +1,166 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import {
+  appendAudit,
+  extensionForUser,
+  getCarrier,
+  getPrimaryPhone,
+  getRoutePlan,
+  getUser,
+  getUserCampaignIds,
+  listCampaigns,
+  normalizePhone,
+  parseCidPool,
+} from '@dialeros/control-plane';
+import { clientIp, getCurrentUser } from '@/lib/session';
+import { originate } from '@/lib/esl';
+import { gatewayNameFor } from '@/lib/freeswitch-config';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+// Iter 40 — manual dial from the agent softphone. Only users with
+// manual_dial=1 are allowed; everyone else only auto-answers
+// pacer-bridged calls.
+//
+// Routing: pick the user's first attached active outbound campaign,
+// use its route plan + primary carrier. Originate via ESL with
+// `&bridge(user/<agent_ext>)` so once the destination answers, the
+// agent's browser softphone (which is registered as user/<ext>) auto-
+// answers and bridges in. Same shape the pacer uses, so all the
+// hangup-correlation + lead-status logic still applies if we wire it
+// up later — for now the call is logged in audit only.
+
+const Body = z.object({
+  destination: z.string().min(2).max(40),
+});
+
+export async function POST(req: NextRequest) {
+  const me = await getCurrentUser();
+  if (!me) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const userRow = getUser(me.id);
+  if (!userRow || userRow.manual_dial !== 1) {
+    return NextResponse.json(
+      { error: 'Manual dial is not enabled for this user.' },
+      { status: 403 },
+    );
+  }
+
+  const raw = await req.json().catch(() => ({}));
+  const parsed = Body.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? 'Invalid input' },
+      { status: 400 },
+    );
+  }
+  const dest = normalizePhone(parsed.data.destination);
+  if (!dest) {
+    return NextResponse.json(
+      { error: 'Destination phone format is invalid.' },
+      { status: 400 },
+    );
+  }
+
+  // Pick a campaign: prefer active outbound ones the user is attached to.
+  const myIds = new Set(getUserCampaignIds(me.id));
+  const campaigns = listCampaigns().filter(
+    (c) =>
+      c.status === 'active' &&
+      c.type !== 'inbound_queue' &&
+      (myIds.has(c.id) || me.role === 'admin'),
+  );
+  const campaign = campaigns[0];
+  if (!campaign) {
+    return NextResponse.json(
+      {
+        error:
+          'No active outbound campaign attached. Ask an admin to attach one.',
+      },
+      { status: 409 },
+    );
+  }
+  const route = getRoutePlan(campaign.route_plan_id);
+  if (!route) {
+    return NextResponse.json(
+      { error: 'Campaign has no route plan.' },
+      { status: 409 },
+    );
+  }
+  const carrier = getCarrier(route.primary_carrier_id);
+  if (!carrier) {
+    return NextResponse.json(
+      { error: 'Route plan primary carrier is missing.' },
+      { status: 409 },
+    );
+  }
+  // Pick a CID — single, or first from the pool.
+  let cid: string | null = null;
+  if (route.cid_strategy === 'single') {
+    cid = route.cid_single;
+  } else if (route.cid_strategy === 'rotate') {
+    cid = parseCidPool(route)[0] ?? null;
+  }
+
+  // The agent's softphone extension — primary phone if any, else hash.
+  const primary = getPrimaryPhone(me.id);
+  const agentExtension = primary?.extension ?? extensionForUser(me.id);
+
+  const gateway = gatewayNameFor(carrier);
+  let uuid: string;
+  try {
+    uuid = await originate({
+      gateway,
+      destination: dest,
+      callerIdNumber: cid ?? undefined,
+      app: `&bridge(user/${agentExtension})`,
+      originateTimeout: 30,
+    });
+  } catch (e) {
+    const err = e as { code?: string; message?: string };
+    appendAudit({
+      actorUserId: me.id,
+      actorIp: clientIp(req),
+      action: 'agent.manual_dial_failed',
+      targetType: 'campaign',
+      targetId: campaign.id,
+      payload: {
+        to: dest,
+        cid,
+        error: err.message ?? 'unknown',
+      },
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: err.message ?? 'originate failed',
+        code: err.code ?? 'unknown',
+      },
+      { status: 502 },
+    );
+  }
+
+  appendAudit({
+    actorUserId: me.id,
+    actorIp: clientIp(req),
+    action: 'agent.manual_dial',
+    targetType: 'campaign',
+    targetId: campaign.id,
+    payload: {
+      uuid,
+      to: dest,
+      cid,
+      campaign_name: campaign.name,
+    },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    uuid,
+    to: dest,
+    cid,
+    campaign: campaign.name,
+  });
+}

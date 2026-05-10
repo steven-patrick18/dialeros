@@ -5,6 +5,8 @@ import {
   APP_SETTING_KEYS,
   extensionForUser,
   getAppSetting,
+  getPrimaryPhone,
+  getUser,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 
@@ -57,18 +59,30 @@ export async function GET(req: NextRequest) {
   }
 
   // SIP domain is ALWAYS the local network interface IP — that's what
-  // FreeSWITCH's default_domain is, and that's where users 1000-1019
-  // are provisioned. Independent of where the WebSocket connects.
+  // FreeSWITCH's default_domain is, and that's where the FS directory
+  // lives. Independent of where the WebSocket connects.
   const sipDomain = localExternalIp();
-  const extension = extensionForUser(user.id);
+
+  // Iter 40 — prefer the user's primary phone (real provisioned creds).
+  // If they don't own one yet, fall back to the iter-35 hash + the FS
+  // default `1234` password so the migration is non-destructive.
+  const primary = getPrimaryPhone(user.id);
+  const extension = primary?.extension ?? extensionForUser(user.id);
+  const password = primary?.password ?? '1234';
+
+  // manual_dial gates the dialer input on the agent softphone — only
+  // expert-level users can place outbound manually.
+  const userRecord = getUser(user.id);
+  const manualDial = userRecord?.manual_dial === 1;
 
   return NextResponse.json({
     extension,
     uri: `sip:${extension}@${sipDomain}`,
     ws_url: wsUrl,
     secure,
-    password: '1234',
+    password,
     display_name: user.username,
+    manual_dial: manualDial,
   });
 }
 

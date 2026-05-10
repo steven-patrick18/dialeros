@@ -17,6 +17,7 @@ export function EditUserForm({
     role: string;
     display_name: string | null;
     skill_tier: string;
+    manual_dial: boolean;
   };
   isSelf: boolean;
 }) {
@@ -38,6 +39,7 @@ export function EditUserForm({
       role: String(fd.get('role') ?? user.role),
       display_name: String(fd.get('display_name') ?? ''),
       skill_tier: String(fd.get('skill_tier') ?? user.skill_tier),
+      manual_dial: fd.get('manual_dial') === 'on',
     };
     if (password.length > 0) body.password = password;
 
@@ -112,6 +114,23 @@ export function EditUserForm({
             </option>
           ))}
         </select>
+      </Field>
+
+      <Field
+        label="Manual dial (expert)"
+        hint="When on, the agent's softphone exposes a dial input — they can place outbound calls manually. Off = auto-answer pacer-bridged calls only."
+      >
+        <label className="inline-flex items-center gap-2">
+          <input
+            type="checkbox"
+            name="manual_dial"
+            defaultChecked={user.manual_dial}
+            className="h-4 w-4"
+          />
+          <span className="text-sm text-fg-muted">
+            Allow manual outbound from softphone
+          </span>
+        </label>
       </Field>
 
       <Field

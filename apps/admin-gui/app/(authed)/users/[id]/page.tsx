@@ -11,6 +11,7 @@ import { getCurrentUser } from '@/lib/session';
 import { EditUserForm } from './edit-form';
 import { DeactivateButton } from './deactivate-button';
 import { AttachmentsForm } from './attachments-form';
+import { PhonesPanel } from './phones-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,9 +72,23 @@ export default async function UserDetail({
             role: u.role,
             display_name: u.display_name,
             skill_tier: u.skill_tier,
+            manual_dial: u.manual_dial === 1,
           }}
           isSelf={isMe}
         />
+      </div>
+
+      <div className="border border-border rounded p-4 max-w-2xl mb-6">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          Phones
+        </h2>
+        <p className="text-xs text-fg-subtle mb-3">
+          SIP credentials owned by this user. The primary phone is what
+          the browser softphone registers as and what the pacer bridges
+          live calls to. Multiple phones let one user use a desk phone +
+          a softphone, etc.
+        </p>
+        <PhonesPanel userId={u.id} />
       </div>
 
       <div className="border border-border rounded p-4 max-w-2xl mb-6">

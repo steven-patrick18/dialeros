@@ -260,6 +260,35 @@ export type { PacingTickResult, DialIntentRecord } from './pacing';
 // SIP extensions (iter 39 — shared user→extension derivation)
 export { extensionForUser } from './sip-extensions';
 
+// Phones (iter 40 — per-user SIP credentials)
+export {
+  PhoneInputSchema,
+  PhoneUpdateInputSchema,
+  createPhone,
+  updatePhone,
+  removePhone,
+  listPhones,
+  getPhone,
+  getPrimaryPhone,
+} from './phone';
+export type {
+  PhoneInput,
+  PhoneUpdateInput,
+  PhoneRecord,
+  CreatePhoneResult,
+} from './phone';
+
+// Agent status (iter 40 — pause / resume)
+export {
+  getStatus as getAgentStatus,
+  pauseAgent,
+  resumeAgent,
+} from './agent-status';
+export type { AgentStatusValue, AgentStatusRecord } from './agent-status';
+
+// Pacer-helper that filters out paused agents (iter 40)
+export { getAvailableAgentsForCampaign } from './db';
+
 // DIDs (iter 22) — standalone management
 export {
   SingleDidInputSchema,

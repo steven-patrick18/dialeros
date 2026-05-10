@@ -26,14 +26,12 @@ export default async function AgentConsole() {
 
   return (
     <SoftphoneProvider>
-      <div>
+      <div className="flex flex-col-reverse lg:flex-row gap-6 lg:items-start">
+        <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-1">
           <h1 className="text-2xl font-semibold">Agent console</h1>
           <div className="flex items-center gap-3">
             <AgentSoftphoneBadge />
-            <span className="bg-success/15 text-success border border-success/50 px-2 py-0.5 rounded text-xs">
-              AVAILABLE
-            </span>
           </div>
         </div>
         <p className="text-fg-subtle text-sm mb-1">
@@ -42,14 +40,10 @@ export default async function AgentConsole() {
           <span className="text-fg-subtle">({user.role})</span>
         </p>
         <p className="text-fg-subtle text-sm mb-6">
-          Calls assigned to you stream in below. Your browser is your
-          phone &mdash; the dialer bridges live calls straight to the
-          softphone on this page.
+          Calls assigned to you stream in below. The dialer bridges live
+          calls straight to the softphone on the right &mdash; pause it
+          when you need a break.
         </p>
-
-        <div className="mb-6">
-          <AgentSoftphonePanel />
-        </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mb-6">
           <Stat
@@ -103,6 +97,13 @@ export default async function AgentConsole() {
           </h2>
           <AgentFeed initial={initial} />
         </div>
+        </div>
+
+        <aside className="flex-shrink-0 lg:w-[340px]">
+          <div className="lg:sticky lg:top-4">
+            <AgentSoftphonePanel />
+          </div>
+        </aside>
       </div>
     </SoftphoneProvider>
   );

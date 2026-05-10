@@ -263,6 +263,28 @@ function db(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_cig_in_group
       ON campaign_in_groups(in_group_id);
+
+    CREATE TABLE IF NOT EXISTS phones (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      extension TEXT NOT NULL,
+      label TEXT,
+      protocol TEXT NOT NULL DEFAULT 'sip',
+      password TEXT NOT NULL,
+      is_primary INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(extension)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_phones_user ON phones(user_id);
+
+    CREATE TABLE IF NOT EXISTS agent_status (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'AVAILABLE',
+      reason TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
@@ -310,6 +332,11 @@ function db(): DatabaseSync {
     "ALTER TABLE dial_intents ADD COLUMN hangup_at TEXT",
     "ALTER TABLE dial_intents ADD COLUMN duration_ms INTEGER",
     "CREATE INDEX IF NOT EXISTS idx_dial_intents_correlation ON dial_intents(correlation_id)",
+    // Iter 40: per-user manual-dial capability. When true, the user's
+    // softphone exposes a CLI/dialer input for placing arbitrary
+    // outbound calls. Default false — most agents only auto-answer
+    // pacer-bridged calls.
+    "ALTER TABLE users ADD COLUMN manual_dial INTEGER NOT NULL DEFAULT 0",
   ];
   for (const sql of migrations) {
     try {
@@ -437,6 +464,7 @@ export interface UserRecord {
   display_name: string | null;
   skill_tier: string;
   is_active: number;
+  manual_dial: number;
   created_at: string;
   updated_at: string;
 }
@@ -497,6 +525,7 @@ export function updateUserFields(
     skill_tier: string;
     is_active: boolean;
     password_hash: string;
+    manual_dial: boolean;
   }>,
 ): boolean {
   const fields: string[] = [];
@@ -504,7 +533,7 @@ export function updateUserFields(
   for (const [key, value] of Object.entries(updates)) {
     if (value === undefined) continue;
     fields.push(`${key} = ?`);
-    if (key === 'is_active') values.push(value ? 1 : 0);
+    if (key === 'is_active' || key === 'manual_dial') values.push(value ? 1 : 0);
     else values.push(value as string | null);
   }
   if (fields.length === 0) return false;
@@ -2216,4 +2245,184 @@ export function listRoutePlansUsingCarrier(
        ORDER BY created_at DESC`,
     )
     .all(carrierId, pattern) as unknown as RoutePlanRecord[];
+}
+
+// =====================================================================
+// phones (iter 40)
+// =====================================================================
+
+export interface PhoneRecord {
+  id: string;
+  user_id: string;
+  extension: string;
+  label: string | null;
+  protocol: string;
+  password: string;
+  is_primary: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function insertPhone(rec: {
+  id: string;
+  user_id: string;
+  extension: string;
+  label?: string | null;
+  protocol?: string;
+  password: string;
+  is_primary?: boolean;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO phones (id, user_id, extension, label, protocol, password, is_primary)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.user_id,
+      rec.extension,
+      rec.label ?? null,
+      rec.protocol ?? 'sip',
+      rec.password,
+      rec.is_primary ? 1 : 0,
+    );
+}
+
+export function listPhonesForUser(userId: string): PhoneRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM phones WHERE user_id = ? ORDER BY is_primary DESC, extension ASC`,
+    )
+    .all(userId) as unknown as PhoneRecord[];
+}
+
+export function getPhoneById(id: string): PhoneRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM phones WHERE id = ?`)
+    .get(id) as unknown as PhoneRecord | undefined;
+}
+
+export function getPhoneByExtension(
+  extension: string,
+): PhoneRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM phones WHERE extension = ?`)
+    .get(extension) as unknown as PhoneRecord | undefined;
+}
+
+export function getPrimaryPhoneForUser(
+  userId: string,
+): PhoneRecord | undefined {
+  return db()
+    .prepare(
+      `SELECT * FROM phones WHERE user_id = ? AND is_primary = 1 LIMIT 1`,
+    )
+    .get(userId) as unknown as PhoneRecord | undefined;
+}
+
+export function updatePhoneFields(
+  id: string,
+  updates: Partial<{
+    extension: string;
+    label: string | null;
+    protocol: string;
+    password: string;
+    is_primary: boolean;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    if (key === 'is_primary') values.push(value ? 1 : 0);
+    else values.push(value as string | null);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE phones SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+/** Clears is_primary on all of a user's phones except `keepId`. */
+export function unsetOtherPrimaryPhones(userId: string, keepId: string): void {
+  db()
+    .prepare(
+      `UPDATE phones SET is_primary = 0, updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ? AND id != ? AND is_primary = 1`,
+    )
+    .run(userId, keepId);
+}
+
+export function deletePhone(id: string): boolean {
+  const result = db().prepare(`DELETE FROM phones WHERE id = ?`).run(id);
+  return Number(result.changes) > 0;
+}
+
+// =====================================================================
+// agent_status (iter 40)
+// =====================================================================
+
+export interface AgentStatusRecord {
+  user_id: string;
+  status: string;
+  reason: string | null;
+  updated_at: string;
+}
+
+export function getAgentStatus(userId: string): AgentStatusRecord {
+  const row = db()
+    .prepare(`SELECT * FROM agent_status WHERE user_id = ?`)
+    .get(userId) as AgentStatusRecord | undefined;
+  return (
+    row ?? {
+      user_id: userId,
+      status: 'AVAILABLE',
+      reason: null,
+      updated_at: new Date().toISOString(),
+    }
+  );
+}
+
+export function setAgentStatus(
+  userId: string,
+  status: 'AVAILABLE' | 'PAUSED',
+  reason: string | null,
+): void {
+  db()
+    .prepare(
+      `INSERT INTO agent_status (user_id, status, reason, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(user_id) DO UPDATE SET
+         status = excluded.status,
+         reason = excluded.reason,
+         updated_at = CURRENT_TIMESTAMP`,
+    )
+    .run(userId, status, reason);
+}
+
+/**
+ * Iter 40 — overload of getActiveAgentsForCampaign that filters out
+ * agents currently in PAUSED status. The pacer uses this so paused
+ * agents don't pull live calls.
+ */
+export function getAvailableAgentsForCampaign(
+  campaignId: string,
+): Array<{ id: string; username: string }> {
+  const rows = getActiveAgentsForCampaign(campaignId);
+  if (rows.length === 0) return rows;
+  const ids = rows.map((r) => r.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const paused = db()
+    .prepare(
+      `SELECT user_id FROM agent_status
+       WHERE status = 'PAUSED' AND user_id IN (${placeholders})`,
+    )
+    .all(...ids) as Array<{ user_id: string }>;
+  if (paused.length === 0) return rows;
+  const pausedSet = new Set(paused.map((p) => p.user_id));
+  return rows.filter((r) => !pausedSet.has(r.id));
 }

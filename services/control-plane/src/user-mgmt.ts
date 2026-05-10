@@ -61,6 +61,7 @@ export const UpdateUserInputSchema = z.object({
   display_name: z.string().max(120).optional().or(z.literal('').transform(() => undefined)),
   skill_tier: SkillTierSchema.optional(),
   password: z.string().min(8).optional(),
+  manual_dial: z.boolean().optional(),
 });
 export type UpdateUserInput = z.infer<typeof UpdateUserInputSchema>;
 
@@ -115,6 +116,7 @@ export function updateUser(
     updates.display_name = input.display_name || null;
   }
   if (input.skill_tier !== undefined) updates.skill_tier = input.skill_tier;
+  if (input.manual_dial !== undefined) updates.manual_dial = input.manual_dial;
 
   let passwordChanged = false;
   if (input.password) {

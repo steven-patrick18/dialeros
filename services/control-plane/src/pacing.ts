@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import {
   countDialIntentsForCampaign,
-  getActiveAgentsForCampaign,
+  getAvailableAgentsForCampaign,
   getCampaignFromDb,
   getCarrierFromDb,
+  getPrimaryPhoneForUser,
   getRoutePlanFromDb,
   insertDialIntent,
   listCampaignsFromDb,
@@ -204,7 +205,9 @@ export async function paceCampaignOnce(
   const plan = getRoutePlanFromDb(campaign.route_plan_id);
   if (!plan) return { outcome: 'no_route_plan' };
 
-  const agents = getActiveAgentsForCampaign(campaignId);
+  // Iter 40 — paused agents are filtered out so the pacer doesn't
+  // bridge live calls to someone who's stepped away.
+  const agents = getAvailableAgentsForCampaign(campaignId);
   if (agents.length === 0) return { outcome: 'no_agents' };
 
   const lead = pickNextDialableLead(campaignId, COOLDOWN_SECONDS);
@@ -247,7 +250,12 @@ export async function paceCampaignOnce(
     // browser. If the agent isn't registered, the bridge fails and
     // hangup_after_bridge tears the call down — surfaces as
     // NORMAL_TEMPORARY_FAILURE in the hangup_cause column.
-    const agentExtension = extensionForUser(assigned.id);
+    //
+    // Iter 40 — prefer the agent's primary phone extension if they own
+    // one; fall back to the iter-35 hash for users without phones so
+    // the migration is non-destructive.
+    const primary = getPrimaryPhoneForUser(assigned.id);
+    const agentExtension = primary?.extension ?? extensionForUser(assigned.id);
     try {
       const jobUuid = await bgapiOriginate({
         gateway,
