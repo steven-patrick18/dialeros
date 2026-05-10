@@ -55,6 +55,12 @@ export function gatewayXml({ carrier, digestPassword }: GatewayInputs): string {
       : ([] as Array<[string, string]>)),
     ['codec-prefs', codecPref],
     ['transport', carrier.transport.toLowerCase()],
+    // Make the SIP From: header reflect the channel's caller-id-number
+    // (i.e. our `origination_caller_id_number`). Without this, FS uses
+    // the gateway's username (or the literal "FreeSWITCH" for ip-acl
+    // gateways with no username) — which then shows up in the carrier's
+    // CDR as the caller, not the actual outbound CID we asked for.
+    ['caller-id-in-from', 'true'],
   ];
 
   if (isDigest) {

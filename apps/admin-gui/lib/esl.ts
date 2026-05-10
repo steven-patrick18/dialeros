@@ -200,9 +200,13 @@ export interface OriginateOptions {
 export async function originate(opts: OriginateOptions): Promise<string> {
   const channelVars: string[] = [];
   if (opts.callerIdNumber) {
-    channelVars.push(
-      `origination_caller_id_number=${escapeChannelValue(opts.callerIdNumber)}`,
-    );
+    const cid = escapeChannelValue(opts.callerIdNumber);
+    // origination_caller_id_number drives the channel's caller-id; the
+    // gateway's caller-id-in-from=true then puts it in the SIP From.
+    // sip_from_user is a defense-in-depth in case a carrier reads
+    // From verbatim and ignores P-Asserted-Identity / Caller-ID.
+    channelVars.push(`origination_caller_id_number=${cid}`);
+    channelVars.push(`sip_from_user=${cid}`);
   }
   channelVars.push('ignore_early_media=true');
   channelVars.push('hangup_after_bridge=true');

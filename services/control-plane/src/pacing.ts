@@ -421,9 +421,10 @@ function bgapiOriginate(opts: BgapiOptions): Promise<string> {
   const cfg = { ...ESL_DEFAULTS, ...opts };
   const channelVars: string[] = [];
   if (opts.callerIdNumber) {
-    channelVars.push(
-      `origination_caller_id_number=${escapeChannelValue(opts.callerIdNumber)}`,
-    );
+    const cid = escapeChannelValue(opts.callerIdNumber);
+    channelVars.push(`origination_caller_id_number=${cid}`);
+    // Force the SIP From: user to match — see lib/esl.ts comment.
+    channelVars.push(`sip_from_user=${cid}`);
   }
   channelVars.push('ignore_early_media=true');
   channelVars.push('hangup_after_bridge=true');

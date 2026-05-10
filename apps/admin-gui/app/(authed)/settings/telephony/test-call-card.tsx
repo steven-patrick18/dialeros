@@ -122,13 +122,13 @@ export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
           </Field>
 
           <Field
-            label="CID (optional)"
-            hint="Outbound caller-ID for this call. Empty = use whatever the carrier defaults to. Some carriers reject CIDs that aren't on their allow-list."
+            label="CID (recommended)"
+            hint="Outbound caller-ID. Lands in the SIP From: header — i.e. what the called party (and the carrier's CDR) sees as the caller. Leave blank and your carrier will see the literal 'FreeSWITCH' as the caller, which most vendors reject or downrank. Use a number Mueen_Vendor (etc.) authorizes for your account."
           >
             <input
               value={cid}
               onChange={(e) => setCid(e.target.value)}
-              placeholder="default"
+              placeholder="+12025550100"
               className="input text-sm font-mono"
               autoComplete="off"
             />
