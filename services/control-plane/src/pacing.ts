@@ -282,6 +282,7 @@ export async function paceCampaignOnce(
   let originateOutcome: PacingTickResult['originate'];
   let kind = 'simulated';
   let correlationId: string | null = null;
+  let recordingPath: string | null = null;
   if (campaign.dial_mode === 'live') {
     const carrier = getCarrierFromDb(plan.primary_carrier_id);
     if (!carrier) {
@@ -312,6 +313,11 @@ export async function paceCampaignOnce(
     }
     correlationId = randomUUID();
     const gateway = `dialeros-${carrier.id}`;
+    // Iter 55 — recording path. Flat layout keyed by correlation_id
+    // so we never have to mkdir from inside FS; the path is set on
+    // the dial_intent row at insert time so playback can find it
+    // even if FS hasn't finished writing yet.
+    recordingPath = `/var/lib/dialeros/recordings/${correlationId}.wav`;
     // Iter 39 — once the destination answers, ring the assigned agent's
     // browser softphone (registered as user/<ext> in FS). FS bridges the
     // two legs, so the agent hears + talks to the lead through their
@@ -330,6 +336,7 @@ export async function paceCampaignOnce(
         destination: dialDestination,
         callerIdNumber: cid ?? undefined,
         correlationId,
+        recordingPath: recordingPath ?? undefined,
         app: `&bridge(user/${agentExtension})`,
       });
       originateOutcome = { ok: true, job_uuid: jobUuid };
@@ -357,6 +364,8 @@ export async function paceCampaignOnce(
     originate_error:
       originateOutcome && !originateOutcome.ok ? originateOutcome.error : null,
     correlation_id: correlationId,
+    recording_path:
+      originateOutcome?.ok && recordingPath ? recordingPath : null,
   });
 
   // Iter 34 — live calls go to DIALING (in-flight). The fs-events
@@ -525,6 +534,9 @@ interface BgapiOptions {
   callerIdNumber?: string;
   /** Iter 33 — set as channel variable so hangup events can find the row. */
   correlationId?: string;
+  /** Iter 55 — absolute path on disk where FS should write the .wav once
+   * the call answers. Skipped when undefined (no recording). */
+  recordingPath?: string;
   app: string;
   host?: string;
   port?: number;
@@ -555,6 +567,17 @@ function bgapiOriginate(opts: BgapiOptions): Promise<string> {
   }
   channelVars.push('ignore_early_media=true');
   channelVars.push('hangup_after_bridge=true');
+  if (opts.recordingPath) {
+    // Iter 55 — start a stereo .wav on answer. record_session runs
+    // once the leg is up (or once the bridged leg answers, since
+    // execute_on_answer fires on the originated leg's CHANNEL_ANSWER).
+    // FS writes a/b legs to L/R channels so QA can hear each side
+    // separately on playback.
+    channelVars.push(
+      `execute_on_answer=record_session ${escapeChannelValue(opts.recordingPath)}`,
+    );
+    channelVars.push('RECORD_STEREO=true');
+  }
   const vars = `{${channelVars.join(',')}}`;
   const dial = `${vars}sofia/gateway/${opts.gateway}/${opts.destination}`;
   const cmd = `bgapi originate ${dial} ${opts.app}`;

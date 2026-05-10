@@ -195,6 +195,9 @@ export interface OriginateOptions {
   originateTimeout?: number;
   /** ms; ESL socket timeout (must comfortably exceed originateTimeout * 1000) */
   esl?: EslOptions;
+  /** Iter 55 — absolute path on disk to write the .wav once the call
+   * answers. Skipped when undefined. */
+  recordingPath?: string;
 }
 
 export async function originate(opts: OriginateOptions): Promise<string> {
@@ -216,6 +219,14 @@ export async function originate(opts: OriginateOptions): Promise<string> {
   channelVars.push('hangup_after_bridge=true');
   if (opts.originateTimeout) {
     channelVars.push(`originate_timeout=${opts.originateTimeout}`);
+  }
+  if (opts.recordingPath) {
+    // Iter 55 — record_session writes a stereo .wav (a/b legs on
+    // L/R) starting on the originated leg's CHANNEL_ANSWER.
+    channelVars.push(
+      `execute_on_answer=record_session ${escapeChannelValue(opts.recordingPath)}`,
+    );
+    channelVars.push('RECORD_STEREO=true');
   }
   const vars = channelVars.length > 0 ? `{${channelVars.join(',')}}` : '';
   const dial = `${vars}sofia/gateway/${opts.gateway}/${opts.destination}`;

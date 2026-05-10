@@ -125,6 +125,7 @@ export {
   listDialIntentsForUser,
   countDialIntentsForUser,
   latestUndisposedIntentForUser,
+  getDialIntentById,
 } from './db';
 export type { AgentIntentRecord } from './db';
 

@@ -16,6 +16,7 @@ interface AgentIntent {
   disposition: string | null;
   dispositioned_at: string | null;
   callback_at: string | null;
+  recording_path: string | null;
 }
 
 const DISPOSITIONS: Array<{ code: string; label: string; tone: string }> = [
@@ -148,6 +149,7 @@ function Row({
   busy: boolean;
   onDispose: (code: string) => void;
 }) {
+  const [playing, setPlaying] = useState(false);
   return (
     <div className="border-b border-border/40 pb-1">
       <div className="flex gap-3 leading-tight font-mono">
@@ -166,7 +168,27 @@ function Row({
           </span>
         )}
         <span className="text-fg-subtle/70">[{intent.kind}]</span>
+        {intent.recording_path && (
+          <button
+            type="button"
+            onClick={() => setPlaying((v) => !v)}
+            className="text-accent hover:text-accent-hover text-[11px] uppercase tracking-wide"
+            title="Play recording"
+          >
+            {playing ? '▣' : '▶'} rec
+          </button>
+        )}
       </div>
+      {playing && intent.recording_path && (
+        <div className="mt-1 ml-12">
+          <audio
+            src={`/api/recordings/${intent.id}`}
+            controls
+            preload="metadata"
+            className="h-7 w-full max-w-md"
+          />
+        </div>
+      )}
       <div className="flex flex-wrap gap-1 mt-1 ml-12">
         {intent.disposition ? (
           <span

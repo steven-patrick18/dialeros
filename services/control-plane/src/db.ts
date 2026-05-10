@@ -372,6 +372,10 @@ function db(): DatabaseSync {
     // 1.5 = predictive 1.5x, etc.).
     "ALTER TABLE campaigns ADD COLUMN hopper_level INTEGER NOT NULL DEFAULT 100",
     "ALTER TABLE campaigns ADD COLUMN dial_level REAL NOT NULL DEFAULT 1.0",
+    // Iter 55: call recording. Absolute path on the FS box (relative
+    // to the configured recordings dir if you want to host on
+    // remote storage later). NULL means this intent wasn't recorded.
+    "ALTER TABLE dial_intents ADD COLUMN recording_path TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -1354,6 +1358,7 @@ export interface DialIntentRecord {
   answered_at: string | null;
   hangup_at: string | null;
   duration_ms: number | null;
+  recording_path: string | null;
 }
 
 export function insertDialIntent(rec: {
@@ -1368,12 +1373,13 @@ export function insertDialIntent(rec: {
   call_uuid?: string | null;
   originate_error?: string | null;
   correlation_id?: string | null;
+  recording_path?: string | null;
 }): DialIntentRecord {
   const result = db()
     .prepare(
       `INSERT INTO dial_intents
-         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id, recording_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.campaign_id,
@@ -1387,6 +1393,7 @@ export function insertDialIntent(rec: {
       rec.call_uuid ?? null,
       rec.originate_error ?? null,
       rec.correlation_id ?? null,
+      rec.recording_path ?? null,
     );
   const id = Number(result.lastInsertRowid);
   return db()
@@ -1523,6 +1530,16 @@ export function listDialIntentsForUser(
         LIMIT ?`,
     )
     .all(userId, sinceId, limit) as unknown as AgentIntentRecord[];
+}
+
+/**
+ * Iter 55 — single row by id. Used by the recording stream endpoint
+ * to verify ownership / existence before piping the .wav out.
+ */
+export function getDialIntentById(id: number): DialIntentRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM dial_intents WHERE id = ?`)
+    .get(id) as unknown as DialIntentRecord | undefined;
 }
 
 /**
