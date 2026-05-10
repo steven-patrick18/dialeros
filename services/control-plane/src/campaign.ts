@@ -1,20 +1,36 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
+  attachCampaignInGroups,
   attachCampaignLeadLists,
   deleteCampaignFromDb,
   getCampaignFromDb,
+  getCampaignInGroupIds,
   getCampaignLeadListIds,
+  getInGroupFromDb,
   getLeadListFromDb,
   getRoutePlanFromDb,
   insertCampaign,
   listCampaignsFromDb,
   listCampaignsUsingLeadList,
   listCampaignsUsingRoutePlan,
+  setCampaignInGroups,
   updateCampaignFields,
   updateCampaignStatusInDb,
   type CampaignRecord,
 } from './db';
+
+// Iter 21 — types that drive outbound dialing (need a lead list).
+// inbound_queue waits for calls to arrive at attached in-groups.
+// blended can do both — we treat lead list as optional and let the
+// pacer decide based on what's attached.
+const OUTBOUND_TYPES = new Set([
+  'outbound_manual',
+  'outbound_progressive',
+  'outbound_predictive',
+  'outbound_preview',
+  'survey',
+]);
 
 // All seven campaign types from spec §6. Some require features that arrive
 // in later iters — the type can be CONFIGURED today, the runtime behavior
@@ -54,9 +70,8 @@ export const CampaignInputSchema = z
     description: z.string().max(500).optional(),
     type: CampaignTypeSchema.default('outbound_manual'),
     route_plan_id: z.string().uuid('route_plan_id must be a UUID.'),
-    lead_list_ids: z
-      .array(z.string().uuid())
-      .min(1, 'attach at least one lead list.'),
+    lead_list_ids: z.array(z.string().uuid()).default([]),
+    in_group_ids: z.array(z.string().uuid()).default([]),
     base_ratio: z.number().min(0.5).max(10).default(1.0),
     call_window_start: TimeOfDay.optional(),
     call_window_end: TimeOfDay.optional(),
@@ -73,6 +88,21 @@ export const CampaignInputSchema = z
       message:
         'call_window_start and call_window_end must both be set or both be empty.',
       path: ['call_window_end'],
+    },
+  )
+  .refine(
+    (d) => !OUTBOUND_TYPES.has(d.type) || d.lead_list_ids.length > 0,
+    {
+      message:
+        'Outbound and survey campaigns must attach at least one lead list.',
+      path: ['lead_list_ids'],
+    },
+  )
+  .refine(
+    (d) => d.type !== 'inbound_queue' || d.in_group_ids.length > 0,
+    {
+      message: 'Inbound campaigns must attach at least one in-group.',
+      path: ['in_group_ids'],
     },
   );
 export type CampaignInput = z.infer<typeof CampaignInputSchema>;
@@ -91,6 +121,11 @@ export function createCampaign(input: CampaignInput): CreateCampaignResult {
       throw new Error(`Lead list ${lid} not found.`);
     }
   }
+  for (const gid of input.in_group_ids) {
+    if (!getInGroupFromDb(gid)) {
+      throw new Error(`In-group ${gid} not found.`);
+    }
+  }
 
   const id = randomUUID();
   insertCampaign({
@@ -105,6 +140,7 @@ export function createCampaign(input: CampaignInput): CreateCampaignResult {
     max_abandon_pct: input.max_abandon_pct,
   });
   attachCampaignLeadLists(id, input.lead_list_ids);
+  attachCampaignInGroups(id, input.in_group_ids);
   return { id };
 }
 
@@ -118,6 +154,30 @@ export function getCampaign(id: string): CampaignRecord | undefined {
 
 export function getCampaignLeadLists(campaignId: string): string[] {
   return getCampaignLeadListIds(campaignId);
+}
+
+export function getCampaignInGroups(campaignId: string): string[] {
+  return getCampaignInGroupIds(campaignId);
+}
+
+/**
+ * Iter 21 — replace the campaign's in-group attachment with the given
+ * set. Validates each id exists. Use this from edit forms; the create
+ * path uses attachCampaignInGroups directly.
+ */
+export function setCampaignInGroupAttachment(
+  campaignId: string,
+  inGroupIds: string[],
+): void {
+  if (!getCampaignFromDb(campaignId)) {
+    throw new Error(`Campaign ${campaignId} not found.`);
+  }
+  for (const gid of inGroupIds) {
+    if (!getInGroupFromDb(gid)) {
+      throw new Error(`In-group ${gid} not found.`);
+    }
+  }
+  setCampaignInGroups(campaignId, inGroupIds);
 }
 
 export function deleteCampaign(id: string): boolean {

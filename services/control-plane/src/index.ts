@@ -207,12 +207,18 @@ export {
   listCampaigns,
   getCampaign,
   getCampaignLeadLists,
+  getCampaignInGroups,
+  setCampaignInGroupAttachment,
   deleteCampaign,
   updateCampaign,
   setCampaignStatus,
   getCampaignsForRoutePlan,
   getCampaignsForLeadList,
 } from './campaign';
+export {
+  listCampaignsUsingInGroup,
+  getInGroupsForAgent,
+} from './db';
 export type {
   CampaignType,
   CampaignStatus,

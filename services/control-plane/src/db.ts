@@ -241,6 +241,18 @@ function db(): DatabaseSync {
 
     CREATE INDEX IF NOT EXISTS idx_user_in_groups_in_group
       ON user_in_groups(in_group_id);
+
+    -- Iter 21: campaign ↔ in-group attachment. Inbound and blended
+    -- campaigns route calls from their attached in-groups to agents
+    -- logged into the campaign.
+    CREATE TABLE IF NOT EXISTS campaign_in_groups (
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
+      PRIMARY KEY (campaign_id, in_group_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cig_in_group
+      ON campaign_in_groups(in_group_id);
   `);
 
   // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
@@ -1587,6 +1599,92 @@ export function attachCampaignLeadLists(
   );
   for (let i = 0; i < leadListIds.length; i++) {
     stmt.run(campaignId, leadListIds[i]!, i);
+  }
+}
+
+// ----- iter 21: campaign ↔ in-group -----
+
+export function attachCampaignInGroups(
+  campaignId: string,
+  inGroupIds: string[],
+): void {
+  if (inGroupIds.length === 0) return;
+  const stmt = db().prepare(
+    `INSERT OR IGNORE INTO campaign_in_groups (campaign_id, in_group_id) VALUES (?, ?)`,
+  );
+  for (const gid of inGroupIds) stmt.run(campaignId, gid);
+}
+
+export function getCampaignInGroupIds(campaignId: string): string[] {
+  return (db()
+    .prepare(
+      `SELECT in_group_id FROM campaign_in_groups WHERE campaign_id = ? ORDER BY in_group_id ASC`,
+    )
+    .all(campaignId) as unknown as Array<{ in_group_id: string }>).map(
+    (r) => r.in_group_id,
+  );
+}
+
+export function listCampaignsUsingInGroup(
+  inGroupId: string,
+): CampaignRecord[] {
+  return db()
+    .prepare(
+      `SELECT c.* FROM campaigns c
+         JOIN campaign_in_groups cig ON cig.campaign_id = c.id
+        WHERE cig.in_group_id = ?
+        ORDER BY c.created_at DESC`,
+    )
+    .all(inGroupId) as unknown as CampaignRecord[];
+}
+
+/**
+ * In-groups attached to any campaign that this agent is a member of.
+ * The agent console uses this to render "your in-groups" — across every
+ * campaign the user is bound to, deduped.
+ */
+export function getInGroupsForAgent(
+  userId: string,
+): Array<{ in_group_id: string; in_group_name: string; campaign_id: string; campaign_name: string }> {
+  return db()
+    .prepare(
+      `SELECT DISTINCT ig.id AS in_group_id, ig.name AS in_group_name,
+              c.id AS campaign_id, c.name AS campaign_name
+         FROM user_campaigns uc
+         JOIN campaigns c ON c.id = uc.campaign_id
+         JOIN campaign_in_groups cig ON cig.campaign_id = c.id
+         JOIN in_groups ig ON ig.id = cig.in_group_id
+        WHERE uc.user_id = ?
+        ORDER BY c.name ASC, ig.name ASC`,
+    )
+    .all(userId) as unknown as Array<{
+    in_group_id: string;
+    in_group_name: string;
+    campaign_id: string;
+    campaign_name: string;
+  }>;
+}
+
+export function setCampaignInGroups(
+  campaignId: string,
+  inGroupIds: string[],
+): void {
+  const d = db();
+  d.exec('BEGIN');
+  try {
+    d.prepare(`DELETE FROM campaign_in_groups WHERE campaign_id = ?`).run(
+      campaignId,
+    );
+    if (inGroupIds.length > 0) {
+      const stmt = d.prepare(
+        `INSERT INTO campaign_in_groups (campaign_id, in_group_id) VALUES (?, ?)`,
+      );
+      for (const gid of inGroupIds) stmt.run(campaignId, gid);
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
   }
 }
 

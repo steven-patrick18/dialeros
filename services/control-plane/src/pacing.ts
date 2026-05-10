@@ -104,6 +104,7 @@ export interface PacingTickResult {
     | 'no_lead'
     | 'no_agents'
     | 'outside_window'
+    | 'inbound_no_pacer'
     | 'campaign_missing'
     | 'campaign_inactive';
   intent?: DialIntentRecord;
@@ -176,6 +177,10 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
   const campaign = getCampaignFromDb(campaignId);
   if (!campaign) return { outcome: 'campaign_missing' };
   if (campaign.status !== 'active') return { outcome: 'campaign_inactive' };
+  // Iter 21 — inbound_queue waits for calls; nothing to pace.
+  if (campaign.type === 'inbound_queue') {
+    return { outcome: 'inbound_no_pacer' };
+  }
   if (!isWithinCallWindow(campaign)) return { outcome: 'outside_window' };
 
   const plan = getRoutePlanFromDb(campaign.route_plan_id);
@@ -223,6 +228,11 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
 export function startPacer(campaignId: string): boolean {
   const c = container();
   if (c.pacers.has(campaignId)) return false; // already running
+
+  // Iter 21 — don't even spin up an interval for inbound-only campaigns.
+  // They're driven by incoming calls, not by a pacer ticking on the dialer.
+  const camp = getCampaignFromDb(campaignId);
+  if (camp?.type === 'inbound_queue') return false;
 
   const tick = () => {
     try {

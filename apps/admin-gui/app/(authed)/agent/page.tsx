@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import {
   countDialIntentsForUser,
   countDispositionsTodayForUser,
+  getInGroupsForAgent,
   listDialIntentsForUser,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
@@ -18,6 +19,7 @@ export default async function AgentConsole() {
   const total = countDialIntentsForUser(user.id);
   const dispoToday = countDispositionsTodayForUser(user.id);
   const initial = [...listDialIntentsForUser(user.id, 20)].reverse();
+  const inGroups = getInGroupsForAgent(user.id);
 
   return (
     <div>
@@ -50,6 +52,37 @@ export default async function AgentConsole() {
           value={total.toLocaleString()}
           accent={total > 0 ? 'text-fg' : 'text-fg-subtle'}
         />
+      </div>
+
+      <div className="border border-border rounded p-4 max-w-4xl mb-6">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          My in-groups ({inGroups.length})
+        </h2>
+        {inGroups.length === 0 ? (
+          <p className="text-fg-subtle text-sm">
+            No inbound queues attached. An admin assigns in-groups to a
+            campaign you&apos;re a member of so transferred / inbound calls
+            can land with you.
+          </p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {inGroups.map((g) => (
+              <li
+                key={`${g.campaign_id}-${g.in_group_id}`}
+                className="flex items-center gap-3"
+              >
+                <span className="font-mono">{g.in_group_name}</span>
+                <span className="text-fg-subtle text-xs">
+                  via {g.campaign_name}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-fg-subtle mt-3">
+          Live inbound delivery arrives with the FreeSWITCH bridge. For
+          now this is the routing surface only.
+        </p>
       </div>
 
       <div className="border border-border rounded p-4 max-w-4xl">

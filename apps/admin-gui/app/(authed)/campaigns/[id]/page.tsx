@@ -4,7 +4,9 @@ import {
   getActiveAgentsForCampaign,
   getCampaign,
   getCampaignAllowedUserIds,
+  getCampaignInGroups,
   getCampaignLeadLists,
+  getInGroup,
   getLeadList,
   getRoutePlan,
   getUser,
@@ -42,6 +44,9 @@ export default async function CampaignDetail({
   );
   const activeAgents = getActiveAgentsForCampaign(id);
   const insideWindow = isCampaignWithinCallWindow(c);
+  const inGroupIds = getCampaignInGroups(id);
+  const inGroups = inGroupIds.map((gid) => getInGroup(gid)).filter(Boolean);
+  const isInbound = c.type === 'inbound_queue';
 
   return (
     <div>
@@ -82,7 +87,11 @@ export default async function CampaignDetail({
 
         <Card title={`Lead lists (${leadLists.length} attached)`}>
           {leadLists.length === 0 ? (
-            <p className="text-fg-subtle text-sm">none</p>
+            <p className="text-fg-subtle text-sm">
+              {isInbound
+                ? 'Not used — inbound campaigns are driven by in-groups.'
+                : 'none'}
+            </p>
           ) : (
             <ul className="space-y-1 text-sm">
               {leadLists.map((l) =>
@@ -148,6 +157,39 @@ export default async function CampaignDetail({
             <p className="text-fg-subtle text-sm">No window restriction.</p>
           )}
         </Card>
+      </div>
+
+      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          In-groups ({inGroups.length} attached)
+        </h2>
+        {inGroups.length === 0 ? (
+          <p className="text-fg-subtle text-sm">
+            {isInbound
+              ? 'No in-groups attached — inbound calls have nowhere to land.'
+              : 'No in-groups attached. Add one to receive transferred or blended inbound calls on this campaign.'}
+          </p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {inGroups.map((g) =>
+              g ? (
+                <li key={g.id} className="flex items-center gap-3">
+                  <Link href={`/in-groups/${g.id}`} className="hover:underline">
+                    {g.name}
+                  </Link>
+                  <span className="text-fg-subtle text-xs uppercase">
+                    {g.type}
+                  </span>
+                  {g.enabled === 0 && (
+                    <span className="bg-card-hover/40 text-fg-muted border border-border px-2 py-0.5 rounded text-xs">
+                      DISABLED
+                    </span>
+                  )}
+                </li>
+              ) : null,
+            )}
+          </ul>
+        )}
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
