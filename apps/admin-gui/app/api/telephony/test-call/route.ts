@@ -26,14 +26,20 @@ const TestCallBody = z.object({
   carrier_id: z.string().uuid(),
   to: z.string().min(4).max(40),
   cid: z.string().min(0).max(40).optional(),
-  app: z.enum(['echo', 'playback', 'park']).default('echo'),
+  app: z.enum(['echo', 'playback', 'park', 'amd-detect']).default('echo'),
   timeout_seconds: z.number().int().min(5).max(120).default(30),
 });
 
-const APP_DIAL: Record<'echo' | 'playback' | 'park', string> = {
+const APP_DIAL: Record<'echo' | 'playback' | 'park' | 'amd-detect', string> = {
   echo: '&echo',
   playback: '&playback(tone_stream://%(2000,4000,440,480))',
   park: '&park',
+  // Iter 35 — answering-machine detection. amd_v2 listens for ~3s after
+  // answer and decides HUMAN/MACHINE/UNSURE, sets variable_amd_result,
+  // then breaks the call. The result lands in /api/telephony/calls/[uuid]
+  // via uuid_dump (live) or in CHANNEL_HANGUP_COMPLETE for fs-events
+  // pickup.
+  'amd-detect': '&amd_v2(break_on_machine,async:false)',
 };
 
 export async function POST(req: NextRequest) {

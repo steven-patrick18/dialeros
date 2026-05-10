@@ -238,6 +238,56 @@ function escapeChannelValue(v: string): string {
   return v.replace(/[,{}'\n\r]/g, '_');
 }
 
+/**
+ * Iter 35 — query the runtime state of a channel by UUID.
+ * `uuid_dump` returns every channel variable as URL-encoded
+ * `Name: Value` pairs. Returns `null` when FS has no such channel
+ * (e.g. it already hung up).
+ */
+export async function uuidDump(
+  uuid: string,
+  opts: EslOptions = {},
+): Promise<Record<string, string> | null> {
+  let raw: string;
+  try {
+    raw = await eslApi(`uuid_dump ${uuid}`, opts);
+  } catch {
+    return null;
+  }
+  if (/^-ERR/.test(raw) || /^\+OK\s*$/.test(raw)) return null;
+  const out: Record<string, string> = {};
+  for (const line of raw.split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx === -1) continue;
+    const k = line.slice(0, idx).trim();
+    const v = line.slice(idx + 1).trim();
+    if (!k) continue;
+    try {
+      out[k] = decodeURIComponent(v.replace(/\+/g, ' '));
+    } catch {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Iter 35 — hang up a channel by UUID. Returns true on +OK,
+ * false if the channel is already gone.
+ */
+export async function uuidKill(
+  uuid: string,
+  cause: string = 'NORMAL_CLEARING',
+  opts: EslOptions = {},
+): Promise<boolean> {
+  try {
+    const reply = (await eslApi(`uuid_kill ${uuid} ${cause}`, opts)).trim();
+    return reply.startsWith('+OK');
+  } catch {
+    return false;
+  }
+}
+
 export async function getFreeSwitchHealth(
   opts: EslOptions = {},
 ): Promise<FreeSwitchHealth> {
