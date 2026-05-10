@@ -160,6 +160,24 @@ export {
   sweepOnce as sweepRecordingsOnce,
 } from './recording-retention';
 
+// Remote agents (iter 57 — external SIP endpoints in the pacing pool)
+export {
+  RemoteAgentInputSchema,
+  RemoteAgentUpdateInputSchema,
+  createRemoteAgent,
+  updateRemoteAgent,
+  listRemoteAgents,
+  getRemoteAgent,
+  deleteRemoteAgent,
+  remoteLineCapacity,
+} from './remote-agent';
+export type {
+  RemoteAgentInput,
+  RemoteAgentUpdateInput,
+  RemoteAgentRecord,
+  CreateRemoteAgentResult,
+} from './remote-agent';
+
 // Carriers
 export {
   CarrierTransportSchema,

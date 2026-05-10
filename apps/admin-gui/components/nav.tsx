@@ -47,6 +47,7 @@ export function Nav({
             <NavLink href="/in-groups">In-Groups</NavLink>
             <NavLink href="/dids">DIDs</NavLink>
             <NavLink href="/users">Users</NavLink>
+            <NavLink href="/remote-agents">Remote Agents</NavLink>
             <NavLink href="/audit">Audit Log</NavLink>
             <NavLink href="/settings/telephony">Telephony</NavLink>
             <NavLink href="/settings/domain">Domain &amp; TLS</NavLink>

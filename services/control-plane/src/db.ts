@@ -272,6 +272,20 @@ function db(): DatabaseSync {
       UNIQUE(campaign_id, lead_id)
     );
 
+    CREATE TABLE IF NOT EXISTS remote_agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      sip_uri TEXT NOT NULL,
+      telephony_node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL,
+      lines INTEGER NOT NULL DEFAULT 1,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_remote_agents_enabled
+      ON remote_agents(enabled);
+
     CREATE INDEX IF NOT EXISTS idx_lead_hopper_campaign
       ON lead_hopper(campaign_id, id);
 
@@ -2661,4 +2675,95 @@ export function getAvailableAgentsForCampaign(
   if (paused.length === 0) return rows;
   const pausedSet = new Set(paused.map((p) => p.user_id));
   return rows.filter((r) => !pausedSet.has(r.id));
+}
+
+// =====================================================================
+// remote_agents (iter 57)
+// =====================================================================
+//
+// External SIP endpoints — typically hard phones at remote offices —
+// that the pacer can bridge calls to instead of (or alongside)
+// browser-based local agents. Each has a `lines` capacity; iter 58
+// folds that into the pacing formula
+// `(local_agents + Σ remote_agent_lines) × dial_level`.
+
+export interface RemoteAgentRecord {
+  id: string;
+  name: string;
+  sip_uri: string;
+  telephony_node_id: string | null;
+  lines: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function insertRemoteAgent(rec: {
+  id: string;
+  name: string;
+  sip_uri: string;
+  telephony_node_id: string | null;
+  lines: number;
+  enabled: boolean;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO remote_agents
+         (id, name, sip_uri, telephony_node_id, lines, enabled)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.name,
+      rec.sip_uri,
+      rec.telephony_node_id,
+      rec.lines,
+      rec.enabled ? 1 : 0,
+    );
+}
+
+export function listRemoteAgentsFromDb(): RemoteAgentRecord[] {
+  return db()
+    .prepare(`SELECT * FROM remote_agents ORDER BY name ASC`)
+    .all() as unknown as RemoteAgentRecord[];
+}
+
+export function getRemoteAgentFromDb(id: string): RemoteAgentRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM remote_agents WHERE id = ?`)
+    .get(id) as unknown as RemoteAgentRecord | undefined;
+}
+
+export function updateRemoteAgentFields(
+  id: string,
+  updates: Partial<{
+    name: string;
+    sip_uri: string;
+    telephony_node_id: string | null;
+    lines: number;
+    enabled: boolean;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    if (key === 'enabled') values.push(value ? 1 : 0);
+    else values.push(value as string | number | null);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE remote_agents SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+export function deleteRemoteAgentFromDb(id: string): boolean {
+  const result = db()
+    .prepare(`DELETE FROM remote_agents WHERE id = ?`)
+    .run(id);
+  return Number(result.changes) > 0;
 }
