@@ -71,6 +71,23 @@ cat > "$ESL_CONF" <<'EOF'
 EOF
 chown freeswitch:freeswitch "$ESL_CONF" || true
 
+# === step 3b: gateway directory perms (iter 30) ===
+# The admin-gui (running as dialeros) needs to write per-carrier
+# gateway XML into /etc/freeswitch/sip_profiles/external/. Add the
+# dialeros user to the freeswitch group and make the directory
+# group-writable so its writes land without sudo.
+GATEWAY_DIR=/etc/freeswitch/sip_profiles/external
+log "wiring $GATEWAY_DIR for dialeros user (carrier push)"
+mkdir -p "$GATEWAY_DIR"
+chgrp freeswitch "$GATEWAY_DIR"
+chmod 2775 "$GATEWAY_DIR"  # setgid so new files inherit the freeswitch group
+if id -u dialeros >/dev/null 2>&1; then
+  if ! id -nG dialeros | tr ' ' '\n' | grep -qx freeswitch; then
+    usermod -a -G freeswitch dialeros
+    log "added dialeros user to freeswitch group (admin-gui restart needed to pick up)"
+  fi
+fi
+
 # === step 4: enable + start ===
 log "enabling + starting freeswitch.service"
 systemctl daemon-reload
@@ -84,6 +101,16 @@ if systemctl is-active --quiet freeswitch; then
   fs_cli -x 'status' 2>/dev/null | head -5 || log "(fs_cli not yet ready, ESL should still respond)"
 else
   fail "freeswitch failed to start; check journalctl -u freeswitch"
+fi
+
+# === step 6: restart admin-gui so dialeros picks up freeswitch group ===
+# The usermod above doesn't affect already-running processes; without a
+# restart, the admin-gui can't write into the gateway directory. Defer
+# the restart 5s so the API call that spawned this script can return
+# its success response first.
+if id -u dialeros >/dev/null 2>&1 && systemctl is-active --quiet dialeros-admin; then
+  log "scheduling dialeros-admin restart in 5s (group membership pickup)"
+  systemd-run --on-active=5s --unit=dialeros-post-install systemctl restart dialeros-admin >/dev/null 2>&1 || true
 fi
 
 log "install complete"

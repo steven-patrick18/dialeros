@@ -7,6 +7,7 @@ import {
 } from '@dialeros/control-plane';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteCarrierButton } from './delete-button';
+import { FreeSwitchPanel } from './fs-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -205,6 +206,10 @@ export default async function CarrierDetail({
           ]}
           helpText="Active quality probing is a planned feature."
         />
+      </div>
+
+      <div className="mt-6">
+        <FreeSwitchPanel carrierId={carrier.id} />
       </div>
 
       <dl className="mt-6 grid grid-cols-2 gap-3 text-xs max-w-4xl">
