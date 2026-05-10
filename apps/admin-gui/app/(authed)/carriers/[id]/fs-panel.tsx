@@ -10,7 +10,12 @@ interface GatewayStatus {
   error?: string;
 }
 
+// State is now formatted as "<reg-state>/<status>" (e.g. NOREG/UP for a
+// healthy ip-acl gateway, REGED/UP for digest, NOREG/DOWN when OPTIONS
+// pings fail). Match the most-specific combos first.
 const STATE_COLORS: Record<string, string> = {
+  'REGED/UP': 'bg-success/15 text-success border-success/40',
+  'NOREG/UP': 'bg-success/15 text-success border-success/40',
   REGED: 'bg-success/15 text-success border-success/40',
   TRYING: 'bg-warn/15 text-warn border-warn/40',
   REGISTER: 'bg-warn/15 text-warn border-warn/40',
@@ -20,6 +25,18 @@ const STATE_COLORS: Record<string, string> = {
   NOREG: 'bg-fg-subtle/15 text-fg-muted border-border',
   NOAVAIL: 'bg-error/15 text-error border-error/40',
 };
+
+function colorFor(state: string | undefined): string {
+  if (!state) return 'bg-fg-subtle/15 text-fg-muted border-border';
+  if (STATE_COLORS[state]) return STATE_COLORS[state];
+  // Fall back to matching just the part before the slash (REGED, NOREG)
+  // or whatever single token we got.
+  const head = state.split('/')[0];
+  if (head && STATE_COLORS[head]) return STATE_COLORS[head];
+  // Anything containing DOWN reads as a problem.
+  if (/DOWN/i.test(state)) return 'bg-error/15 text-error border-error/40';
+  return 'bg-fg-subtle/15 text-fg-muted border-border';
+}
 
 export function FreeSwitchPanel({ carrierId }: { carrierId: string }) {
   const [status, setStatus] = useState<GatewayStatus | null>(null);
@@ -87,10 +104,7 @@ export function FreeSwitchPanel({ carrierId }: { carrierId: string }) {
 
   const stateBadge = status?.state ? (
     <span
-      className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${
-        STATE_COLORS[status.state] ??
-        'bg-fg-subtle/15 text-fg-muted border-border'
-      }`}
+      className={`text-[10px] uppercase px-1.5 py-0.5 rounded border ${colorFor(status.state)}`}
     >
       {status.state}
     </span>

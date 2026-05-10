@@ -173,17 +173,19 @@ export interface GatewayStatus {
 /**
  * Parse the output of `sofia status gateway <name>`.
  *
- * A real FreeSWITCH response looks like:
+ * Real FreeSWITCH 1.10+ output is whitespace-separated, NOT colon-
+ * separated (yes, the docs lie). Lines look like:
  *
- *   Profile  : external
- *   Gateway  : dialeros-<id>
- *   Username : test_user
- *   Realm    : sip.carrier.com
- *   Proxy    : sip.carrier.com
+ *   Name        dialeros-<id>
+ *   Profile     external
  *   ...
- *   Status   : UP
- *   State    : REGED
- *   Ping-Time : 35.42ms
+ *   PingTime    35.42
+ *   State       NOREG
+ *   Status      UP
+ *
+ * For ip-acl carriers (no register), State is NOREG and Status is UP
+ * once OPTIONS pings are disabled. For digest, State should be REGED
+ * once the carrier accepts the registration.
  */
 export async function gatewayStatusFor(
   carrier: Pick<CarrierRecord, 'id'>,
@@ -199,13 +201,22 @@ export async function gatewayStatusFor(
   if (/Invalid Gateway/i.test(raw)) {
     return { pushed: false };
   }
-  const stateMatch = raw.match(/^State\s*:\s*(\S+)/m);
-  const pingMatch = raw.match(/^Ping-Time\s*:\s*(.+?)$/m);
+  // Each header line is "<key><whitespace><value>" — no colon.
+  const stateMatch = raw.match(/^State\s+(\S+)/m);
+  const statusMatch = raw.match(/^Status\s+(.+?)$/m);
+  const pingMatch = raw.match(/^PingTime\s+([0-9.]+)/m);
   return {
     pushed: true,
-    state: stateMatch?.[1],
+    // Surface "<State>/<Status>" so the UI shows e.g. "NOREG/UP" for an
+    // ip-acl gateway that's accepting calls. State alone is misleading
+    // because NOREG sounds bad but is correct for ip-acl.
+    state:
+      stateMatch?.[1] && statusMatch?.[1]
+        ? `${stateMatch[1]}/${statusMatch[1].trim()}`
+        : stateMatch?.[1] ?? statusMatch?.[1]?.trim(),
     pingTime: pingMatch?.[1]?.trim(),
-    rawSnippet: raw.split('\n').slice(0, 12).join('\n'),
+    // Bump the snippet to 24 lines so State / Status / Ping make it in.
+    rawSnippet: raw.split('\n').slice(0, 24).join('\n'),
   };
 }
 
