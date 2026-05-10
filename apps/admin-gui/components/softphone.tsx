@@ -282,6 +282,23 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       if (spkAnalyserRef.current) return; // already built
       try {
         const stream = new MediaStream([track]);
+        // Iter 54b — the <audio> element is required even though we
+        // play through AudioContext. Chrome (and Firefox) only feed
+        // PCM samples to MediaStreamAudioSourceNode while the same
+        // remote track is "consumed" by an HTMLMediaElement —
+        // without that, the decoder stays paused and the AudioContext
+        // sees silence even though RTP packets are arriving (RX>0,
+        // SPK level=0 — exactly the failure state from iter 54
+        // diagnostics). Attach the stream to a muted <audio>
+        // element so it kicks the decoder, then route real
+        // playback through the AudioContext gain → destination.
+        if (audioRef.current) {
+          audioRef.current.srcObject = stream;
+          audioRef.current.muted = true;
+          audioRef.current.play().catch(() => {
+            /* autoplay blocked — muted elements should always autoplay */
+          });
+        }
         const src = ctx.createMediaStreamSource(stream);
         const an = ctx.createAnalyser();
         an.fftSize = 256;
