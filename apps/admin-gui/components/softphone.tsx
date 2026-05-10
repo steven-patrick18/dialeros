@@ -97,11 +97,18 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const uaRef = useRef<UserAgent | null>(null);
   const registererRef = useRef<Registerer | null>(null);
   const sessionRef = useRef<Session | null>(null);
-  // Iter 50 — Web Audio plumbing for VU meters. Lazily-created shared
-  // AudioContext; per-call analyser nodes torn down on hangup.
+  // Iter 50 / 51 — Web Audio plumbing. AudioContext is the playback
+  // path AND the analyser source — using it just for VU while the
+  // <audio> element played the same stream caused Chrome/Firefox to
+  // hijack the stream and mute the audio element. Now: source →
+  // analyser → gain → ctx.destination is the only output. The gain
+  // node also drives the volume slider + hold (gain=0).
   const audioCtxRef = useRef<AudioContext | null>(null);
   const micAnalyserRef = useRef<AnalyserNode | null>(null);
   const spkAnalyserRef = useRef<AnalyserNode | null>(null);
+  const remoteGainRef = useRef<GainNode | null>(null);
+  const remoteSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const rafRef = useRef<number | null>(null);
 
   // Set up the UA once.
@@ -229,15 +236,19 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Iter 50 — robust media attach. Earlier versions wired pc.ontrack
-  // BEFORE invitation.accept() completed, which raced with sip.js
-  // populating receivers during SDP processing — by the time our
-  // listener was set the ontrack event for the remote audio had
-  // already fired and we lost it. Customer audio came up silent.
-  // Now we run on stateChange → Established (peer connection is
-  // active, receivers populated) and assemble the remote stream
-  // ourselves from getReceivers(). ontrack still listens for late
-  // additions (re-INVITEs, etc.).
+  // Iter 51 — AudioContext-only playback. Routing the remote stream
+  // through both an <audio> element AND createMediaStreamSource()
+  // makes Chrome/Firefox hijack the stream and silently mute the
+  // <audio>. Customer audio stayed inaudible even though VU bars
+  // showed levels. Fix: skip the <audio> element entirely. Build a
+  // single signal chain inside the AudioContext —
+  //
+  //   remoteStream → MediaStreamSource → AnalyserNode (VU)
+  //                                    → GainNode (volume + hold)
+  //                                    → ctx.destination
+  //
+  // The mic side stays a measurement-only branch (no destination
+  // connection — feeding it to speakers would cause echo).
   const attachMedia = useCallback((session: Session) => {
     const sdh = session.sessionDescriptionHandler;
     if (!sdh || !('peerConnection' in sdh)) return;
@@ -253,20 +264,6 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    if (audioRef.current) {
-      audioRef.current.srcObject = remoteStream;
-      audioRef.current.muted = false;
-      // Browsers can throw NotAllowedError on play() if autoplay
-      // policy decided not to allow it. Safe to swallow — user can
-      // toggle the volume slider to nudge it.
-      audioRef.current.play().catch(() => {
-        /* autoplay policy */
-      });
-    }
-
-    // VU meters. AudioContext requires a user gesture on Chrome —
-    // by the time a call connects the agent has already clicked
-    // Call / accepted, so this is fine.
     try {
       if (!audioCtxRef.current) {
         const Ctx =
@@ -278,23 +275,36 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       const ctx = audioCtxRef.current;
       if (ctx.state === 'suspended') void ctx.resume();
 
+      // REMOTE: source → analyser → gain → destination. Volume +
+      // hold both drive the gain.
+      if (remoteStream.getAudioTracks().length > 0) {
+        const remoteSrc = ctx.createMediaStreamSource(remoteStream);
+        const an = ctx.createAnalyser();
+        an.fftSize = 256;
+        const gain = ctx.createGain();
+        gain.gain.value = state.volume;
+        remoteSrc.connect(an);
+        an.connect(gain);
+        gain.connect(ctx.destination);
+        spkAnalyserRef.current = an;
+        remoteGainRef.current = gain;
+        remoteSourceRef.current = remoteSrc;
+      }
+
+      // LOCAL: source → analyser only. Mic must NEVER reach the
+      // destination — that would echo the agent's own voice into
+      // their headphones.
       const localStream = new MediaStream();
       pc.getSenders().forEach((s) => {
         if (s.track && s.track.kind === 'audio') localStream.addTrack(s.track);
       });
       if (localStream.getAudioTracks().length > 0) {
-        const src = ctx.createMediaStreamSource(localStream);
+        const micSrc = ctx.createMediaStreamSource(localStream);
         const an = ctx.createAnalyser();
         an.fftSize = 256;
-        src.connect(an);
+        micSrc.connect(an);
         micAnalyserRef.current = an;
-      }
-      if (remoteStream.getAudioTracks().length > 0) {
-        const src = ctx.createMediaStreamSource(remoteStream);
-        const an = ctx.createAnalyser();
-        an.fftSize = 256;
-        src.connect(an);
-        spkAnalyserRef.current = an;
+        micSourceRef.current = micSrc;
       }
 
       const buf = new Uint8Array(256);
@@ -337,19 +347,29 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.warn('softphone: VU setup failed', e);
+      console.warn('softphone: media attach failed', e);
     }
-  }, []);
+  }, [state.volume]);
 
   const detachMedia = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    micAnalyserRef.current?.disconnect();
-    spkAnalyserRef.current?.disconnect();
+    try {
+      remoteSourceRef.current?.disconnect();
+      micSourceRef.current?.disconnect();
+      micAnalyserRef.current?.disconnect();
+      spkAnalyserRef.current?.disconnect();
+      remoteGainRef.current?.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    remoteSourceRef.current = null;
+    micSourceRef.current = null;
     micAnalyserRef.current = null;
     spkAnalyserRef.current = null;
+    remoteGainRef.current = null;
     setState((prev) => ({ ...prev, micLevel: 0, spkLevel: 0 }));
   }, []);
 
@@ -413,10 +433,16 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
 
   const setVolume = useCallback((v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
-    if (audioRef.current) {
-      audioRef.current.volume = clamped;
-    }
-    setState((prev) => ({ ...prev, volume: clamped }));
+    // Iter 51 — playback runs through the AudioContext GainNode now,
+    // not the <audio> element. While on hold the gain stays pinned
+    // at 0; the slider value is remembered so we can restore on
+    // unhold.
+    setState((prev) => {
+      if (remoteGainRef.current && !prev.onHold) {
+        remoteGainRef.current.gain.value = clamped;
+      }
+      return { ...prev, volume: clamped };
+    });
   }, []);
 
   const hangup = useCallback(async () => {
@@ -459,10 +485,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Iter 47 — local-only hold: mute the mic so far end hears nothing,
-  // and mute the audio element so the agent doesn't hear anything
-  // either. No SIP re-INVITE / a=sendonly yet — that's a future iter.
-  // Sufficient for the agent UX of "park this call privately".
+  // Iter 47 / 51 — local-only hold: silence the mic sender so the
+  // far end hears nothing, and pin the playback GainNode to 0 so
+  // the agent doesn't hear them either. No SIP re-INVITE /
+  // a=sendonly yet — that's a future iter.
   const toggleHold = useCallback(() => {
     const session = sessionRef.current;
     if (!session) return;
@@ -472,6 +498,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     let nowHeld = false;
     setState((prev) => {
       nowHeld = !prev.onHold;
+      // Pin gain to 0 on hold; restore the slider value on unhold.
+      if (remoteGainRef.current) {
+        remoteGainRef.current.gain.value = nowHeld ? 0 : prev.volume;
+      }
       return { ...prev, onHold: nowHeld, muted: nowHeld ? true : prev.muted };
     });
     pc.getSenders().forEach((sender) => {
