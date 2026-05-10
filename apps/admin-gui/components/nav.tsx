@@ -10,7 +10,7 @@ export function Nav({
   initialTheme,
 }: {
   user: { username: string; role: string };
-  initialTheme: 'light' | 'dark';
+  initialTheme: 'light' | 'dark' | 'vicidial';
 }) {
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);

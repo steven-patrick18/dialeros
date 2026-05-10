@@ -13,8 +13,10 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const theme = await getCurrentTheme();
+  const themeClass =
+    theme === 'dark' ? 'dark' : theme === 'vicidial' ? 'vicidial' : '';
   return (
-    <html lang="en" className={theme === 'dark' ? 'dark' : ''}>
+    <html lang="en" className={themeClass}>
       <body className="min-h-screen">{children}</body>
     </html>
   );
