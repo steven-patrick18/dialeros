@@ -16,6 +16,11 @@ import {
   updateUserFields,
   type UserRecord,
 } from './db';
+import {
+  ALL_PERMISSION_SLUGS,
+  serializePermissions,
+  type PermissionSlug,
+} from './permissions';
 
 // Reuses the same scrypt scheme from auth.ts. Kept in sync — if auth.ts
 // changes its scheme, change here too.
@@ -51,6 +56,14 @@ export const CreateUserInputSchema = z.object({
 });
 export type CreateUserInput = z.infer<typeof CreateUserInputSchema>;
 
+const PermissionSlugSchema = z
+  .string()
+  .refine(
+    (s): s is PermissionSlug =>
+      (ALL_PERMISSION_SLUGS as readonly string[]).includes(s),
+    'unknown permission',
+  );
+
 export const UpdateUserInputSchema = z.object({
   email: z
     .string()
@@ -62,6 +75,9 @@ export const UpdateUserInputSchema = z.object({
   skill_tier: SkillTierSchema.optional(),
   password: z.string().min(8).optional(),
   manual_dial: z.boolean().optional(),
+  // Iter 43 — explicit ACL grants. Pass null to clear the override
+  // and fall back to the role's defaults.
+  permissions: z.array(PermissionSlugSchema).nullable().optional(),
 });
 export type UpdateUserInput = z.infer<typeof UpdateUserInputSchema>;
 
@@ -117,6 +133,12 @@ export function updateUser(
   }
   if (input.skill_tier !== undefined) updates.skill_tier = input.skill_tier;
   if (input.manual_dial !== undefined) updates.manual_dial = input.manual_dial;
+  if (input.permissions !== undefined) {
+    updates.permissions =
+      input.permissions === null
+        ? null
+        : serializePermissions(input.permissions);
+  }
 
   let passwordChanged = false;
   if (input.password) {

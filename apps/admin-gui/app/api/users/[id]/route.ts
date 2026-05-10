@@ -3,9 +3,11 @@ import {
   UpdateUserInputSchema,
   appendAudit,
   deactivateUser,
+  effectivePermissions,
   getUser,
   reactivateUser,
   updateUser,
+  userHasPermission,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -36,6 +38,9 @@ export async function GET(
     display_name: u.display_name,
     skill_tier: u.skill_tier,
     is_active: u.is_active === 1,
+    manual_dial: u.manual_dial === 1,
+    permissions: effectivePermissions(u),
+    permissions_overridden: u.permissions !== null,
     created_at: u.created_at,
     updated_at: u.updated_at,
   });
@@ -49,8 +54,15 @@ export async function PATCH(
   if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (me.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  // Iter 43 — admin OR a non-admin user holding `users.modify`. The
+  // role + permissions + password fields stay admin-only below to
+  // prevent privilege escalation by anyone the admin granted basic
+  // user-edit access to.
+  if (me.role !== 'admin' && !userHasPermission(me, 'users.modify')) {
+    return NextResponse.json(
+      { error: 'users.modify permission required' },
+      { status: 403 },
+    );
   }
   const { id } = await ctx.params;
   const target = getUser(id);
@@ -86,6 +98,17 @@ export async function PATCH(
       },
       { status: 400 },
     );
+  }
+
+  // Iter 43 — privilege-escalation guard. Non-admin editors can change
+  // soft fields (display_name, email, skill_tier, manual_dial) but not
+  // role / password / permissions. Strip those silently rather than
+  // 403'ing the whole request — the audit log still captures what the
+  // editor actually changed.
+  if (me.role !== 'admin') {
+    delete parsed.data.role;
+    delete parsed.data.password;
+    delete parsed.data.permissions;
   }
 
   const result = updateUser(id, parsed.data);

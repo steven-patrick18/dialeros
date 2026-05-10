@@ -337,6 +337,11 @@ function db(): DatabaseSync {
     // outbound calls. Default false — most agents only auto-answer
     // pacer-bridged calls.
     "ALTER TABLE users ADD COLUMN manual_dial INTEGER NOT NULL DEFAULT 0",
+    // Iter 43: fine-grained ACL. JSON array of permission slugs the
+    // user has been granted. NULL → fall back to the role's defaults
+    // (defaultPermissionsForRole in user-mgmt). Admins implicitly
+    // have every permission regardless of this column.
+    "ALTER TABLE users ADD COLUMN permissions TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -465,6 +470,7 @@ export interface UserRecord {
   skill_tier: string;
   is_active: number;
   manual_dial: number;
+  permissions: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -526,6 +532,7 @@ export function updateUserFields(
     is_active: boolean;
     password_hash: string;
     manual_dial: boolean;
+    permissions: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

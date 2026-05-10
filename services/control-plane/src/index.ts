@@ -75,6 +75,18 @@ export {
   getUser,
 } from './user-mgmt';
 
+// Permissions / ACL (iter 43)
+export {
+  PERMISSION_CATALOG,
+  ALL_PERMISSION_SLUGS,
+  defaultPermissionsForRole,
+  effectivePermissions,
+  parsePermissions,
+  serializePermissions,
+  userHasPermission,
+} from './permissions';
+export type { PermissionSlug } from './permissions';
+
 // User attachments (iter 13: user ↔ campaigns / in-groups)
 export {
   getUserCampaignIds,

@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
+  PERMISSION_CATALOG,
+  effectivePermissions,
   getUser,
   getUserCampaignIds,
   getUserInGroupIds,
@@ -12,6 +14,7 @@ import { InlineCardForm } from '@/components/inline-card-form';
 import { DeactivateButton } from './deactivate-button';
 import { AttachmentsForm } from './attachments-form';
 import { PhonesPanel } from './phones-panel';
+import { AccessPanel } from './access-panel';
 
 const ROLES = ['admin', 'supervisor', 'operator', 'agent'] as const;
 const TIERS = ['new', 'certified', 'expert'] as const;
@@ -117,6 +120,24 @@ export default async function UserDetail({
               hint: 'Leave blank to keep the current password. Minimum 8 characters.',
             },
           ]}
+        />
+      </div>
+
+      <div className="border border-border rounded p-4 max-w-3xl mb-6">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          Access
+        </h2>
+        <AccessPanel
+          userId={u.id}
+          role={u.role}
+          isAdmin={u.role === 'admin'}
+          catalog={PERMISSION_CATALOG.map((p) => ({
+            slug: p.slug,
+            label: p.label,
+            group: p.group,
+          }))}
+          initialGranted={effectivePermissions(u)}
+          initialOverridden={u.permissions !== null}
         />
       </div>
 
