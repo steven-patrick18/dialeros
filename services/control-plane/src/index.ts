@@ -83,6 +83,7 @@ export {
   getInGroupAllowedUserIds,
   setUserCampaigns,
   setUserInGroups,
+  getActiveAgentsForCampaign,
 } from './db';
 export type {
   Role,

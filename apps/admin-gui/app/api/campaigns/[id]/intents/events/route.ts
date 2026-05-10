@@ -1,11 +1,20 @@
 import type { NextRequest } from 'next/server';
 import {
   getCampaign,
+  getUser,
   listIntentsForCampaign,
   subscribeToIntents,
   type DialIntentRecord,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
+
+function enrich(intent: DialIntentRecord) {
+  let assigned_username: string | null = null;
+  if (intent.assigned_user_id) {
+    assigned_username = getUser(intent.assigned_user_id)?.username ?? null;
+  }
+  return { ...intent, assigned_username };
+}
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,12 +62,12 @@ export async function GET(
       // Replay last 20 intents (most recent first → reverse for chronological)
       const recent = [...listIntentsForCampaign(id, 20)].reverse();
       for (const intent of recent) {
-        send({ type: 'intent', intent });
+        send({ type: 'intent', intent: enrich(intent) });
       }
       send({ type: 'replay-done' });
 
       const unsubscribe = subscribeToIntents(id, (intent: DialIntentRecord) => {
-        send({ type: 'intent', intent });
+        send({ type: 'intent', intent: enrich(intent) });
       });
 
       const cleanup = () => {

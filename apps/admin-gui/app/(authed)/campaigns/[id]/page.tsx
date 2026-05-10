@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  getActiveAgentsForCampaign,
   getCampaign,
   getCampaignAllowedUserIds,
   getCampaignLeadLists,
@@ -38,6 +39,7 @@ export default async function CampaignDetail({
     (acc, l) => acc + (l ? leadCountFor(l.id) : 0),
     0,
   );
+  const activeAgents = getActiveAgentsForCampaign(id);
 
   return (
     <div>
@@ -152,9 +154,15 @@ export default async function CampaignDetail({
         </h2>
         <StatusToggle id={c.id} current={c.status} />
         <p className="text-xs text-fg-subtle mt-3">
-          ACTIVE starts the simulated pacer (one dial intent every ~3s).
-          PAUSED / ARCHIVED stops it.
+          ACTIVE starts the pacer (one dial intent every ~3s, round-robin
+          across active attached agents). PAUSED / ARCHIVED stops it.
         </p>
+        {c.status === 'active' && activeAgents.length === 0 && (
+          <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
+            No active agents attached — pacer is running but cannot dial.
+            Attach an active agent below to start delivering calls.
+          </p>
+        )}
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
@@ -168,7 +176,10 @@ export default async function CampaignDetail({
         />
       </div>
 
-      <AllowedUsersCard campaignId={c.id} />
+      <AllowedUsersCard
+        campaignId={c.id}
+        activeAgentCount={activeAgents.length}
+      />
 
       <dl className="grid grid-cols-2 gap-3 text-xs max-w-4xl">
         <Detail label="ID" value={<span className="font-mono">{c.id}</span>} />
@@ -227,13 +238,23 @@ function Detail({
   );
 }
 
-function AllowedUsersCard({ campaignId }: { campaignId: string }) {
+function AllowedUsersCard({
+  campaignId,
+  activeAgentCount,
+}: {
+  campaignId: string;
+  activeAgentCount: number;
+}) {
   const userIds = getCampaignAllowedUserIds(campaignId);
   const users = userIds.map((id) => getUser(id)).filter(Boolean);
   return (
     <div className="border border-border rounded p-4 mb-6 max-w-4xl">
       <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
-        Attached agents ({users.length})
+        Attached users ({users.length}){' '}
+        <span className="text-fg-subtle normal-case tracking-normal ml-1">
+          — {activeAgentCount} active agent
+          {activeAgentCount === 1 ? '' : 's'} eligible to receive calls
+        </span>
       </h2>
       {users.length === 0 ? (
         <p className="text-fg-subtle text-sm">

@@ -250,6 +250,9 @@ function db(): DatabaseSync {
     "ALTER TABLE users ADD COLUMN display_name TEXT",
     "ALTER TABLE users ADD COLUMN skill_tier TEXT NOT NULL DEFAULT 'new'",
     "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
+    // iter 16: pacing v2 attributes each dial intent to an agent.
+    // Nullable: existing rows + future "no agent" intents stay NULL.
+    "ALTER TABLE dial_intents ADD COLUMN assigned_user_id TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -1135,6 +1138,7 @@ export interface DialIntentRecord {
   transformed_phone: string;
   cid_used: string | null;
   kind: string;
+  assigned_user_id: string | null;
 }
 
 export function insertDialIntent(rec: {
@@ -1145,10 +1149,13 @@ export function insertDialIntent(rec: {
   transformed_phone: string;
   cid_used: string | null;
   kind?: string;
+  assigned_user_id?: string | null;
 }): DialIntentRecord {
   const result = db()
     .prepare(
-      `INSERT INTO dial_intents (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO dial_intents
+         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.campaign_id,
@@ -1158,11 +1165,39 @@ export function insertDialIntent(rec: {
       rec.transformed_phone,
       rec.cid_used,
       rec.kind ?? 'simulated',
+      rec.assigned_user_id ?? null,
     );
   const id = Number(result.lastInsertRowid);
   return db()
     .prepare(`SELECT * FROM dial_intents WHERE id = ?`)
     .get(id) as unknown as DialIntentRecord;
+}
+
+/**
+ * Returns active agents attached to the campaign — the pool the pacing
+ * engine round-robins over. Filters: is_active = 1 AND role = 'agent'.
+ * Admins/supervisors aren't in this pool — they don't take calls; they
+ * have full read access by role for everything else.
+ */
+export function getActiveAgentsForCampaign(
+  campaignId: string,
+): Array<{ id: string; username: string; display_name: string | null; skill_tier: string }> {
+  return db()
+    .prepare(
+      `SELECT u.id, u.username, u.display_name, u.skill_tier
+       FROM users u
+       JOIN user_campaigns uc ON uc.user_id = u.id
+       WHERE uc.campaign_id = ?
+         AND u.is_active = 1
+         AND u.role = 'agent'
+       ORDER BY u.username ASC`,
+    )
+    .all(campaignId) as unknown as Array<{
+    id: string;
+    username: string;
+    display_name: string | null;
+    skill_tier: string;
+  }>;
 }
 
 export function listDialIntentsForCampaign(

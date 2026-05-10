@@ -12,6 +12,7 @@ interface DialIntent {
   transformed_phone: string;
   cid_used: string | null;
   kind: string;
+  assigned_username: string | null;
 }
 
 export function PacingPanel({
@@ -123,6 +124,11 @@ function IntentLine({ intent }: { intent: DialIntent }) {
       <span className="text-fg shrink-0 w-36 tabular-nums">
         {intent.transformed_phone}
       </span>
+      {intent.assigned_username && (
+        <span className="text-success shrink-0 w-32 truncate">
+          → {intent.assigned_username}
+        </span>
+      )}
       <span className="text-fg-subtle text-xs">
         {intent.phone !== intent.transformed_phone && (
           <span className="mr-2">(was {intent.phone})</span>

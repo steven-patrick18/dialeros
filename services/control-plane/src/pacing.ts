@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import {
   countDialIntentsForCampaign,
+  getActiveAgentsForCampaign,
   getCampaignFromDb,
   getRoutePlanFromDb,
   insertDialIntent,
@@ -11,7 +12,7 @@ import {
   type CampaignRecord,
   type DialIntentRecord,
 } from './db';
-import { parseCidPool, parseFailoverIds } from './route-plan';
+import { parseCidPool } from './route-plan';
 
 // Iter 11 — pacing engine v1 (simulation).
 //
@@ -38,6 +39,7 @@ interface BusContainer {
   bus: EventEmitter;
   pacers: Map<string, PacerHandle>;
   rotateState: Map<string, number>; // campaign_id -> rotate cursor for cid_pool
+  agentRotateState: Map<string, number>; // campaign_id -> agent round-robin cursor
 }
 
 declare global {
@@ -53,9 +55,14 @@ function container(): BusContainer {
       bus: e,
       pacers: new Map(),
       rotateState: new Map(),
+      agentRotateState: new Map(),
     };
   }
-  return globalThis.__dialeros_pacing;
+  // Older sessions might predate agentRotateState — patch defensively
+  // so HMR-cached containers don't crash on the new field.
+  const c = globalThis.__dialeros_pacing!;
+  if (!c.agentRotateState) c.agentRotateState = new Map();
+  return c;
 }
 
 function applyTransform(
@@ -95,14 +102,33 @@ export interface PacingTickResult {
     | 'dialed'
     | 'no_route_plan'
     | 'no_lead'
+    | 'no_agents'
     | 'campaign_missing'
     | 'campaign_inactive';
   intent?: DialIntentRecord;
+  assigned_agent?: { id: string; username: string };
+}
+
+function pickAgent(
+  campaignId: string,
+  agents: Array<{ id: string; username: string }>,
+): { id: string; username: string } | null {
+  if (agents.length === 0) return null;
+  const c = container();
+  const cursor = c.agentRotateState.get(campaignId) ?? 0;
+  const agent = agents[cursor % agents.length]!;
+  c.agentRotateState.set(campaignId, cursor + 1);
+  return agent;
 }
 
 /**
  * Run a single pacing tick for a campaign. Exported for tests + manual
  * "Dial next" buttons.
+ *
+ * Iter 16 — agent-aware. The pacer only fires if at least one active
+ * agent is attached to the campaign. With telephony absent, every
+ * attached agent is treated as "always AVAILABLE"; real online state
+ * (LOGGED_IN, ON_CALL, WRAP_UP, PAUSED) lands with the agent UI.
  */
 export function paceCampaignOnce(campaignId: string): PacingTickResult {
   const campaign = getCampaignFromDb(campaignId);
@@ -112,8 +138,13 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
   const plan = getRoutePlanFromDb(campaign.route_plan_id);
   if (!plan) return { outcome: 'no_route_plan' };
 
+  const agents = getActiveAgentsForCampaign(campaignId);
+  if (agents.length === 0) return { outcome: 'no_agents' };
+
   const lead = pickNextDialableLead(campaignId, COOLDOWN_SECONDS);
   if (!lead) return { outcome: 'no_lead' };
+
+  const assigned = pickAgent(campaignId, agents)!;
 
   const transformed = applyTransform(
     lead.phone,
@@ -130,6 +161,7 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
   const intent = insertDialIntent({
     campaign_id: campaignId,
     lead_id: lead.lead_id,
+    assigned_user_id: assigned.id,
     route_plan_id: plan.id,
     phone: lead.phone,
     transformed_phone: transformed,
@@ -142,7 +174,7 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
   container().bus.emit(`intent:${campaignId}`, intent);
   container().bus.emit('intent:any', intent);
 
-  return { outcome: 'dialed', intent };
+  return { outcome: 'dialed', intent, assigned_agent: assigned };
 }
 
 export function startPacer(campaignId: string): boolean {
