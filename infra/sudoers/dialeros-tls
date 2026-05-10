@@ -1,0 +1,10 @@
+# Iter 36 — TLS bootstrap.
+#
+# The dialeros user can run /opt/dialeros/scripts/setup-tls.sh as root,
+# with no password and the ability to set environment variables (SETENV)
+# so the admin GUI can pass DIALEROS_DOMAIN + DIALEROS_TLS_EMAIL via
+# `sudo -n --preserve-env=...`.
+#
+# Privilege scope is bounded to JUST this script. The dialeros user
+# cannot use sudo for anything else here.
+dialeros ALL=(root) NOPASSWD: SETENV: /opt/dialeros/scripts/setup-tls.sh

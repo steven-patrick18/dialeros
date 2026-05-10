@@ -155,10 +155,23 @@ fi
 visudo -c -f /etc/sudoers.d/dialeros-telephony >/dev/null
 ok "telephony sudoers installed"
 
-# Ensure the install script is owned by root + executable so sudo will
-# accept it (sudo refuses scripts that are world-writable etc.)
-chown root:root "${REPO_ROOT}/scripts/install-freeswitch.sh"
-chmod 0755 "${REPO_ROOT}/scripts/install-freeswitch.sh"
+# Iter 36 — TLS bootstrap sudoers entry.
+log "Installing TLS sudoers entry"
+install -m 0440 "${REPO_ROOT}/infra/sudoers/dialeros-tls" /etc/sudoers.d/dialeros-tls
+if [[ "${REPO_ROOT}" != "/opt/dialeros" ]]; then
+  sed -i "s|/opt/dialeros|${REPO_ROOT}|g" /etc/sudoers.d/dialeros-tls
+fi
+visudo -c -f /etc/sudoers.d/dialeros-tls >/dev/null
+ok "TLS sudoers installed"
+
+# Ensure the privileged scripts are owned by root + executable so sudo
+# will accept them (sudo refuses scripts that are world-writable etc.)
+chown root:root \
+  "${REPO_ROOT}/scripts/install-freeswitch.sh" \
+  "${REPO_ROOT}/scripts/setup-tls.sh"
+chmod 0755 \
+  "${REPO_ROOT}/scripts/install-freeswitch.sh" \
+  "${REPO_ROOT}/scripts/setup-tls.sh"
 
 # -----------------------------------------------------------------------------
 # done

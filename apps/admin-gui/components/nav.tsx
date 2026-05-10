@@ -49,6 +49,7 @@ export function Nav({
             <NavLink href="/users">Users</NavLink>
             <NavLink href="/audit">Audit Log</NavLink>
             <NavLink href="/settings/telephony">Telephony</NavLink>
+            <NavLink href="/settings/domain">Domain &amp; TLS</NavLink>
           </>
         )}
       </ul>

@@ -1,25 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { stat } from 'node:fs/promises';
+import {
+  APP_SETTING_KEYS,
+  getAppSetting,
+} from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /**
- * Iter 35b — config the browser softphone needs to register.
+ * Iter 35b/36 — config the browser softphone needs to register.
  *
- * For now everything is hardcoded against the install-freeswitch.sh
- * defaults: WS on port 5066 of this host, users 1000-1019 with
- * password 1234. We assign one extension per logged-in user via a
- * stable hash of their id, so the same admin always gets the same
- * extension across reloads.
+ * If a domain is saved AND a Let's Encrypt cert exists for it, the
+ * browser is told to use wss://<domain>/sip (nginx terminates TLS,
+ * proxies to FreeSWITCH on 127.0.0.1:5066). Otherwise we fall back
+ * to plain ws:// against whatever host the request came in on.
  *
- * Production would:
- *   - Provision a unique SIP user per admin/agent on demand,
- *     dropped under /etc/freeswitch/directory/default/.
- *   - Generate a strong per-user password and store its hash.
- *   - Use WSS with a real cert.
- * That work lands once we have user-managed SIP creds + per-agent
- * registration tracking.
+ * For now everyone shares the FS default users 1000-1019 / pw 1234.
+ * Per-admin SIP creds are a later iter.
  */
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
@@ -27,25 +26,42 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Extract host the browser used so the softphone connects to the
-  // same address (avoids "the GUI says 198.x but the browser only
-  // resolves softphone.example.com" mismatches in dev).
-  const host =
-    req.headers.get('x-forwarded-host') ??
-    req.headers.get('host') ??
-    '127.0.0.1';
-  const sipHost = host.split(':')[0]; // strip admin-gui port
+  const domain = getAppSetting(APP_SETTING_KEYS.canonicalDomain);
+  let wsUrl: string;
+  let sipHost: string;
+  let secure = false;
+  if (domain && (await certExists(domain))) {
+    wsUrl = `wss://${domain}/sip`;
+    sipHost = domain;
+    secure = true;
+  } else {
+    const host =
+      req.headers.get('x-forwarded-host') ??
+      req.headers.get('host') ??
+      '127.0.0.1';
+    sipHost = host.split(':')[0]!;
+    wsUrl = `ws://${sipHost}:5066`;
+  }
 
-  // Stable extension assignment 1000..1019.
   const extension = 1000 + (hash(user.id) % 20);
 
   return NextResponse.json({
     extension: String(extension),
     uri: `sip:${extension}@${sipHost}`,
-    ws_url: `ws://${sipHost}:5066`,
+    ws_url: wsUrl,
+    secure,
     password: '1234',
     display_name: user.username,
   });
+}
+
+async function certExists(domain: string): Promise<boolean> {
+  try {
+    await stat(`/etc/letsencrypt/live/${domain}/fullchain.pem`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function hash(s: string): number {

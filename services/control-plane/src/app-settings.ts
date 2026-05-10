@@ -35,4 +35,7 @@ export const APP_SETTING_KEYS = {
   signalwireToken: 'signalwire.token',
   freeswitchInstallStatus: 'freeswitch.install_status',
   freeswitchInstallLog: 'freeswitch.install_log',
+  // Iter 36 — domain + TLS bootstrap
+  canonicalDomain: 'domain.canonical',
+  tlsContactEmail: 'tls.contact_email',
 } as const;
