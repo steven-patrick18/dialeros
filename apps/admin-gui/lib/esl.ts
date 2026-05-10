@@ -208,7 +208,11 @@ export async function originate(opts: OriginateOptions): Promise<string> {
     channelVars.push(`origination_caller_id_number=${cid}`);
     channelVars.push(`sip_from_user=${cid}`);
   }
-  channelVars.push('ignore_early_media=true');
+  // Iter 53 — manual originate path (test-call + agent dial). Pass
+  // through early media so the agent hears ringback while the
+  // destination's phone rings. The pacer path in pacing.ts keeps
+  // ignore_early_media=true on purpose — predictive auto-bridge
+  // shouldn't expose pre-answer ring to the agent.
   channelVars.push('hangup_after_bridge=true');
   if (opts.originateTimeout) {
     channelVars.push(`originate_timeout=${opts.originateTimeout}`);
