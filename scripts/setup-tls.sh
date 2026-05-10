@@ -23,6 +23,16 @@ EMAIL="${DIALEROS_TLS_EMAIL:-admin@${DOMAIN}}"
 
 log "domain=$DOMAIN email=$EMAIL"
 
+# Resolve this server's external IPv4 — FreeSWITCH's ws-binding is on
+# the default IP (`:5066`), not 0.0.0.0. nginx therefore can't reach
+# FS via 127.0.0.1:5066; it has to use the external interface.
+LOCAL_IP="$(ip -4 -o addr show scope global 2>/dev/null \
+  | awk '{print $4}' | cut -d/ -f1 | head -n1)"
+if [[ -z "$LOCAL_IP" ]]; then
+  fail "could not detect external IPv4 — set it manually then re-run"
+fi
+log "external ip for FS proxy_pass: $LOCAL_IP"
+
 # --- step 1: install nginx + certbot ---
 log "installing nginx + certbot"
 DEBIAN_FRONTEND=noninteractive apt-get update -qq
@@ -71,9 +81,11 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
-    # SIP-over-WebSocket reverse-proxy → FreeSWITCH
+    # SIP-over-WebSocket reverse-proxy → FreeSWITCH. FS binds ws on
+    # ${LOCAL_IP}:5066, NOT 127.0.0.1, because the internal profile's
+    # ws-binding param is "default-IP only". Match that here.
     location /sip {
-        proxy_pass http://127.0.0.1:5066;
+        proxy_pass http://${LOCAL_IP}:5066;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
