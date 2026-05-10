@@ -218,7 +218,11 @@ export function AgentSoftphonePanel() {
       sp.sendDtmf(d);
       return;
     }
-    if (manualDial) {
+    // Iter 52 — buffer only fills while in the unlocked manual mode
+    // (PAUSED + manual_dial cap). Pressing a digit on the keypad
+    // while READY is a no-op so the agent can't accidentally
+    // half-stage a number that the pacer might preempt.
+    if (showingManual) {
       setDialMsg(null);
       setBuffer((b) => (b + d).slice(0, 24));
     }
@@ -249,24 +253,24 @@ export function AgentSoftphonePanel() {
         pressDigit(e.key);
         return;
       }
-      if (e.key === '+' && !sp.inCall && manualDial) {
+      if (e.key === '+' && showingManual) {
         e.preventDefault();
         setDialMsg(null);
         setBuffer((b) => (b + '+').slice(0, 24));
         return;
       }
-      if (e.key === 'Backspace' && !sp.inCall && manualDial) {
+      if (e.key === 'Backspace' && showingManual) {
         e.preventDefault();
         setBuffer((b) => b.slice(0, -1));
         setDialMsg(null);
         return;
       }
-      if (e.key === 'Enter' && !sp.inCall && manualDial && buffer.length > 0) {
+      if (e.key === 'Enter' && showingManual && buffer.length > 0) {
         e.preventDefault();
         void placeManualCall();
         return;
       }
-      if (e.key === 'Escape' && !sp.inCall && manualDial && buffer.length > 0) {
+      if (e.key === 'Escape' && showingManual && buffer.length > 0) {
         e.preventDefault();
         setBuffer('');
         setDialMsg(null);
@@ -277,7 +281,7 @@ export function AgentSoftphonePanel() {
     // pressDigit / placeManualCall close over current state, so re-bind
     // when those-relevant deps change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sp.inCall, manualDial, buffer]);
+  }, [sp.inCall, manualDial, buffer, status]);
 
   function startTransfer() {
     if (!sp.inCall) return;
@@ -289,12 +293,14 @@ export function AgentSoftphonePanel() {
     void sp.transfer(target);
   }
 
-  // Iter 47 — LCD logic. Manual-dial users see the dial buffer the
-  // moment they start typing; otherwise the LCD shows the call /
-  // ready / connecting state. The PAUSED indicator moved out of the
-  // caller line into a small badge next to the LINE LED so it
-  // doesn't fight the dial buffer for screen space.
-  const showingManual = manualDial && !sp.inCall && !sp.error;
+  // Iter 52 — manual dial is gated on PAUSED. A READY agent is
+  // reserved for the pacer's auto-bridge, so allowing them to dial
+  // out manually races the pacer (it could bridge a call to them
+  // mid-dial). ViciDial behavior: agent must dispose any pending
+  // wrap-up, then pause, then dial. The keyboard / keypad / CID
+  // input + CALL action are all gated on `showingManual`.
+  const canManualDial = manualDial && status === 'PAUSED';
+  const showingManual = canManualDial && !sp.inCall && !sp.error;
   const callerLine = sp.inCall
     ? sp.remoteIdentity ?? 'unknown'
     : sp.error
@@ -316,16 +322,16 @@ export function AgentSoftphonePanel() {
     : sp.inCall
       ? `Connected  ${formatElapsed(elapsed)}${sp.muted ? '  (muted)' : ''}${sp.onHold ? '  (held)' : ''}`
       : showingManual && buffer.length === 0
-        ? status === 'PAUSED'
-          ? 'Paused — manual dial allowed'
-          : 'Enter destination'
+        ? 'Enter destination'
         : showingManual && buffer.length > 0
           ? dialMsg ?? 'Press CALL to dial'
           : status === 'PAUSED'
             ? 'Calls paused'
-            : sp.registered
-              ? 'Waiting for call'
-              : ' ';
+            : manualDial
+              ? 'Pause to dial manually'
+              : sp.registered
+                ? 'Waiting for call'
+                : ' ';
 
   return (
     <div
