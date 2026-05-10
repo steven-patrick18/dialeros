@@ -24,21 +24,31 @@ export function Nav({
 
   return (
     <nav className="w-64 min-h-screen border-r border-border p-6 flex flex-col bg-card">
-      <Link href="/" className="block text-lg font-semibold mb-8 text-accent">
+      <Link
+        href={user.role === 'agent' ? '/agent' : '/'}
+        className="block text-lg font-semibold mb-8 text-accent"
+      >
         DialerOS
       </Link>
 
       <ul className="space-y-1 text-sm">
-        <NavLink href="/">Dashboard</NavLink>
-        <NavLink href="/reports">Reports</NavLink>
-        <NavLink href="/cluster/nodes">Cluster Nodes</NavLink>
-        <NavLink href="/carriers">Carriers</NavLink>
-        <NavLink href="/route-plans">Route Plans</NavLink>
-        <NavLink href="/leads">Lead Lists</NavLink>
-        <NavLink href="/campaigns">Campaigns</NavLink>
-        <NavLink href="/in-groups">In-Groups</NavLink>
-        <NavLink href="/users">Users</NavLink>
-        <NavLink href="/audit">Audit Log</NavLink>
+        {user.role === 'agent' ? (
+          <NavLink href="/agent">My console</NavLink>
+        ) : (
+          <>
+            <NavLink href="/">Dashboard</NavLink>
+            <NavLink href="/agent">Agent console</NavLink>
+            <NavLink href="/reports">Reports</NavLink>
+            <NavLink href="/cluster/nodes">Cluster Nodes</NavLink>
+            <NavLink href="/carriers">Carriers</NavLink>
+            <NavLink href="/route-plans">Route Plans</NavLink>
+            <NavLink href="/leads">Lead Lists</NavLink>
+            <NavLink href="/campaigns">Campaigns</NavLink>
+            <NavLink href="/in-groups">In-Groups</NavLink>
+            <NavLink href="/users">Users</NavLink>
+            <NavLink href="/audit">Audit Log</NavLink>
+          </>
+        )}
       </ul>
 
       <div className="mt-auto pt-4 border-t border-border space-y-3">

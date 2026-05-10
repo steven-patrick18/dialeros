@@ -108,6 +108,13 @@ export {
   loginActivityRollup,
 } from './db';
 
+// Agent console (iter 17)
+export {
+  listDialIntentsForUser,
+  countDialIntentsForUser,
+} from './db';
+export type { AgentIntentRecord } from './db';
+
 // Secrets (envelope encryption)
 export { encryptSecret, decryptSecret } from './secrets';
 
@@ -212,6 +219,7 @@ export {
   isPacing,
   listPacingCampaignIds,
   subscribeToIntents,
+  subscribeToAllIntents,
   resumeActivePacers,
   listIntentsForCampaign,
   totalIntentsFor,

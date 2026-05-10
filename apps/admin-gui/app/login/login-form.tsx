@@ -32,7 +32,11 @@ export function LoginForm() {
       return;
     }
 
-    router.push('/');
+    const data = (await res.json().catch(() => ({}))) as {
+      user?: { role?: string };
+    };
+    const dest = data.user?.role === 'agent' ? '/agent' : '/';
+    router.push(dest);
     router.refresh();
   }
 

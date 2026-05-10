@@ -1,4 +1,5 @@
-﻿import {
+﻿import { redirect } from 'next/navigation';
+import {
   leadCountFor,
   listCampaigns,
   listCarriers,
@@ -6,10 +7,16 @@
   listNodesFromDb,
   listRoutePlans,
 } from '@dialeros/control-plane';
+import { getCurrentUser } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
+  const me = await getCurrentUser();
+  if (me?.role === 'agent') {
+    // Agents land on their own console — the cluster dashboard is admin-only.
+    redirect('/agent');
+  }
   const nodes = listNodesFromDb();
   const carriers = listCarriers();
   const routePlans = listRoutePlans();

@@ -1222,6 +1222,41 @@ export function countDialIntentsForCampaign(campaignId: string): number {
 }
 
 /**
+ * Iter 17 — agent console. Returns recent dial intents assigned to a
+ * specific user, joined with campaign + lead context so the agent UI can
+ * render a readable feed without N+1 lookups.
+ */
+export interface AgentIntentRecord extends DialIntentRecord {
+  campaign_name: string;
+  lead_name: string | null;
+}
+
+export function listDialIntentsForUser(
+  userId: string,
+  limit = 100,
+  sinceId = 0,
+): AgentIntentRecord[] {
+  return db()
+    .prepare(
+      `SELECT i.*, c.name AS campaign_name, l.name AS lead_name
+         FROM dial_intents i
+         JOIN campaigns c ON c.id = i.campaign_id
+         LEFT JOIN leads l ON l.id = i.lead_id
+        WHERE i.assigned_user_id = ? AND i.id > ?
+        ORDER BY i.id DESC
+        LIMIT ?`,
+    )
+    .all(userId, sinceId, limit) as unknown as AgentIntentRecord[];
+}
+
+export function countDialIntentsForUser(userId: string): number {
+  const row = db()
+    .prepare(`SELECT COUNT(*) AS n FROM dial_intents WHERE assigned_user_id = ?`)
+    .get(userId) as { n: number };
+  return row.n;
+}
+
+/**
  * Pacing's lead picker. Returns the next dialable lead from the campaign's
  * attached lists, ordered by priority. A lead is dialable if:
  *   - status in (NEW, CALLED_NO_ANSWER, CALLBACK_SCHEDULED)

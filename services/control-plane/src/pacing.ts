@@ -234,6 +234,20 @@ export function subscribeToIntents(
 }
 
 /**
+ * Subscribe to ALL dial intents across every campaign. Used by the agent
+ * console SSE, which then filters client-side / server-side by
+ * assigned_user_id. Cheaper than walking every campaign individually.
+ */
+export function subscribeToAllIntents(
+  fn: (intent: DialIntentRecord) => void,
+): () => void {
+  container().bus.on('intent:any', fn);
+  return () => {
+    container().bus.off('intent:any', fn);
+  };
+}
+
+/**
  * Re-arm pacers for any campaign whose status is 'active' at startup.
  * Safe to call multiple times — startPacer is idempotent. Called from
  * the control-plane index on first import.
