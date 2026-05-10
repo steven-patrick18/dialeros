@@ -242,6 +242,16 @@ function db(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_user_in_groups_in_group
       ON user_in_groups(in_group_id);
 
+    -- Iter 28: cross-cutting key/value store for admin-managed settings
+    -- (SignalWire token, future telephony bootstrap state, etc.). Values
+    -- are envelope-encrypted at rest via the secrets module — stored as
+    -- the string envelope "v1:iv:tag:ciphertext".
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value_encrypted TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Iter 21: campaign ↔ in-group attachment. Inbound and blended
     -- campaigns route calls from their attached in-groups to agents
     -- logged into the campaign.
@@ -1165,6 +1175,41 @@ export function setUserInGroups(
     throw e;
   }
   return { added, removed };
+}
+
+// =====================================================================
+// app settings (iter 28)
+// =====================================================================
+
+export function setAppSettingEncrypted(key: string, envelope: string): void {
+  db()
+    .prepare(
+      `INSERT INTO app_settings (key, value_encrypted, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key) DO UPDATE SET
+         value_encrypted = excluded.value_encrypted,
+         updated_at = CURRENT_TIMESTAMP`,
+    )
+    .run(key, envelope);
+}
+
+export function getAppSettingEncrypted(key: string): string | undefined {
+  const row = db()
+    .prepare(`SELECT value_encrypted FROM app_settings WHERE key = ?`)
+    .get(key) as { value_encrypted: string } | undefined;
+  return row?.value_encrypted;
+}
+
+export function deleteAppSetting(key: string): boolean {
+  const result = db().prepare(`DELETE FROM app_settings WHERE key = ?`).run(key);
+  return Number(result.changes) > 0;
+}
+
+export function appSettingExists(key: string): boolean {
+  const row = db()
+    .prepare(`SELECT 1 AS x FROM app_settings WHERE key = ?`)
+    .get(key) as { x: number } | undefined;
+  return !!row;
 }
 
 // =====================================================================

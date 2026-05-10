@@ -129,6 +129,15 @@ export type { Disposition, DisposeInput, DisposeResult } from './disposition';
 // Secrets (envelope encryption)
 export { encryptSecret, decryptSecret } from './secrets';
 
+// App settings (iter 28: encrypted key/value)
+export {
+  setAppSetting,
+  getAppSetting,
+  hasAppSetting,
+  clearAppSetting,
+  APP_SETTING_KEYS,
+} from './app-settings';
+
 // Carriers
 export {
   CarrierTransportSchema,
