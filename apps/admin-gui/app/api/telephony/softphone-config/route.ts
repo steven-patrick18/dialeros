@@ -75,10 +75,19 @@ export async function GET(req: NextRequest) {
     wsUrl = `ws://${wsHost}:5066`;
   }
 
-  // Iter 40 — prefer the user's primary phone (real provisioned creds).
-  // If they don't own one yet, fall back to the iter-35 hash + the FS
-  // default `1234` password so the migration is non-destructive.
-  const extension = primary?.extension ?? extensionForUser(user.id);
+  // Iter 40 / 63 — prefer the user's primary phone (real provisioned
+  // creds). If they don't own one yet (which after iter 63's backfill
+  // should be rare), fall back to:
+  //   1. the username itself if it's already 3-6 digits — agents
+  //      typically log in as "1001" and expect extension 1001 to
+  //      come up;
+  //   2. the iter-35 hash of user.id only as a last resort.
+  // Password defaults to FreeSWITCH's stock 1234 so the legacy
+  // directory entries still work.
+  const usernameIsExt = /^[0-9]{3,6}$/.test(user.username);
+  const extension =
+    primary?.extension ??
+    (usernameIsExt ? user.username : extensionForUser(user.id));
   const password = primary?.password ?? '1234';
 
   // manual_dial gates the dialer input on the agent softphone — only

@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 import {
   findNodeByHost,
+  getPrimaryPhoneForUser,
   insertNode,
   listNodesFromDb,
+  listUsersFromDb,
   parseNodeRoles,
   updateNodeRoles,
 } from './db';
+import { ensureUserHasPrimaryPhone } from './phone';
 import type { NodeRecord, NodeRole } from './schema';
 
 // Iter 61 — auto-register the local host as a node so a single-box
@@ -72,4 +75,20 @@ export function ensureLocalNodeRegistered(): NodeRecord {
     status: 'READY',
   });
   return findNodeByHost(host)!;
+}
+
+/**
+ * Iter 63 — backfill: every existing user without a primary phone
+ * gets one auto-provisioned at boot. Same rules as createUser's
+ * auto-provision: extension = username if digits, else next free
+ * slot. Idempotent — runs every boot but does nothing for users
+ * who already have a phone.
+ */
+export function backfillUserPhones(): { provisioned: number } {
+  let provisioned = 0;
+  for (const u of listUsersFromDb(true)) {
+    if (getPrimaryPhoneForUser(u.id)) continue;
+    if (ensureUserHasPrimaryPhone(u.id, u.username)) provisioned += 1;
+  }
+  return { provisioned };
 }

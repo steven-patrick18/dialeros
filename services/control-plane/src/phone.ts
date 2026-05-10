@@ -143,4 +143,63 @@ export function getPrimaryPhone(userId: string): PhoneRecord | undefined {
   return getPrimaryPhoneForUser(userId);
 }
 
+/**
+ * Iter 63 — next free extension in [start, end]. Walks the inclusive
+ * range, returns the first slot not already claimed by a phone row.
+ * Returns null if the range is exhausted (keep the range generous;
+ * realistically a single tenant never has 99 simultaneous extensions).
+ */
+export function nextAvailableExtension(
+  start = 1001,
+  end = 1099,
+): string | null {
+  for (let i = start; i <= end; i++) {
+    const candidate = String(i);
+    if (!getPhoneByExtension(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Iter 63 — username-driven default extension. If the username is
+ * 3-6 digits we use it verbatim (user "1001" → extension 1001). Else
+ * fall back to the next free slot from `nextAvailableExtension`. The
+ * caller is responsible for handling null (range exhausted) — that's
+ * a four-digit corner case nobody hits in practice.
+ */
+export function defaultExtensionFor(username: string): string | null {
+  if (/^[0-9]{3,6}$/.test(username)) {
+    // username is already digits — use it unless that exact extension
+    // is already taken by a different user's phone.
+    if (!getPhoneByExtension(username)) return username;
+  }
+  return nextAvailableExtension();
+}
+
+/**
+ * Iter 63 — make sure a user has a primary phone. No-op if they
+ * already do. Otherwise creates one with the username-derived
+ * extension (or next-available), default SIP password "1234"
+ * matching FreeSWITCH's stock directory so registrations Just Work
+ * on a single-box install. Returns the new phone or the existing
+ * one — never throws on already-provisioned users.
+ */
+export function ensureUserHasPrimaryPhone(
+  userId: string,
+  username: string,
+): PhoneRecord | undefined {
+  const existing = getPrimaryPhoneForUser(userId);
+  if (existing) return existing;
+  const ext = defaultExtensionFor(username);
+  if (!ext) return undefined; // 1001-1099 all taken; admin must pick manually
+  const result = createPhone(userId, {
+    extension: ext,
+    password: '1234',
+    protocol: 'sip',
+    is_primary: true,
+  });
+  if ('error' in result) return undefined;
+  return getPhoneById(result.id);
+}
+
 export type { PhoneRecord };

@@ -26,7 +26,10 @@ import {
   findMatchingDialPlanRule,
 } from './carrier';
 import { ensureFsEventListener } from './fs-events';
-import { ensureLocalNodeRegistered } from './local-node';
+import {
+  backfillUserPhones,
+  ensureLocalNodeRegistered,
+} from './local-node';
 import { ensureRecordingRetentionSweep } from './recording-retention';
 import { listRemoteAgentsWithCapacity } from './remote-agent';
 import { extensionForUser } from './sip-extensions';
@@ -575,6 +578,17 @@ export function resumeActivePacers(): { started: number } {
   // (web + database + telephony) before anything else asks the
   // node table for a telephony host.
   ensureLocalNodeRegistered();
+  // Iter 63 — auto-provision a primary phone for every user that
+  // doesn't have one yet. Extension = username if digits, else
+  // next free slot. Existing users from before iter 63 get
+  // upgraded in place on first boot of this release.
+  const filled = backfillUserPhones();
+  if (filled.provisioned > 0) {
+    // eslint-disable-next-line no-console
+    console.info(
+      `[boot] auto-provisioned primary phones for ${filled.provisioned} user(s)`,
+    );
+  }
   let started = 0;
   for (const c of listCampaignsFromDb()) {
     if (c.status === 'active') {

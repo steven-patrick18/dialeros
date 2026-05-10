@@ -21,6 +21,7 @@ import {
   serializePermissions,
   type PermissionSlug,
 } from './permissions';
+import { ensureUserHasPrimaryPhone } from './phone';
 
 // Reuses the same scrypt scheme from auth.ts. Kept in sync — if auth.ts
 // changes its scheme, change here too.
@@ -99,6 +100,12 @@ export function createUser(input: CreateUserInput): CreateUserResult {
     display_name: input.display_name ?? null,
     skill_tier: input.skill_tier,
   });
+  // Iter 63 — give every new user a primary phone immediately. The
+  // extension is the username if it's already digits (3-6 chars) and
+  // free; otherwise the next available slot in 1001-1099. Admins can
+  // edit the auto-provisioned phone from /users/<id> if they want a
+  // specific extension (e.g. admin → 1009).
+  ensureUserHasPrimaryPhone(id, input.username);
   return { id };
 }
 
