@@ -342,6 +342,11 @@ function db(): DatabaseSync {
     // (defaultPermissionsForRole in user-mgmt). Admins implicitly
     // have every permission regardless of this column.
     "ALTER TABLE users ADD COLUMN permissions TEXT",
+    // Iter 44: carrier-level dial-plan prefix list. JSON array of
+    // destination prefixes this carrier accepts (e.g. ["310","311",
+    // "312"]). NULL or empty array means the carrier accepts every
+    // destination (existing behavior, backward compatible).
+    "ALTER TABLE carriers ADD COLUMN dial_prefixes TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -830,6 +835,7 @@ export interface CarrierRecord {
   max_cps: number;
   mos_threshold: number;
   enabled: number;
+  dial_prefixes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -909,6 +915,7 @@ export function updateCarrierFromDb(
     max_cps: number;
     mos_threshold: number;
     enabled: boolean;
+    dial_prefixes: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

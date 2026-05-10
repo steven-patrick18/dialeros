@@ -19,6 +19,16 @@ export type CarrierAuthMode = z.infer<typeof CarrierAuthModeSchema>;
 export const CodecSchema = z.enum(['PCMU', 'PCMA', 'OPUS', 'G729']);
 export type Codec = z.infer<typeof CodecSchema>;
 
+// Iter 44 — destination prefix list. Digits only (NPA/area codes /
+// E.164 country prefixes / etc). Each entry is matched as a string
+// `startsWith` against the *transformed* destination at originate
+// time. NULL/empty list = carrier accepts any destination.
+const DialPrefixSchema = z
+  .string()
+  .min(1)
+  .max(15)
+  .regex(/^[0-9*#+]+$/, 'Digits / *, # / leading + only.');
+
 export const CarrierInputSchema = z
   .object({
     name: z
@@ -38,6 +48,7 @@ export const CarrierInputSchema = z
     max_cps: z.number().int().min(1).max(1000).default(10),
     mos_threshold: z.number().min(0).max(5).default(3.5),
     enabled: z.boolean().default(true),
+    dial_prefixes: z.array(DialPrefixSchema).default([]),
   })
   .refine(
     (d) =>
@@ -83,6 +94,15 @@ export function createCarrier(input: CarrierInput): CreateCarrierResult {
     enabled: input.enabled,
   });
 
+  // dial_prefixes lives on the same table; updateCarrier handles it
+  // because insertCarrier predates iter 44. Persist it as a follow-up
+  // update so we don't have to widen insertCarrier's signature.
+  if (input.dial_prefixes && input.dial_prefixes.length > 0) {
+    updateCarrierFromDb(id, {
+      dial_prefixes: JSON.stringify(input.dial_prefixes),
+    });
+  }
+
   return { id };
 }
 
@@ -119,6 +139,9 @@ export const CarrierUpdateInputSchema = z.object({
   max_cps: z.number().int().min(1).max(1000).optional(),
   mos_threshold: z.number().min(0).max(5).optional(),
   enabled: z.boolean().optional(),
+  // Iter 44 — pass [] to clear the prefix list (carrier accepts all
+  // destinations again). Pass null with the same effect.
+  dial_prefixes: z.array(DialPrefixSchema).nullable().optional(),
 });
 export type CarrierUpdateInput = z.infer<typeof CarrierUpdateInputSchema>;
 
@@ -145,6 +168,12 @@ export function updateCarrier(id: string, input: CarrierUpdateInput): boolean {
   if (input.max_cps !== undefined) updates.max_cps = input.max_cps;
   if (input.mos_threshold !== undefined) updates.mos_threshold = input.mos_threshold;
   if (input.enabled !== undefined) updates.enabled = input.enabled;
+  if (input.dial_prefixes !== undefined) {
+    updates.dial_prefixes =
+      input.dial_prefixes === null || input.dial_prefixes.length === 0
+        ? null
+        : JSON.stringify(input.dial_prefixes);
+  }
   return updateCarrierFromDb(id, updates);
 }
 
@@ -158,6 +187,41 @@ export function parseCodecs(carrier: CarrierRecord): Codec[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Iter 44 — read the carrier's accepted-prefix list. Returns []
+ * when none configured (which means "carrier accepts everything").
+ */
+export function parseDialPrefixes(carrier: CarrierRecord): string[] {
+  if (!carrier.dial_prefixes) return [];
+  try {
+    const parsed = JSON.parse(carrier.dial_prefixes);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p): p is string => typeof p === 'string' && p.length > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Iter 44 — does the carrier accept this destination? An empty list
+ * means yes-to-everything. Otherwise the destination must startWith
+ * one of the prefixes (case-insensitive on `*` / `#`, but those are
+ * already canonical-cased). The `+` is normalized away by
+ * normalizePhone before this check, so the caller is free to pass
+ * either form.
+ */
+export function carrierAcceptsDestination(
+  carrier: CarrierRecord,
+  destination: string,
+): boolean {
+  const prefixes = parseDialPrefixes(carrier);
+  if (prefixes.length === 0) return true;
+  const dest = destination.replace(/^\+/, '');
+  return prefixes.some((p) => dest.startsWith(p));
 }
 
 export type { CarrierRecord } from './db';

@@ -163,6 +163,8 @@ export {
   deleteCarrier,
   updateCarrier,
   parseCodecs,
+  parseDialPrefixes,
+  carrierAcceptsDestination,
 } from './carrier';
 export type {
   CarrierTransport,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  carrierAcceptsDestination,
   extensionForUser,
   getCarrier,
   getPrimaryPhone,
@@ -93,6 +94,16 @@ export async function POST(req: NextRequest) {
   if (!carrier) {
     return NextResponse.json(
       { error: 'Route plan primary carrier is missing.' },
+      { status: 409 },
+    );
+  }
+  // Iter 44 — surface the prefix mismatch up-front so the agent gets a
+  // clear message instead of a confusing originate failure.
+  if (!carrierAcceptsDestination(carrier, dest)) {
+    return NextResponse.json(
+      {
+        error: `Carrier ${carrier.name} does not accept this destination prefix.`,
+      },
       { status: 409 },
     );
   }

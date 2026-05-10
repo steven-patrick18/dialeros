@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  carrierAcceptsDestination,
   extensionForUser,
   getCarrier,
   normalizePhone,
@@ -97,6 +98,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: 'Destination phone format is invalid.' },
       { status: 400 },
+    );
+  }
+  // Iter 44 — carrier-level dial-prefix gate. Surface the rejection
+  // explicitly so the operator can see they need to add the prefix
+  // (or pick another carrier) rather than blaming the originate.
+  if (!carrierAcceptsDestination(carrier, dest)) {
+    return NextResponse.json(
+      {
+        error: `Carrier ${carrier.name} does not accept this destination prefix. Configure dial prefixes on the carrier or use a different one.`,
+      },
+      { status: 409 },
     );
   }
   const cidNorm = cid ? normalizePhone(cid) : null;

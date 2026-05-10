@@ -4,6 +4,7 @@ import {
   getCarrier,
   getRoutePlansForCarrier,
   parseCodecs,
+  parseDialPrefixes,
 } from '@dialeros/control-plane';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteCarrierButton } from './delete-button';
@@ -21,6 +22,7 @@ export default async function CarrierDetail({
   if (!carrier) notFound();
 
   const codecs = parseCodecs(carrier);
+  const dialPrefixes = parseDialPrefixes(carrier);
   const usedBy = getRoutePlansForCarrier(id);
 
   return (
@@ -160,6 +162,22 @@ export default async function CarrierDetail({
               hint: 'One per line, in preference order. Allowed: PCMU, PCMA, OPUS, G729. Topmost is offered first; carrier picks the first it supports.',
             },
           ]}
+        />
+
+        <InlineCardForm
+          title="Dial prefixes (accepted destinations)"
+          endpoint={`/api/carriers/${carrier.id}`}
+          fields={[
+            {
+              type: 'lines',
+              name: 'dial_prefixes',
+              label: `Prefixes (${dialPrefixes.length})`,
+              value: dialPrefixes,
+              placeholder: '310\n311\n312\n44',
+              hint: 'One per line. Calls only originate through this carrier when the destination starts with one of these (e.g. NPA / country prefix). Empty list = carrier accepts every destination.',
+            },
+          ]}
+          helpText="Mirrors a ViciDial outbound dial-plan rule. Pacer + manual dial + test-call all skip this carrier when the destination doesn't match a prefix."
         />
 
         <InlineCardForm

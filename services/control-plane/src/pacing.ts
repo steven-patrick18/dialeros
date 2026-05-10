@@ -17,6 +17,7 @@ import {
   type DialIntentRecord,
 } from './db';
 import { parseCidPool } from './route-plan';
+import { carrierAcceptsDestination } from './carrier';
 import { ensureFsEventListener } from './fs-events';
 import { extensionForUser } from './sip-extensions';
 
@@ -110,6 +111,7 @@ export interface PacingTickResult {
     | 'no_lead'
     | 'no_agents'
     | 'no_carrier'
+    | 'no_matching_prefix'
     | 'outside_window'
     | 'inbound_no_pacer'
     | 'campaign_missing'
@@ -241,6 +243,17 @@ export async function paceCampaignOnce(
     const carrier = getCarrierFromDb(plan.primary_carrier_id);
     if (!carrier) {
       return { outcome: 'no_carrier' };
+    }
+    // Iter 44 — carrier-level dial-prefix gate. If the carrier has a
+    // configured prefix list and this destination doesn't match any
+    // of them, skip the originate. We DO mark the lead so it goes
+    // back into the cooldown rotation rather than getting picked
+    // again on the very next tick — bumping it out of the live
+    // candidate set would need a dedicated lead status, which is
+    // future work.
+    if (!carrierAcceptsDestination(carrier, transformed)) {
+      markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
+      return { outcome: 'no_matching_prefix' };
     }
     correlationId = randomUUID();
     const gateway = `dialeros-${carrier.id}`;
