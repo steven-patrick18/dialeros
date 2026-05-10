@@ -412,6 +412,14 @@ function db(): DatabaseSync {
     // local-host row so destructive ops are blocked on it.
     "ALTER TABLE nodes ADD COLUMN roles TEXT",
     "ALTER TABLE nodes ADD COLUMN is_self INTEGER NOT NULL DEFAULT 0",
+    // Iter 62: pin each phone to the telephony node that hosts it.
+    // softphone-config returns the bound node's host so the
+    // browser registers to the correct FS instance even in a
+    // multi-node cluster. NULL = auto-pick the only available
+    // telephony node (single-box deploys never have to touch
+    // this column).
+    "ALTER TABLE phones ADD COLUMN telephony_node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL",
+    "CREATE INDEX IF NOT EXISTS idx_phones_telephony_node ON phones(telephony_node_id)",
   ];
   for (const sql of migrations) {
     try {
@@ -2648,6 +2656,7 @@ export interface PhoneRecord {
   protocol: string;
   password: string;
   is_primary: number;
+  telephony_node_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2660,11 +2669,12 @@ export function insertPhone(rec: {
   protocol?: string;
   password: string;
   is_primary?: boolean;
+  telephony_node_id?: string | null;
 }): void {
   db()
     .prepare(
-      `INSERT INTO phones (id, user_id, extension, label, protocol, password, is_primary)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO phones (id, user_id, extension, label, protocol, password, is_primary, telephony_node_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
@@ -2674,6 +2684,7 @@ export function insertPhone(rec: {
       rec.protocol ?? 'sip',
       rec.password,
       rec.is_primary ? 1 : 0,
+      rec.telephony_node_id ?? null,
     );
 }
 
@@ -2717,6 +2728,7 @@ export function updatePhoneFields(
     protocol: string;
     password: string;
     is_primary: boolean;
+    telephony_node_id: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

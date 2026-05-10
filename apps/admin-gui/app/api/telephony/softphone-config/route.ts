@@ -5,8 +5,12 @@ import {
   APP_SETTING_KEYS,
   extensionForUser,
   getAppSetting,
+  getNodeFromDb,
   getPrimaryPhone,
   getUser,
+  listNodesFromDb,
+  parseNodeRoles,
+  type NodeRecord,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 
@@ -37,6 +41,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Iter 62 — determine the telephony node that hosts the agent's
+  // primary phone. Order of preference:
+  //   1. primary phone has an explicit telephony_node_id pin
+  //   2. only one telephony-role node exists → use that (single-box)
+  //   3. is_self node → use that
+  //   4. fall back to local IP
+  const primary = getPrimaryPhone(user.id);
+  const node = resolveTelephonyNode(primary?.telephony_node_id ?? null);
+  const sipDomain = node?.host ?? localExternalIp();
+
   const domain = getAppSetting(APP_SETTING_KEYS.canonicalDomain);
   let wsUrl: string;
   let secure = false;
@@ -50,23 +64,20 @@ export async function GET(req: NextRequest) {
     wsUrl = `wss://${domain}:7443/`;
     secure = true;
   } else {
-    const host =
-      req.headers.get('x-forwarded-host') ??
-      req.headers.get('host') ??
-      '127.0.0.1';
-    const wsHost = host.split(':')[0]!;
+    // Iter 62 — when an explicit telephony node was resolved we
+    // route the unencrypted WS straight at its host instead of
+    // hopping through whatever the browser hit as Host:.
+    const wsHost =
+      node?.host ??
+      (req.headers.get('x-forwarded-host') ??
+        req.headers.get('host') ??
+        '127.0.0.1').split(':')[0]!;
     wsUrl = `ws://${wsHost}:5066`;
   }
-
-  // SIP domain is ALWAYS the local network interface IP — that's what
-  // FreeSWITCH's default_domain is, and that's where the FS directory
-  // lives. Independent of where the WebSocket connects.
-  const sipDomain = localExternalIp();
 
   // Iter 40 — prefer the user's primary phone (real provisioned creds).
   // If they don't own one yet, fall back to the iter-35 hash + the FS
   // default `1234` password so the migration is non-destructive.
-  const primary = getPrimaryPhone(user.id);
   const extension = primary?.extension ?? extensionForUser(user.id);
   const password = primary?.password ?? '1234';
 
@@ -83,7 +94,27 @@ export async function GET(req: NextRequest) {
     password,
     display_name: user.username,
     manual_dial: manualDial,
+    telephony_node: node
+      ? { id: node.id, name: node.name, host: node.host }
+      : null,
   });
+}
+
+// Iter 62 — pick the right telephony node for this phone. Encoded
+// as a function so the order-of-preference is auditable in one
+// place: explicit pin → only-telephony-node → is_self → null.
+function resolveTelephonyNode(pinned: string | null): NodeRecord | null {
+  if (pinned) {
+    const n = getNodeFromDb(pinned);
+    if (n && parseNodeRoles(n).includes('telephony')) return n;
+  }
+  const telephony = listNodesFromDb().filter((n) =>
+    parseNodeRoles(n).includes('telephony'),
+  );
+  if (telephony.length === 1) return telephony[0]!;
+  const self = telephony.find((n) => n.is_self === 1);
+  if (self) return self;
+  return telephony[0] ?? null;
 }
 
 async function certExists(domain: string): Promise<boolean> {

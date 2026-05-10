@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   deletePhone,
+  getNodeFromDb,
   getPhoneById,
   getPhoneByExtension,
   getPrimaryPhoneForUser,
   insertPhone,
   listPhonesForUser,
+  nodeHasRole,
   unsetOtherPrimaryPhones,
   updatePhoneFields,
   type PhoneRecord,
@@ -33,6 +35,16 @@ export const PhoneInputSchema = z.object({
   label: z.string().max(120).optional().or(z.literal('').transform(() => undefined)),
   protocol: z.enum(['sip', 'iax2']).default('sip'),
   is_primary: z.boolean().default(true),
+  // Iter 62 — which telephony node hosts this phone. Optional;
+  // null means "let softphone-config pick the only telephony node
+  // it can find", which is the single-box default. When a cluster
+  // has multiple telephony nodes the admin pins each phone here.
+  telephony_node_id: z
+    .string()
+    .uuid()
+    .nullable()
+    .optional()
+    .or(z.literal('').transform(() => null)),
 });
 export type PhoneInput = z.infer<typeof PhoneInputSchema>;
 
@@ -50,6 +62,13 @@ export function createPhone(
   if (getPhoneByExtension(input.extension)) {
     return { error: `Extension ${input.extension} is already in use.` };
   }
+  if (input.telephony_node_id) {
+    const node = getNodeFromDb(input.telephony_node_id);
+    if (!node) return { error: `Node ${input.telephony_node_id} not found.` };
+    if (!nodeHasRole(node, 'telephony')) {
+      return { error: 'Bound node must include the telephony role.' };
+    }
+  }
   const id = randomUUID();
   // First phone for a user is always primary regardless of input.
   const existing = listPhonesForUser(userId);
@@ -62,6 +81,7 @@ export function createPhone(
     label: input.label ?? null,
     protocol: input.protocol,
     is_primary: isPrimary,
+    telephony_node_id: input.telephony_node_id ?? null,
   });
   if (isPrimary) {
     unsetOtherPrimaryPhones(userId, id);
@@ -82,6 +102,13 @@ export function updatePhone(
       return { error: `Extension ${input.extension} is already in use.` };
     }
   }
+  if (input.telephony_node_id) {
+    const node = getNodeFromDb(input.telephony_node_id);
+    if (!node) return { error: `Node ${input.telephony_node_id} not found.` };
+    if (!nodeHasRole(node, 'telephony')) {
+      return { error: 'Bound node must include the telephony role.' };
+    }
+  }
 
   const updates: Parameters<typeof updatePhoneFields>[1] = {};
   if (input.extension !== undefined) updates.extension = input.extension;
@@ -89,6 +116,9 @@ export function updatePhone(
   if (input.label !== undefined) updates.label = input.label || null;
   if (input.protocol !== undefined) updates.protocol = input.protocol;
   if (input.is_primary !== undefined) updates.is_primary = input.is_primary;
+  if (input.telephony_node_id !== undefined) {
+    updates.telephony_node_id = input.telephony_node_id ?? null;
+  }
 
   const changed = updatePhoneFields(id, updates);
   if (changed && input.is_primary === true) {

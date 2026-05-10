@@ -8,6 +8,8 @@ import {
   getUserInGroupIds,
   listCampaigns,
   listInGroups,
+  listNodesFromDb,
+  parseNodeRoles,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { InlineCardForm } from '@/components/inline-card-form';
@@ -39,6 +41,9 @@ export default async function UserDetail({
   const { id } = await params;
   const u = getUser(id);
   if (!u) notFound();
+  const telephonyNodes = listNodesFromDb()
+    .filter((n) => parseNodeRoles(n).includes('telephony'))
+    .map((n) => ({ id: n.id, name: n.name, host: n.host }));
 
   const isMe = id === me.id;
   const isInactive = u.is_active === 0;
@@ -151,7 +156,7 @@ export default async function UserDetail({
           live calls to. Multiple phones let one user use a desk phone +
           a softphone, etc.
         </p>
-        <PhonesPanel userId={u.id} />
+        <PhonesPanel userId={u.id} telephonyNodes={telephonyNodes} />
       </div>
 
       <div className="border border-border rounded p-4 max-w-2xl mb-6">

@@ -14,9 +14,22 @@ interface PhoneRow {
   protocol: string;
   password: string;
   is_primary: number;
+  telephony_node_id: string | null;
 }
 
-export function PhonesPanel({ userId }: { userId: string }) {
+interface TelephonyNode {
+  id: string;
+  name: string;
+  host: string;
+}
+
+export function PhonesPanel({
+  userId,
+  telephonyNodes,
+}: {
+  userId: string;
+  telephonyNodes: TelephonyNode[];
+}) {
   const [phones, setPhones] = useState<PhoneRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -63,6 +76,7 @@ export function PhonesPanel({ userId }: { userId: string }) {
             <PhoneRow
               key={p.id}
               phone={p}
+              telephonyNodes={telephonyNodes}
               onChanged={reload}
               onError={setError}
             />
@@ -74,6 +88,7 @@ export function PhonesPanel({ userId }: { userId: string }) {
         <AddPhoneForm
           userId={userId}
           existing={phones.length}
+          telephonyNodes={telephonyNodes}
           onCancel={() => setShowAdd(false)}
           onSaved={() => {
             setShowAdd(false);
@@ -99,20 +114,26 @@ export function PhonesPanel({ userId }: { userId: string }) {
 
 function PhoneRow({
   phone,
+  telephonyNodes,
   onChanged,
   onError,
 }: {
   phone: PhoneRow;
+  telephonyNodes: TelephonyNode[];
   onChanged: () => void | Promise<void>;
   onError: (msg: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const boundNode = telephonyNodes.find(
+    (n) => n.id === phone.telephony_node_id,
+  );
 
   if (editing) {
     return (
       <li>
         <EditPhoneForm
           phone={phone}
+          telephonyNodes={telephonyNodes}
           onCancel={() => setEditing(false)}
           onSaved={() => {
             setEditing(false);
@@ -168,6 +189,18 @@ function PhoneRow({
         {phone.label && (
           <div className="text-xs text-fg-subtle mt-0.5">{phone.label}</div>
         )}
+        <div className="text-[11px] text-fg-subtle mt-0.5">
+          <span className="uppercase tracking-wide">Node:</span>{' '}
+          {boundNode ? (
+            <span className="font-mono text-fg-muted">
+              {boundNode.name} ({boundNode.host})
+            </span>
+          ) : (
+            <span className="text-fg-subtle">
+              auto ({telephonyNodes.length === 1 ? 'only telephony node' : 'first available'})
+            </span>
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-2">
         {phone.is_primary !== 1 && (
@@ -204,12 +237,14 @@ function PhoneRow({
 function AddPhoneForm({
   userId,
   existing,
+  telephonyNodes,
   onCancel,
   onSaved,
   onError,
 }: {
   userId: string;
   existing: number;
+  telephonyNodes: TelephonyNode[];
   onCancel: () => void;
   onSaved: () => void;
   onError: (msg: string | null) => void;
@@ -220,6 +255,11 @@ function AddPhoneForm({
   const [password, setPassword] = useState('');
   const [protocol, setProtocol] = useState<'sip' | 'iax2'>('sip');
   const [isPrimary, setIsPrimary] = useState(true);
+  // Default to the only telephony node when there's one, else blank
+  // (= "auto-pick" semantics on the server).
+  const [nodeId, setNodeId] = useState<string>(
+    telephonyNodes.length === 1 ? telephonyNodes[0]!.id : '',
+  );
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -234,6 +274,7 @@ function AddPhoneForm({
         password,
         protocol,
         is_primary: existing === 0 ? true : isPrimary,
+        telephony_node_id: nodeId || null,
       }),
     });
     setSubmitting(false);
@@ -294,6 +335,25 @@ function AddPhoneForm({
           placeholder="min 4 chars"
         />
       </label>
+      {telephonyNodes.length > 0 && (
+        <label className="block">
+          <div className="text-xs text-fg-muted mb-1">Telephony node</div>
+          <select
+            value={nodeId}
+            onChange={(e) => setNodeId(e.target.value)}
+            className="input"
+          >
+            <option value="">
+              (auto — pick the only available telephony node)
+            </option>
+            {telephonyNodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.name} ({n.host})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {existing > 0 && (
         <label className="inline-flex items-center gap-2">
           <input
@@ -327,11 +387,13 @@ function AddPhoneForm({
 
 function EditPhoneForm({
   phone,
+  telephonyNodes,
   onCancel,
   onSaved,
   onError,
 }: {
   phone: PhoneRow;
+  telephonyNodes: TelephonyNode[];
   onCancel: () => void;
   onSaved: () => void;
   onError: (msg: string | null) => void;
@@ -343,6 +405,7 @@ function EditPhoneForm({
   const [protocol, setProtocol] = useState<'sip' | 'iax2'>(
     phone.protocol === 'iax2' ? 'iax2' : 'sip',
   );
+  const [nodeId, setNodeId] = useState<string>(phone.telephony_node_id ?? '');
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -352,6 +415,7 @@ function EditPhoneForm({
       extension,
       label,
       protocol,
+      telephony_node_id: nodeId || null,
     };
     if (password.length > 0) body.password = password;
     const res = await fetch(`/api/phones/${phone.id}`, {
@@ -416,6 +480,23 @@ function EditPhoneForm({
           placeholder="●●●● (unchanged)"
         />
       </label>
+      {telephonyNodes.length > 0 && (
+        <label className="block">
+          <div className="text-xs text-fg-muted mb-1">Telephony node</div>
+          <select
+            value={nodeId}
+            onChange={(e) => setNodeId(e.target.value)}
+            className="input"
+          >
+            <option value="">(auto)</option>
+            {telephonyNodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.name} ({n.host})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="flex items-center gap-2">
         <button
           type="submit"
