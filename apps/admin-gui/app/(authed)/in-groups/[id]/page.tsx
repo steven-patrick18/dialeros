@@ -5,9 +5,9 @@ import {
   getInGroupAllowedUserIds,
   getInGroupDids,
   getUser,
+  listCampaignsUsingInGroup,
   parseStaticWhitelist,
 } from '@dialeros/control-plane';
-import { DidManager } from './did-manager';
 import { DeleteInGroupButton } from './delete-button';
 
 export const dynamic = 'force-dynamic';
@@ -97,15 +97,46 @@ export default async function InGroupDetail({
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
-        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
-          DIDs ({dids.length})
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+            DIDs ({dids.length})
+          </h2>
+          <Link
+            href="/dids/add"
+            className="text-xs text-fg-muted hover:text-fg"
+          >
+            Add DIDs →
+          </Link>
+        </div>
         <p className="text-xs text-fg-subtle mb-3">
-          Phone numbers that route inbound calls to this in-group. A DID can
-          only belong to one in-group at a time.
+          Phone numbers that route inbound calls here. Manage DIDs (add,
+          move, clone, delete) on the{' '}
+          <Link href="/dids" className="text-accent hover:underline">
+            DIDs page
+          </Link>
+          .
         </p>
-        <DidManager id={id} dids={dids} />
+        {dids.length === 0 ? (
+          <p className="text-fg-subtle text-sm">
+            No DIDs attached. Inbound calls have nowhere to land.
+          </p>
+        ) : (
+          <ul className="font-mono text-xs space-y-1 max-h-60 overflow-y-auto">
+            {dids.map((d) => (
+              <li key={d}>
+                <Link
+                  href={`/dids/${encodeURIComponent(d)}`}
+                  className="hover:underline"
+                >
+                  {d}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
+
+      <CampaignsUsingCard inGroupId={id} />
 
       <AllowedUsersCard inGroupId={id} />
 
@@ -158,6 +189,42 @@ function Detail({
     <div className="flex justify-between gap-4 text-sm">
       <dt className="text-fg-subtle">{label}</dt>
       <dd className="text-fg text-right">{value}</dd>
+    </div>
+  );
+}
+
+function CampaignsUsingCard({ inGroupId }: { inGroupId: string }) {
+  const campaigns = listCampaignsUsingInGroup(inGroupId);
+  return (
+    <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+      <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+        Campaigns referencing this in-group ({campaigns.length})
+      </h2>
+      {campaigns.length === 0 ? (
+        <p className="text-fg-subtle text-sm">
+          No campaign currently picks up calls from this in-group. Attach
+          this in-group on a campaign to start routing.
+        </p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {campaigns.map((c) => (
+            <li key={c.id} className="flex items-center gap-3">
+              <Link
+                href={`/campaigns/${c.id}`}
+                className="hover:underline"
+              >
+                {c.name}
+              </Link>
+              <span className="text-fg-subtle text-xs uppercase">
+                {c.status}
+              </span>
+              <span className="text-fg-subtle text-xs font-mono">
+                {c.type}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

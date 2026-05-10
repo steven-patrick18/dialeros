@@ -1515,6 +1515,61 @@ export function listDidsForInGroup(inGroupId: string): string[] {
   return rows.map((r) => r.did);
 }
 
+/**
+ * Iter 22 — list all DIDs across every in-group with their owner. Used
+ * by the standalone /dids page so admins don't have to hunt through
+ * each in-group to find a number.
+ */
+export interface DidWithOwner {
+  did: string;
+  in_group_id: string;
+  in_group_name: string;
+  in_group_enabled: number;
+}
+
+export function listAllDids(): DidWithOwner[] {
+  return db()
+    .prepare(
+      `SELECT igd.did, igd.in_group_id,
+              ig.name AS in_group_name, ig.enabled AS in_group_enabled
+         FROM in_group_dids igd
+         JOIN in_groups ig ON ig.id = igd.in_group_id
+        ORDER BY igd.did ASC`,
+    )
+    .all() as unknown as DidWithOwner[];
+}
+
+export function getDidWithOwner(did: string): DidWithOwner | undefined {
+  return db()
+    .prepare(
+      `SELECT igd.did, igd.in_group_id,
+              ig.name AS in_group_name, ig.enabled AS in_group_enabled
+         FROM in_group_dids igd
+         JOIN in_groups ig ON ig.id = igd.in_group_id
+        WHERE igd.did = ?`,
+    )
+    .get(did) as unknown as DidWithOwner | undefined;
+}
+
+export function reassignDidToInGroup(
+  did: string,
+  newInGroupId: string,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE in_group_dids SET in_group_id = ? WHERE did = ?`,
+    )
+    .run(newInGroupId, did);
+  return Number(result.changes) > 0;
+}
+
+export function deleteDid(did: string): boolean {
+  const result = db()
+    .prepare(`DELETE FROM in_group_dids WHERE did = ?`)
+    .run(did);
+  return Number(result.changes) > 0;
+}
+
 export function findDidOwner(did: string): string | undefined {
   const row = db()
     .prepare(`SELECT in_group_id FROM in_group_dids WHERE did = ?`)

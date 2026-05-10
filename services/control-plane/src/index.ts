@@ -244,6 +244,27 @@ export {
 } from './pacing';
 export type { PacingTickResult, DialIntentRecord } from './pacing';
 
+// DIDs (iter 22) — standalone management
+export {
+  SingleDidInputSchema,
+  BulkDidInputSchema,
+  DidNumberSchema,
+  parseDidBlob,
+  addDid,
+  bulkAddDids,
+  cloneDidSettings,
+  moveDid,
+  removeDid,
+  listAllDids,
+  getDidWithOwner,
+} from './did';
+export type {
+  SingleDidInput,
+  BulkDidInput,
+  BulkDidResult,
+  DidWithOwner,
+} from './did';
+
 // In-Groups
 export {
   InGroupTypeSchema,
