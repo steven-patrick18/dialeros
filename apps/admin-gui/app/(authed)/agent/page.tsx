@@ -10,6 +10,7 @@ import { SoftphoneProvider } from '@/components/softphone';
 import { AgentFeed } from './agent-feed';
 import { AgentSoftphoneBadge } from './softphone-badge';
 import { AgentSoftphonePanel } from './softphone-panel';
+import { WrapUpOverlay } from './wrap-up-overlay';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ export default async function AgentConsole() {
 
   return (
     <SoftphoneProvider>
+      <WrapUpOverlay />
       <div className="flex flex-col-reverse lg:flex-row gap-6 lg:items-start">
         <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-1">

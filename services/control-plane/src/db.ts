@@ -1507,6 +1507,27 @@ export function listDialIntentsForUser(
     .all(userId, sinceId, limit) as unknown as AgentIntentRecord[];
 }
 
+/**
+ * Iter 46 — most recent intent assigned to this user that has no
+ * disposition yet. Drives the wrap-up modal: when an agent's call
+ * ends we look this up and pin them to dispositioning it.
+ */
+export function latestUndisposedIntentForUser(
+  userId: string,
+): AgentIntentRecord | undefined {
+  return db()
+    .prepare(
+      `SELECT i.*, c.name AS campaign_name, l.name AS lead_name
+         FROM dial_intents i
+         JOIN campaigns c ON c.id = i.campaign_id
+         LEFT JOIN leads l ON l.id = i.lead_id
+        WHERE i.assigned_user_id = ? AND i.disposition IS NULL
+        ORDER BY i.id DESC
+        LIMIT 1`,
+    )
+    .get(userId) as unknown as AgentIntentRecord | undefined;
+}
+
 export function countDialIntentsForUser(userId: string): number {
   const row = db()
     .prepare(`SELECT COUNT(*) AS n FROM dial_intents WHERE assigned_user_id = ?`)
