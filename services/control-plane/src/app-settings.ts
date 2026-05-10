@@ -38,4 +38,21 @@ export const APP_SETTING_KEYS = {
   // Iter 36 — domain + TLS bootstrap
   canonicalDomain: 'domain.canonical',
   tlsContactEmail: 'tls.contact_email',
+  // Iter 56 — call recording retention (days). Default 30; admin can
+  // override via the settings UI later. Encrypted-at-rest along with
+  // every other app_setting, even though it's not secret — keeps the
+  // table shape uniform.
+  recordingRetentionDays: 'recording.retention_days',
 } as const;
+
+export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
+
+export function getRecordingRetentionDays(): number {
+  const raw = getAppSetting(APP_SETTING_KEYS.recordingRetentionDays);
+  if (!raw) return RECORDING_RETENTION_DEFAULT_DAYS;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) {
+    return RECORDING_RETENTION_DEFAULT_DAYS;
+  }
+  return n;
+}

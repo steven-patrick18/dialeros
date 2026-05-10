@@ -582,19 +582,21 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Iter 47 / 54d — local-only hold: silence the mic sender so the
-  // far end hears nothing, and pin the playback GainNode to 0 so
-  // the agent doesn't hear them either. No SIP re-INVITE /
-  // a=sendonly yet — that's a future iter.
+  // Iter 56 — real SIP hold via re-INVITE with an SDP modifier that
+  // flips a=sendrecv ↔ a=sendonly on the local description. The far
+  // end sees a proper hold (some carriers play MoH for the
+  // recipient, etc.) and reciprocates. We still belt-and-suspender
+  // by muting the local mic + pinning the playback GainNode to 0
+  // so even if the re-INVITE is rejected the agent perceives hold.
   const toggleHold = useCallback(() => {
     const session = sessionRef.current;
     if (!session) return;
     const sdh = session.sessionDescriptionHandler;
     if (!sdh || !('peerConnection' in sdh)) return;
     const pc = (sdh as { peerConnection: RTCPeerConnection }).peerConnection;
-    let nowHeld = false;
+
+    const nowHeld = !state.onHold;
     setState((prev) => {
-      nowHeld = !prev.onHold;
       if (remoteGainRef.current) {
         remoteGainRef.current.gain.value = nowHeld ? 0 : prev.volume * 1.5;
       }
@@ -608,7 +610,34 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     if (audioRef.current) {
       audioRef.current.muted = nowHeld;
     }
-  }, []);
+
+    // Iter 56 — send a re-INVITE with the appropriate SDP direction.
+    // sip.js routes session.invite() through the same SDH so the
+    // modifier rewrites the local offer before it's sent. Far end
+    // confirms with sendrecv/recvonly in its answer. We fire-and-
+    // forget — the local mic + speaker muting above already give
+    // the agent a working hold even if the re-INVITE 4xx's.
+    const sdpModifier = (
+      description: RTCSessionDescriptionInit,
+    ): Promise<RTCSessionDescriptionInit> => {
+      if (!description.sdp) return Promise.resolve(description);
+      const newDirection = nowHeld ? 'a=sendonly' : 'a=sendrecv';
+      const sdp = description.sdp
+        .replace(/a=sendrecv/g, newDirection)
+        .replace(/a=sendonly/g, newDirection)
+        .replace(/a=recvonly/g, newDirection)
+        .replace(/a=inactive/g, newDirection);
+      return Promise.resolve({ ...description, sdp });
+    };
+    void session
+      .invite({
+        sessionDescriptionHandlerModifiers: [sdpModifier],
+      })
+      .catch((e: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn('softphone: hold re-INVITE failed', e);
+      });
+  }, [state.onHold]);
 
   // Iter 47 — blind transfer via SIP REFER. The agent types a target;
   // we wrap bare digits/extensions into a sip: URI against the same

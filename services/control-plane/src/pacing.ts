@@ -25,6 +25,7 @@ import {
   findMatchingDialPlanRule,
 } from './carrier';
 import { ensureFsEventListener } from './fs-events';
+import { ensureRecordingRetentionSweep } from './recording-retention';
 import { extensionForUser } from './sip-extensions';
 
 // Iter 11 — pacing engine v1 (simulation).
@@ -492,6 +493,10 @@ export function subscribeToAllIntents(
  */
 export function resumeActivePacers(): { started: number } {
   ensureFsEventListener();
+  // Iter 56 — schedule the daily recording-retention sweep on the
+  // same boot path. Idempotent + delayed-start so crash loops don't
+  // hammer the filesystem.
+  ensureRecordingRetentionSweep();
   let started = 0;
   for (const c of listCampaignsFromDb()) {
     if (c.status === 'active') {

@@ -150,7 +150,15 @@ export {
   hasAppSetting,
   clearAppSetting,
   APP_SETTING_KEYS,
+  RECORDING_RETENTION_DEFAULT_DAYS,
+  getRecordingRetentionDays,
 } from './app-settings';
+
+// Recording retention (iter 56)
+export {
+  ensureRecordingRetentionSweep,
+  sweepOnce as sweepRecordingsOnce,
+} from './recording-retention';
 
 // Carriers
 export {

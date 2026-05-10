@@ -100,7 +100,7 @@ export function WrapUpOverlay() {
     };
   }, [sp.inCall]);
 
-  async function submit() {
+  async function submit(resumeAfter: boolean) {
     if (!intent || !chosen) return;
     setBusy(true);
     setError(null);
@@ -137,8 +137,11 @@ export function WrapUpOverlay() {
       return;
     }
 
-    // Resume only if we paused them.
-    if (pausedByUsRef.current) {
+    // Iter 56 — resume only if we paused them AND the agent picked
+    // the "Submit & resume" path. "Submit & stay paused" leaves
+    // them PAUSED so they can immediately do a manual dial without
+    // a second click on Pause.
+    if (resumeAfter && pausedByUsRef.current) {
       try {
         await fetch('/api/agent/status', {
           method: 'POST',
@@ -148,6 +151,10 @@ export function WrapUpOverlay() {
       } catch {
         /* best-effort */
       }
+      pausedByUsRef.current = false;
+    } else if (!resumeAfter) {
+      // Forget the "we paused them" flag so a later wrap-up doesn't
+      // think it owns the pause and accidentally resume.
       pausedByUsRef.current = false;
     }
 
@@ -259,13 +266,26 @@ export function WrapUpOverlay() {
           <div className="text-error text-sm mb-3">{error}</div>
         )}
 
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] text-fg-subtle">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[11px] text-fg-subtle flex-1">
             Calls paused until you submit.
           </span>
           <button
             type="button"
-            onClick={submit}
+            onClick={() => {
+              void submit(false);
+            }}
+            disabled={!chosen || busy}
+            className="border border-border hover:border-fg-muted text-fg-muted hover:text-fg px-3 py-2 rounded text-sm disabled:opacity-40"
+            title="Submit and stay paused — useful before a manual dial"
+          >
+            Submit & stay paused
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void submit(true);
+            }}
             disabled={!chosen || busy}
             className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm disabled:opacity-40"
           >
