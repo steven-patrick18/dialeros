@@ -1565,7 +1565,7 @@ export function pickNextDialableLead(
        FROM leads l
        JOIN lead_lists ll ON ll.id = l.list_id
        WHERE ll.campaign_id = ?
-         AND l.status IN ('NEW', 'CALLED_NO_ANSWER')
+         AND l.status IN ('NEW', 'CALLED_NO_ANSWER', 'BUSY')
          AND (l.last_called_at IS NULL OR l.last_called_at < ?)
        ORDER BY CASE WHEN l.last_called_at IS NULL THEN 0 ELSE 1 END,
                 l.last_called_at ASC,
@@ -1586,6 +1586,49 @@ export function markLeadDialed(
       `UPDATE leads SET status = ?, last_called_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
     )
     .run(newStatus, leadId);
+}
+
+/**
+ * Iter 34 — only update lead.status when its CURRENT status is in
+ * `expectedStatuses`. Used by fs-events to write the carrier-derived
+ * outcome onto a lead that's still 'DIALING'. If an agent dispositioned
+ * during the call, status is no longer DIALING and we leave it alone.
+ *
+ * Also used to look up the lead from a dial_intent's correlation_id —
+ * the call-outcome mapping is per-call, but we apply it to the LEAD
+ * the call was for.
+ */
+export function setLeadStatusIfIn(
+  leadId: string,
+  newStatus: string,
+  expectedStatuses: string[],
+): boolean {
+  if (expectedStatuses.length === 0) return false;
+  const placeholders = expectedStatuses.map(() => '?').join(',');
+  const result = db()
+    .prepare(
+      `UPDATE leads
+         SET status = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+         AND status IN (${placeholders})`,
+    )
+    .run(newStatus, leadId, ...expectedStatuses);
+  return Number(result.changes) > 0;
+}
+
+export function getLeadIdForCorrelation(
+  correlationId: string,
+): { lead_id: string; current_lead_status: string | null } | undefined {
+  return db()
+    .prepare(
+      `SELECT i.lead_id AS lead_id, l.status AS current_lead_status
+         FROM dial_intents i
+         LEFT JOIN leads l ON l.id = i.lead_id
+        WHERE i.correlation_id = ?`,
+    )
+    .get(correlationId) as
+    | { lead_id: string; current_lead_status: string | null }
+    | undefined;
 }
 
 // =====================================================================

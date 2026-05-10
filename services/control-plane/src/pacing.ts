@@ -278,7 +278,16 @@ export async function paceCampaignOnce(
     correlation_id: correlationId,
   });
 
-  markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
+  // Iter 34 — live calls go to DIALING (in-flight). The fs-events
+  // listener overwrites this with the actual outcome derived from
+  // hangup_cause (CALLED_ANSWERED / BUSY / CALLED_NO_ANSWER /
+  // BAD_NUMBER / ...). Simulated calls keep the old optimistic
+  // CALLED_NO_ANSWER mark since there's no real call to learn from.
+  if (campaign.dial_mode === 'live') {
+    markLeadDialed(lead.lead_id, 'DIALING');
+  } else {
+    markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
+  }
 
   container().bus.emit(`intent:${campaignId}`, intent);
   container().bus.emit('intent:any', intent);

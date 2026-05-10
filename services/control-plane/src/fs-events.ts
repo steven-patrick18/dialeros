@@ -2,7 +2,13 @@ import net from 'node:net';
 import {
   applyDialIntentAnswered,
   applyDialIntentHangup,
+  getLeadIdForCorrelation,
+  setLeadStatusIfIn,
 } from './db';
+import {
+  IN_FLIGHT_STATUSES,
+  leadStatusFromHangup,
+} from './call-outcome';
 
 /**
  * Iter 33 — long-running ESL listener that subscribes to FreeSWITCH
@@ -291,6 +297,30 @@ function handleEventBody(
       });
     } catch (e) {
       console.error('[fs-events] applyDialIntentHangup failed:', e);
+    }
+
+    // Iter 34 — also update the lead's status from the carrier
+    // outcome, but ONLY if the lead is still in flight (DIALING).
+    // If an agent dispositioned the call before hangup (status moved
+    // to CONVERTED / DNC / CALLBACK_SCHEDULED / etc.), that wins —
+    // we don't trample it.
+    try {
+      const newLeadStatus = leadStatusFromHangup({
+        hangupCause: cause,
+        answeredAt: answeredAt ?? null,
+      });
+      if (newLeadStatus) {
+        const row = getLeadIdForCorrelation(correlationId);
+        if (row) {
+          setLeadStatusIfIn(
+            row.lead_id,
+            newLeadStatus,
+            [...IN_FLIGHT_STATUSES],
+          );
+        }
+      }
+    } catch (e) {
+      console.error('[fs-events] lead status update failed:', e);
     }
   }
 }
