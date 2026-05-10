@@ -347,6 +347,13 @@ function db(): DatabaseSync {
     // "312"]). NULL or empty array means the carrier accepts every
     // destination (existing behavior, backward compatible).
     "ALTER TABLE carriers ADD COLUMN dial_prefixes TEXT",
+    // Iter 45: ViciDial-style carrier dial-plan rewrite rules. JSON
+    // array of { match_prefix, replacements[] } objects. When the
+    // destination starts with match_prefix the rule strips it and
+    // rotates through `replacements` to prepend a different one each
+    // call (e.g. spread 0805XXXX traffic across 310/311/312/...).
+    // NULL or empty array means no rewrite — destination dialed as-is.
+    "ALTER TABLE carriers ADD COLUMN dial_plan_rules TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -836,6 +843,7 @@ export interface CarrierRecord {
   mos_threshold: number;
   enabled: number;
   dial_prefixes: string | null;
+  dial_plan_rules: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -916,6 +924,7 @@ export function updateCarrierFromDb(
     mos_threshold: number;
     enabled: boolean;
     dial_prefixes: string | null;
+    dial_plan_rules: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

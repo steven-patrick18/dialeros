@@ -165,7 +165,13 @@ export {
   parseCodecs,
   parseDialPrefixes,
   carrierAcceptsDestination,
+  parseDialPlanRules,
+  findMatchingDialPlanRule,
+  applyDialPlanRule,
+  applyDialPlanRules,
+  DialPlanRuleSchema,
 } from './carrier';
+export type { DialPlanRule } from './carrier';
 export type {
   CarrierTransport,
   CarrierAuthMode,
@@ -271,6 +277,7 @@ export {
   resumeActivePacers,
   listIntentsForCampaign,
   totalIntentsFor,
+  rotateDialPlanCursor,
 } from './pacing';
 export type { PacingTickResult, DialIntentRecord } from './pacing';
 

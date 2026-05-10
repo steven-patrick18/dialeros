@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  applyDialPlanRule,
   carrierAcceptsDestination,
   extensionForUser,
+  findMatchingDialPlanRule,
   getCarrier,
   normalizePhone,
+  rotateDialPlanCursor,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 import { originate } from '@/lib/esl';
@@ -111,6 +114,18 @@ export async function POST(req: NextRequest) {
       { status: 409 },
     );
   }
+
+  // Iter 45 — apply carrier dial-plan rewrite rules so a test call
+  // through the same carrier behaves identically to a pacer-driven
+  // one. The pacer's rotation cursor is shared (rotateDialPlanCursor)
+  // so a test from this surface advances the same counter and you
+  // can predict which replacement was used.
+  let dialDest = dest;
+  const matchedRule = findMatchingDialPlanRule(carrier, dest);
+  if (matchedRule) {
+    const cursor = rotateDialPlanCursor(carrier.id, matchedRule.ruleIndex);
+    dialDest = applyDialPlanRule(matchedRule.rule, dest, cursor);
+  }
   const cidNorm = cid ? normalizePhone(cid) : null;
   if (cid && !cidNorm) {
     return NextResponse.json(
@@ -125,7 +140,7 @@ export async function POST(req: NextRequest) {
   try {
     uuid = await originate({
       gateway,
-      destination: dest,
+      destination: dialDest,
       callerIdNumber: cidNorm ?? undefined,
       app: dialApp,
       originateTimeout: timeout_seconds,
@@ -138,7 +153,12 @@ export async function POST(req: NextRequest) {
       action: 'telephony.test_call_failed',
       targetType: 'carrier',
       targetId: carrier.id,
-      payload: { to: dest, app, error: err.message ?? 'unknown' },
+      payload: {
+        to: dest,
+        dialed: dialDest,
+        app,
+        error: err.message ?? 'unknown',
+      },
     });
     return NextResponse.json(
       {
@@ -147,6 +167,7 @@ export async function POST(req: NextRequest) {
         code: err.code ?? 'unknown',
         gateway,
         to: dest,
+        dialed: dialDest,
       },
       { status: 502 },
     );
@@ -158,7 +179,7 @@ export async function POST(req: NextRequest) {
     action: 'telephony.test_call_placed',
     targetType: 'carrier',
     targetId: carrier.id,
-    payload: { uuid, to: dest, app, cid: cidNorm },
+    payload: { uuid, to: dest, dialed: dialDest, app, cid: cidNorm },
   });
 
   return NextResponse.json({
@@ -166,6 +187,7 @@ export async function POST(req: NextRequest) {
     uuid,
     gateway,
     to: dest,
+    dialed: dialDest,
     cid: cidNorm,
     app,
   });

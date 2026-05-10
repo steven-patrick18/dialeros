@@ -17,7 +17,11 @@ import {
   type DialIntentRecord,
 } from './db';
 import { parseCidPool } from './route-plan';
-import { carrierAcceptsDestination } from './carrier';
+import {
+  applyDialPlanRule,
+  carrierAcceptsDestination,
+  findMatchingDialPlanRule,
+} from './carrier';
 import { ensureFsEventListener } from './fs-events';
 import { extensionForUser } from './sip-extensions';
 
@@ -47,6 +51,10 @@ interface BusContainer {
   pacers: Map<string, PacerHandle>;
   rotateState: Map<string, number>; // campaign_id -> rotate cursor for cid_pool
   agentRotateState: Map<string, number>; // campaign_id -> agent round-robin cursor
+  // Iter 45 — rotation cursor per (carrier_id, dialplan_rule_index).
+  // Spreads traffic across a rule's replacement list round-robin so
+  // 0805 → [310,311,312] alternates evenly across calls.
+  dialPlanRotateState: Map<string, number>;
 }
 
 declare global {
@@ -63,13 +71,37 @@ function container(): BusContainer {
       pacers: new Map(),
       rotateState: new Map(),
       agentRotateState: new Map(),
+      dialPlanRotateState: new Map(),
     };
   }
-  // Older sessions might predate agentRotateState — patch defensively
-  // so HMR-cached containers don't crash on the new field.
+  // Older sessions might predate the newer state maps — patch
+  // defensively so HMR-cached containers don't crash on access.
   const c = globalThis.__dialeros_pacing!;
   if (!c.agentRotateState) c.agentRotateState = new Map();
+  if (!c.dialPlanRotateState) c.dialPlanRotateState = new Map();
   return c;
+}
+
+/**
+ * Iter 45 — bump-and-return the rotation cursor for a (carrier, rule)
+ * pair. Caller passes the value to applyDialPlanRules, which mods it
+ * against the replacement list length.
+ */
+function nextDialPlanCursor(carrierId: string, ruleIndex: number): number {
+  const c = container();
+  const key = `${carrierId}:${ruleIndex}`;
+  const cur = c.dialPlanRotateState.get(key) ?? 0;
+  c.dialPlanRotateState.set(key, cur + 1);
+  return cur;
+}
+
+/** Exported for the manual-dial / test-call paths so they share the
+ * same rotation cursor as the pacer. */
+export function rotateDialPlanCursor(
+  carrierId: string,
+  ruleIndex: number,
+): number {
+  return nextDialPlanCursor(carrierId, ruleIndex);
 }
 
 function applyTransform(
@@ -255,6 +287,18 @@ export async function paceCampaignOnce(
       markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
       return { outcome: 'no_matching_prefix' };
     }
+    // Iter 45 — apply carrier rewrite rules. If a rule's match_prefix
+    // matches, we strip it and prepend the next replacement on the
+    // rotation cursor so 0805 → [310,311,312,…] traffic spreads
+    // evenly. We don't mutate `transformed` because the dial_intent
+    // row should still record what the route plan produced; the
+    // rewritten value is what FS dials.
+    let dialDestination = transformed;
+    const matched = findMatchingDialPlanRule(carrier, transformed);
+    if (matched) {
+      const cursor = nextDialPlanCursor(carrier.id, matched.ruleIndex);
+      dialDestination = applyDialPlanRule(matched.rule, transformed, cursor);
+    }
     correlationId = randomUUID();
     const gateway = `dialeros-${carrier.id}`;
     // Iter 39 — once the destination answers, ring the assigned agent's
@@ -272,7 +316,7 @@ export async function paceCampaignOnce(
     try {
       const jobUuid = await bgapiOriginate({
         gateway,
-        destination: transformed,
+        destination: dialDestination,
         callerIdNumber: cid ?? undefined,
         correlationId,
         app: `&bridge(user/${agentExtension})`,

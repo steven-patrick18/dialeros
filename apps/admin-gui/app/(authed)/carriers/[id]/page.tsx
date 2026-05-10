@@ -4,10 +4,12 @@ import {
   getCarrier,
   getRoutePlansForCarrier,
   parseCodecs,
+  parseDialPlanRules,
   parseDialPrefixes,
 } from '@dialeros/control-plane';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteCarrierButton } from './delete-button';
+import { DialPlanPanel } from './dial-plan-panel';
 import { FreeSwitchPanel } from './fs-panel';
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +25,7 @@ export default async function CarrierDetail({
 
   const codecs = parseCodecs(carrier);
   const dialPrefixes = parseDialPrefixes(carrier);
+  const dialPlanRules = parseDialPlanRules(carrier);
   const usedBy = getRoutePlansForCarrier(id);
 
   return (
@@ -162,6 +165,11 @@ export default async function CarrierDetail({
               hint: 'One per line, in preference order. Allowed: PCMU, PCMA, OPUS, G729. Topmost is offered first; carrier picks the first it supports.',
             },
           ]}
+        />
+
+        <DialPlanPanel
+          carrierId={carrier.id}
+          initialRules={dialPlanRules}
         />
 
         <InlineCardForm

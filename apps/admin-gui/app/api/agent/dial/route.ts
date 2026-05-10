@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  applyDialPlanRule,
   carrierAcceptsDestination,
   extensionForUser,
+  findMatchingDialPlanRule,
   getCarrier,
   getPrimaryPhone,
   getRoutePlan,
@@ -12,6 +14,7 @@ import {
   listCampaigns,
   normalizePhone,
   parseCidPool,
+  rotateDialPlanCursor,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 import { originate } from '@/lib/esl';
@@ -107,6 +110,17 @@ export async function POST(req: NextRequest) {
       { status: 409 },
     );
   }
+
+  // Iter 45 — apply carrier dial-plan rewrite rules so manual dials
+  // get the same prefix translation as pacer-driven calls. Shared
+  // rotation cursor with the pacer keeps load distribution
+  // predictable across sources.
+  let dialDest = dest;
+  const matchedRule = findMatchingDialPlanRule(carrier, dest);
+  if (matchedRule) {
+    const cursor = rotateDialPlanCursor(carrier.id, matchedRule.ruleIndex);
+    dialDest = applyDialPlanRule(matchedRule.rule, dest, cursor);
+  }
   // Pick a CID — single, or first from the pool.
   let cid: string | null = null;
   if (route.cid_strategy === 'single') {
@@ -124,7 +138,7 @@ export async function POST(req: NextRequest) {
   try {
     uuid = await originate({
       gateway,
-      destination: dest,
+      destination: dialDest,
       callerIdNumber: cid ?? undefined,
       app: `&bridge(user/${agentExtension})`,
       originateTimeout: 30,
@@ -139,6 +153,7 @@ export async function POST(req: NextRequest) {
       targetId: campaign.id,
       payload: {
         to: dest,
+        dialed: dialDest,
         cid,
         error: err.message ?? 'unknown',
       },
@@ -162,6 +177,7 @@ export async function POST(req: NextRequest) {
     payload: {
       uuid,
       to: dest,
+      dialed: dialDest,
       cid,
       campaign_name: campaign.name,
     },
@@ -171,6 +187,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     uuid,
     to: dest,
+    dialed: dialDest,
     cid,
     campaign: campaign.name,
   });
