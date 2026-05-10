@@ -282,40 +282,39 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       if (spkAnalyserRef.current) return; // already built
       try {
         const stream = new MediaStream([track]);
-        // Iter 54c — abandon the AudioContext-as-playback experiment.
-        // Despite the spec, browsers don't decode a remote WebRTC
-        // track into PCM samples reliably when the only consumer is
-        // a Web Audio source node, even with a muted-audio kicker.
-        // The bog-standard WebRTC pattern is to let an
-        // HTMLMediaElement play the stream — that's the path browsers
-        // actually optimise.
+        // Iter 54d — hybrid playback. The <audio> element is the
+        // primary playback path (Chrome's preferred WebRTC code path,
+        // works reliably) but pinned to volume 0 so it doesn't
+        // produce sound on its own. The decoder stays running because
+        // the element is actively consuming the stream — that
+        // satisfies the WebRTC stack's "is this track being used"
+        // check that gates PCM decoding to the AudioContext.
         //
-        // For VU we still create a MediaStreamSource → AnalyserNode
-        // but DO NOT connect the analyser to ctx.destination — that
-        // would double-play. The element gives us audible playback;
-        // the analyser gives us a level reading from the same
-        // decoded stream.
+        // The actual audible output goes through the AudioContext
+        // chain with a GainNode that can boost above 1.0 — useful
+        // because PCMU @ 8kHz is roughly half the perceived loudness
+        // of Opus @ 48kHz. The volume slider still maps 0–1, but a
+        // 1.5x boost is baked into the gain so 100% on the slider
+        // is loud enough to hear comfortably on earbuds.
         if (audioRef.current) {
           audioRef.current.srcObject = stream;
           audioRef.current.muted = false;
-          audioRef.current.volume = state.volume;
+          audioRef.current.volume = 0;
           audioRef.current.play().catch(() => {
-            /* autoplay blocked — element is unmuted so a user
-             * gesture is required; volume slider counts as one. */
+            /* autoplay blocked — silent element should be allowed */
           });
         }
         const src = ctx.createMediaStreamSource(stream);
         const an = ctx.createAnalyser();
         an.fftSize = 256;
+        const gain = ctx.createGain();
+        gain.gain.value = state.volume * 1.5;
         src.connect(an);
-        // intentionally NOT connecting to ctx.destination — playback
-        // is the <audio> element's job.
+        an.connect(gain);
+        gain.connect(ctx.destination);
         remoteSourceRef.current = src;
         spkAnalyserRef.current = an;
-        // GainNode + remoteGainRef stay null on this path; volume
-        // and hold drive the audio element directly (see setVolume
-        // and toggleHold).
-        remoteGainRef.current = null;
+        remoteGainRef.current = gain;
       } catch (e) {
         // eslint-disable-next-line no-console
         console.warn('softphone: remote chain failed', e);
@@ -531,12 +530,13 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
 
   const setVolume = useCallback((v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
-    // Iter 54c — playback runs through the <audio> element now.
-    // While on hold the audio element stays muted; restoring volume
-    // updates the slider but doesn't unmute until toggleHold flips.
+    // Iter 54d — playback amplitude is a GainNode (with 1.5x boost
+    // baked in to compensate for low-loudness PCMU codecs); the
+    // audio element stays pinned to volume=0 to keep the decoder
+    // alive without producing audible sound. Hold pins gain to 0.
     setState((prev) => {
-      if (audioRef.current && !prev.onHold) {
-        audioRef.current.volume = clamped;
+      if (remoteGainRef.current && !prev.onHold) {
+        remoteGainRef.current.gain.value = clamped * 1.5;
       }
       return { ...prev, volume: clamped };
     });
@@ -582,10 +582,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Iter 47 / 54c — local-only hold: silence the mic sender so the
-  // far end hears nothing, and mute the <audio> element so the
-  // agent doesn't hear them either. No SIP re-INVITE / a=sendonly
-  // yet — that's a future iter.
+  // Iter 47 / 54d — local-only hold: silence the mic sender so the
+  // far end hears nothing, and pin the playback GainNode to 0 so
+  // the agent doesn't hear them either. No SIP re-INVITE /
+  // a=sendonly yet — that's a future iter.
   const toggleHold = useCallback(() => {
     const session = sessionRef.current;
     if (!session) return;
@@ -595,6 +595,9 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     let nowHeld = false;
     setState((prev) => {
       nowHeld = !prev.onHold;
+      if (remoteGainRef.current) {
+        remoteGainRef.current.gain.value = nowHeld ? 0 : prev.volume * 1.5;
+      }
       return { ...prev, onHold: nowHeld, muted: nowHeld ? true : prev.muted };
     });
     pc.getSenders().forEach((sender) => {
