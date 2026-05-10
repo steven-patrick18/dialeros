@@ -42,6 +42,7 @@ export interface SoftphoneState {
   registered: boolean;
   inCall: boolean;
   muted: boolean;
+  onHold: boolean;
   volume: number;
   remoteIdentity: string | null;
   error: string | null;
@@ -53,6 +54,13 @@ export interface SoftphoneApi extends SoftphoneState {
   setVolume: (v: number) => void;
   hangup: () => Promise<void>;
   sendDtmf: (digit: string) => void;
+  toggleHold: () => void;
+  /** Iter 47 — blind transfer via SIP REFER. Target is a SIP URI or
+   * just an extension string; we wrap bare strings into the local
+   * domain. Resolves when the REFER was sent (not when the far end
+   * accepts) — the session terminates locally after a successful
+   * transfer. */
+  transfer: (target: string) => Promise<void>;
 }
 
 const Ctx = createContext<SoftphoneApi | null>(null);
@@ -71,6 +79,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     registered: false,
     inCall: false,
     muted: false,
+    onHold: false,
     volume: 1.0,
     remoteIdentity: null,
     error: null,
@@ -226,6 +235,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       inCall: true,
       remoteIdentity: remoteUri,
       muted: false,
+      onHold: false,
     }));
 
     const onStateChange = (s: SessionState) => {
@@ -237,10 +247,12 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
           ...prev,
           inCall: false,
           muted: false,
+          onHold: false,
           remoteIdentity: null,
         }));
         if (audioRef.current) {
           audioRef.current.srcObject = null;
+          audioRef.current.muted = false;
         }
         sessionRef.current = null;
       }
@@ -312,6 +324,64 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Iter 47 — local-only hold: mute the mic so far end hears nothing,
+  // and mute the audio element so the agent doesn't hear anything
+  // either. No SIP re-INVITE / a=sendonly yet — that's a future iter.
+  // Sufficient for the agent UX of "park this call privately".
+  const toggleHold = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session) return;
+    const sdh = session.sessionDescriptionHandler;
+    if (!sdh || !('peerConnection' in sdh)) return;
+    const pc = (sdh as { peerConnection: RTCPeerConnection }).peerConnection;
+    let nowHeld = false;
+    setState((prev) => {
+      nowHeld = !prev.onHold;
+      return { ...prev, onHold: nowHeld, muted: nowHeld ? true : prev.muted };
+    });
+    pc.getSenders().forEach((sender) => {
+      if (sender.track && sender.track.kind === 'audio') {
+        sender.track.enabled = !nowHeld;
+      }
+    });
+    if (audioRef.current) {
+      audioRef.current.muted = nowHeld;
+    }
+  }, []);
+
+  // Iter 47 — blind transfer via SIP REFER. The agent types a target;
+  // we wrap bare digits/extensions into a sip: URI against the same
+  // domain we registered to (sip:<target>@<domain>). For SIP URIs
+  // (with @) we pass through. After REFER the local session
+  // terminates and the far end is connected to the target.
+  const transfer = useCallback(async (target: string) => {
+    const session = sessionRef.current;
+    const ua = uaRef.current;
+    if (!session || !ua) return;
+    const trimmed = target.trim();
+    if (trimmed.length === 0) return;
+    const uriString = trimmed.includes('@')
+      ? trimmed.startsWith('sip:')
+        ? trimmed
+        : `sip:${trimmed}`
+      : (() => {
+          const reg = ua.configuration?.uri?.host ?? '127.0.0.1';
+          return `sip:${trimmed}@${reg}`;
+        })();
+    const uri = UserAgent.makeURI(uriString);
+    if (!uri) {
+      // eslint-disable-next-line no-console
+      console.error('softphone: invalid transfer target', uriString);
+      return;
+    }
+    try {
+      await session.refer(uri);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('softphone: transfer failed', e);
+    }
+  }, []);
+
   const api: SoftphoneApi = useMemo(
     () => ({
       ...state,
@@ -319,8 +389,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       setVolume,
       hangup,
       sendDtmf,
+      toggleHold,
+      transfer,
     }),
-    [state, toggleMute, setVolume, hangup, sendDtmf],
+    [state, toggleMute, setVolume, hangup, sendDtmf, toggleHold, transfer],
   );
 
   return (

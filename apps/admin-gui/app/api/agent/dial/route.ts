@@ -37,6 +37,9 @@ export const dynamic = 'force-dynamic';
 
 const Body = z.object({
   destination: z.string().min(2).max(40),
+  // Iter 47 — agent-supplied caller ID override. If absent the route
+  // plan's CID strategy (single / rotate) is used as before.
+  cid: z.string().min(0).max(40).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -121,9 +124,21 @@ export async function POST(req: NextRequest) {
     const cursor = rotateDialPlanCursor(carrier.id, matchedRule.ruleIndex);
     dialDest = applyDialPlanRule(matchedRule.rule, dest, cursor);
   }
-  // Pick a CID — single, or first from the pool.
+  // Iter 47 — agent override wins over the route plan default. Pass
+  // through normalizePhone for canonical form; reject obviously bad
+  // input early instead of confusing the carrier with garbage in
+  // From/PAI.
   let cid: string | null = null;
-  if (route.cid_strategy === 'single') {
+  if (parsed.data.cid && parsed.data.cid.trim().length > 0) {
+    const overrideCid = normalizePhone(parsed.data.cid);
+    if (!overrideCid) {
+      return NextResponse.json(
+        { error: 'CID override has invalid phone format.' },
+        { status: 400 },
+      );
+    }
+    cid = overrideCid;
+  } else if (route.cid_strategy === 'single') {
     cid = route.cid_single;
   } else if (route.cid_strategy === 'rotate') {
     cid = parseCidPool(route)[0] ?? null;

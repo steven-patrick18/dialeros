@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { useSoftphone } from '@/components/softphone';
 
 // Iter 39 — eyeBeam-style softphone for the agent console.
-// Iter 40 — added: pause/resume presence, manual-dial buffer for
-// expert users (gated on manual_dial returned by /softphone-config).
+// Iter 40 — pause/resume + manual-dial mode for expert users.
+// Iter 47 — caller-ID override on manual dial; Hold + blind Transfer
+// action keys; manual dial works while PAUSED (pause means "don't
+// auto-bridge me", not "lock me out of placing calls").
 
 const KEYPAD: Array<{ digit: string; letters?: string }> = [
   { digit: '1' },
@@ -35,11 +37,10 @@ export function AgentSoftphonePanel() {
 
   const [manualDial, setManualDial] = useState(false);
   const [buffer, setBuffer] = useState('');
+  const [cid, setCid] = useState('');
   const [dialBusy, setDialBusy] = useState(false);
   const [dialMsg, setDialMsg] = useState<string | null>(null);
 
-  // Read manual_dial flag from softphone-config (same endpoint the
-  // SIP UA uses) so the panel knows whether to expose the dial input.
   useEffect(() => {
     let cancelled = false;
     fetch('/api/telephony/softphone-config', { cache: 'no-store' })
@@ -53,7 +54,6 @@ export function AgentSoftphonePanel() {
     };
   }, []);
 
-  // Pull current presence on mount.
   useEffect(() => {
     let cancelled = false;
     fetch('/api/agent/status', { cache: 'no-store' })
@@ -92,6 +92,23 @@ export function AgentSoftphonePanel() {
     return () => clearInterval(id);
   }, [sp.inCall]);
 
+  // Iter 46 — wrap-up overlay flips status to PAUSED while disposing.
+  // Refresh local state on focus / visibility change so the panel
+  // reflects what /agent/status actually says (debounced via the
+  // visibility event so we don't poll constantly).
+  useEffect(() => {
+    function refresh() {
+      fetch('/api/agent/status', { cache: 'no-store' })
+        .then((r) =>
+          r.ok ? (r.json() as Promise<{ status: AgentStatus }>) : null,
+        )
+        .then((s) => s && setStatus(s.status))
+        .catch(() => {});
+    }
+    document.addEventListener('visibilitychange', refresh);
+    return () => document.removeEventListener('visibilitychange', refresh);
+  }, []);
+
   async function togglePause() {
     if (statusBusy) return;
     setStatusBusy(true);
@@ -115,11 +132,13 @@ export function AgentSoftphonePanel() {
     if (!buffer || sp.inCall || dialBusy) return;
     setDialBusy(true);
     setDialMsg(null);
+    const body: Record<string, unknown> = { destination: buffer };
+    if (cid.trim().length > 0) body.cid = cid.trim();
     try {
       const res = await fetch('/api/agent/dial', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ destination: buffer }),
+        body: JSON.stringify(body),
       });
       const j = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
@@ -149,7 +168,21 @@ export function AgentSoftphonePanel() {
     }
   }
 
-  // Compose the LCD text.
+  function startTransfer() {
+    if (!sp.inCall) return;
+    const target = window.prompt(
+      'Blind transfer to (extension or phone number):',
+      '',
+    );
+    if (!target) return;
+    void sp.transfer(target);
+  }
+
+  // Iter 47 — LCD logic. Manual-dial users see the dial buffer the
+  // moment they start typing; otherwise the LCD shows the call /
+  // ready / connecting state. The PAUSED indicator moved out of the
+  // caller line into a small badge next to the LINE LED so it
+  // doesn't fight the dial buffer for screen space.
   const showingManual = manualDial && !sp.inCall && !sp.error;
   const callerLine = sp.inCall
     ? sp.remoteIdentity ?? 'unknown'
@@ -157,20 +190,24 @@ export function AgentSoftphonePanel() {
       ? 'OFFLINE'
       : showingManual && buffer.length > 0
         ? buffer
-        : status === 'PAUSED'
-          ? 'PAUSED'
-          : sp.registered
-            ? 'READY'
-            : sp.ready
-              ? 'REGISTERING'
-              : 'CONNECTING';
+        : sp.registered
+          ? showingManual
+            ? 'DIAL'
+            : status === 'PAUSED'
+              ? 'PAUSED'
+              : 'READY'
+          : sp.ready
+            ? 'REGISTERING'
+            : 'CONNECTING';
 
   const statusLine = sp.error
     ? 'softphone error'
     : sp.inCall
-      ? `Connected  ${formatElapsed(elapsed)}${sp.muted ? '  (muted)' : ''}`
+      ? `Connected  ${formatElapsed(elapsed)}${sp.muted ? '  (muted)' : ''}${sp.onHold ? '  (held)' : ''}`
       : showingManual && buffer.length === 0
-        ? 'Enter destination'
+        ? status === 'PAUSED'
+          ? 'Paused — manual dial allowed'
+          : 'Enter destination'
         : showingManual && buffer.length > 0
           ? dialMsg ?? 'Press CALL to dial'
           : status === 'PAUSED'
@@ -196,6 +233,7 @@ export function AgentSoftphonePanel() {
         <div className="flex items-center gap-2">
           <Led on={sp.registered} color="green" label="REG" />
           <Led on={sp.inCall} color="amber" label="LINE" />
+          <Led on={status === 'PAUSED'} color="amber" label="PSE" />
         </div>
       </div>
 
@@ -228,7 +266,25 @@ export function AgentSoftphonePanel() {
         </div>
       </div>
 
-      <div className="px-5 pt-4">
+      {showingManual && (
+        <div className="px-5 pt-3">
+          <label className="block">
+            <div className="text-[9px] uppercase tracking-[0.18em] text-slate-500 mb-1">
+              Caller ID (optional)
+            </div>
+            <input
+              type="text"
+              value={cid}
+              onChange={(e) => setCid(e.target.value)}
+              placeholder="e.g. +12025550100"
+              className="w-full text-xs font-mono px-2 py-1.5 rounded bg-slate-900/60 border border-slate-700 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500/60"
+              maxLength={40}
+            />
+          </label>
+        </div>
+      )}
+
+      <div className="px-5 pt-3">
         <div className="grid grid-cols-3 gap-2">
           {KEYPAD.map((k) => (
             <KeyButton
@@ -243,60 +299,69 @@ export function AgentSoftphonePanel() {
       </div>
 
       <div className="px-5 pt-4">
-        <div className="grid grid-cols-3 gap-2">
-          {sp.inCall ? (
-            <>
-              <ActionKey
-                tone="neutral"
-                label={sp.muted ? 'Unmute' : 'Mute'}
-                onPress={sp.toggleMute}
-              />
-              <ActionKey tone="green" label="On call" disabled />
-              <ActionKey
-                tone="red"
-                label="End"
-                onPress={() => {
-                  void sp.hangup();
-                }}
-              />
-            </>
-          ) : showingManual ? (
-            <>
-              <ActionKey
-                tone="neutral"
-                label="Clear"
-                disabled={buffer.length === 0}
-                onPress={() => {
-                  setBuffer('');
-                  setDialMsg(null);
-                }}
-              />
-              <ActionKey
-                tone="green"
-                label={dialBusy ? 'Dialing' : 'Call'}
-                disabled={
-                  buffer.length === 0 || dialBusy || status === 'PAUSED'
-                }
-                onPress={placeManualCall}
-              />
-              <ActionKey
-                tone="neutral"
-                label="⌫"
-                disabled={buffer.length === 0}
-                onPress={() => {
-                  setBuffer((b) => b.slice(0, -1));
-                  setDialMsg(null);
-                }}
-              />
-            </>
-          ) : (
-            <>
-              <div />
-              <ActionKey tone="neutral" label="Idle" disabled />
-              <div />
-            </>
-          )}
-        </div>
+        {sp.inCall ? (
+          <div className="grid grid-cols-4 gap-1.5">
+            <ActionKey
+              tone={sp.muted ? 'amber' : 'neutral'}
+              label={sp.muted ? 'Unmute' : 'Mute'}
+              onPress={sp.toggleMute}
+              compact
+            />
+            <ActionKey
+              tone={sp.onHold ? 'amber' : 'neutral'}
+              label={sp.onHold ? 'Resume' : 'Hold'}
+              onPress={sp.toggleHold}
+              compact
+            />
+            <ActionKey
+              tone="neutral"
+              label="Xfer"
+              onPress={startTransfer}
+              compact
+            />
+            <ActionKey
+              tone="red"
+              label="End"
+              onPress={() => {
+                void sp.hangup();
+              }}
+              compact
+            />
+          </div>
+        ) : showingManual ? (
+          <div className="grid grid-cols-3 gap-2">
+            <ActionKey
+              tone="neutral"
+              label="Clear"
+              disabled={buffer.length === 0}
+              onPress={() => {
+                setBuffer('');
+                setDialMsg(null);
+              }}
+            />
+            <ActionKey
+              tone="green"
+              label={dialBusy ? 'Dialing' : 'Call'}
+              disabled={buffer.length === 0 || dialBusy}
+              onPress={placeManualCall}
+            />
+            <ActionKey
+              tone="neutral"
+              label="⌫"
+              disabled={buffer.length === 0}
+              onPress={() => {
+                setBuffer((b) => b.slice(0, -1));
+                setDialMsg(null);
+              }}
+            />
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            <div />
+            <ActionKey tone="neutral" label="Idle" disabled />
+            <div />
+          </div>
+        )}
       </div>
 
       <div className="px-5 pt-3">
@@ -413,11 +478,13 @@ function ActionKey({
   label,
   disabled,
   onPress,
+  compact,
 }: {
-  tone: 'green' | 'red' | 'neutral';
+  tone: 'green' | 'red' | 'neutral' | 'amber';
   label: string;
   disabled?: boolean;
   onPress?: () => void;
+  compact?: boolean;
 }) {
   const palette = {
     green: {
@@ -430,6 +497,11 @@ function ActionKey({
       border: 'rgba(254, 202, 202, 0.25)',
       text: '#fef2f2',
     },
+    amber: {
+      bg: 'linear-gradient(180deg, #ca8a04 0%, #a16207 50%, #713f12 100%)',
+      border: 'rgba(253, 224, 71, 0.3)',
+      text: '#fef9c3',
+    },
     neutral: {
       bg: 'linear-gradient(180deg, #475569 0%, #334155 50%, #1e293b 100%)',
       border: 'rgba(255,255,255,0.08)',
@@ -441,7 +513,7 @@ function ActionKey({
       type="button"
       disabled={disabled}
       onClick={onPress}
-      className="rounded-md py-2.5 text-xs font-medium uppercase tracking-wider transition-all active:translate-y-px disabled:opacity-40 disabled:cursor-not-allowed"
+      className={`rounded-md ${compact ? 'py-2 text-[11px]' : 'py-2.5 text-xs'} font-medium uppercase tracking-wider transition-all active:translate-y-px disabled:opacity-40 disabled:cursor-not-allowed`}
       style={{
         background: palette.bg,
         border: `1px solid ${palette.border}`,
