@@ -76,8 +76,15 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (user.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  // Admins + agents can place test calls. Agents typically use this
+  // to verify their browser softphone works against a real carrier
+  // before going live in a campaign. Operators / supervisors aren't
+  // expected to need it.
+  if (user.role !== 'admin' && user.role !== 'agent') {
+    return NextResponse.json(
+      { error: 'Admin or agent role required' },
+      { status: 403 },
+    );
   }
 
   const raw = await req.json().catch(() => ({}));

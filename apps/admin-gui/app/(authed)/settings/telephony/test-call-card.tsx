@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useSoftphone } from './softphone';
+import { useSoftphone } from '@/components/softphone';
 
 interface CarrierOption {
   id: string;

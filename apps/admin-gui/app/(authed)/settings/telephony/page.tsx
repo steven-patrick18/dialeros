@@ -12,7 +12,7 @@ import { getFreeSwitchHealth, type FreeSwitchHealth } from '@/lib/esl';
 import { TokenForm } from './token-form';
 import { InstallPanel } from './install-panel';
 import { TestCallCard } from './test-call-card';
-import { SoftphoneProvider } from './softphone';
+import { SoftphoneProvider } from '@/components/softphone';
 
 export const dynamic = 'force-dynamic';
 
