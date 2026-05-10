@@ -52,6 +52,13 @@ export interface SoftphoneState {
    * can render VU bars without managing AudioContext themselves. */
   micLevel: number;
   spkLevel: number;
+  /** Iter 54 — live RTP stats from RTCPeerConnection.getStats(). Lets
+   * the panel show whether audio packets are actually flowing without
+   * making the user open devtools — RX=0 mid-call means the network
+   * path is broken before audio gets to the browser. */
+  rxPackets: number;
+  txPackets: number;
+  iceState: string;
 }
 
 export interface SoftphoneApi extends SoftphoneState {
@@ -91,6 +98,9 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     extension: null,
     micLevel: 0,
     spkLevel: 0,
+    rxPackets: 0,
+    txPackets: 0,
+    iceState: '—',
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -110,6 +120,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
   const remoteSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const rafRef = useRef<number | null>(null);
+  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Set up the UA once.
   useEffect(() => {
@@ -325,6 +336,45 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // Iter 54 — surface ICE / connection state changes to the
+    // browser console (no console.log noise unless the call
+    // actually changes state) and to softphone state for the LCD.
+    pc.oniceconnectionstatechange = () => {
+      // eslint-disable-next-line no-console
+      console.info('softphone ICE:', pc.iceConnectionState);
+      setState((prev) => ({ ...prev, iceState: pc.iceConnectionState }));
+    };
+    pc.onconnectionstatechange = () => {
+      // eslint-disable-next-line no-console
+      console.info('softphone PC:', pc.connectionState);
+    };
+
+    // Iter 54 — RTP throughput poller. Reads getStats() once a
+    // second; surfaces `rxPackets` + `txPackets` to softphone state
+    // so the panel can render them in the LCD. RX=0 mid-call means
+    // the audio never reaches the browser (FS / NAT / DTLS / ICE
+    // problem); RX>0 but SPK level=0 means it reaches but isn't
+    // decoding into PCM (codec / decoder issue).
+    statsTimerRef.current = setInterval(() => {
+      void pc.getStats().then((stats) => {
+        let rx = 0;
+        let tx = 0;
+        stats.forEach((s) => {
+          const r = s as Record<string, unknown>;
+          if (r.type === 'inbound-rtp' && r.kind === 'audio') {
+            rx += Number(r.packetsReceived ?? 0);
+          }
+          if (r.type === 'outbound-rtp' && r.kind === 'audio') {
+            tx += Number(r.packetsSent ?? 0);
+          }
+        });
+        setState((prev) => {
+          if (prev.rxPackets === rx && prev.txPackets === tx) return prev;
+          return { ...prev, rxPackets: rx, txPackets: tx };
+        });
+      });
+    }, 1000);
+
     const buf = new Uint8Array(256);
     const sample = () => {
       let mic = 0;
@@ -370,6 +420,10 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
+    if (statsTimerRef.current !== null) {
+      clearInterval(statsTimerRef.current);
+      statsTimerRef.current = null;
+    }
     try {
       remoteSourceRef.current?.disconnect();
       micSourceRef.current?.disconnect();
@@ -384,7 +438,14 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     micAnalyserRef.current = null;
     spkAnalyserRef.current = null;
     remoteGainRef.current = null;
-    setState((prev) => ({ ...prev, micLevel: 0, spkLevel: 0 }));
+    setState((prev) => ({
+      ...prev,
+      micLevel: 0,
+      spkLevel: 0,
+      rxPackets: 0,
+      txPackets: 0,
+      iceState: '—',
+    }));
   }, []);
 
   const wireSessionState = useCallback(

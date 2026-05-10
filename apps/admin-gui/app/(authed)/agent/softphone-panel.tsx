@@ -320,7 +320,7 @@ export function AgentSoftphonePanel() {
   const statusLine = sp.error
     ? 'softphone error'
     : sp.inCall
-      ? `Connected  ${formatElapsed(elapsed)}${sp.muted ? '  (muted)' : ''}${sp.onHold ? '  (held)' : ''}`
+      ? `Connected  ${formatElapsed(elapsed)}${sp.muted ? '  (muted)' : ''}${sp.onHold ? '  (held)' : ''}  RX:${sp.rxPackets} TX:${sp.txPackets} [${sp.iceState}]`
       : showingManual && buffer.length === 0
         ? 'Enter destination'
         : showingManual && buffer.length > 0
