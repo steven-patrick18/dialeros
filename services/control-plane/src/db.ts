@@ -406,6 +406,12 @@ function db(): DatabaseSync {
     "ALTER TABLE remote_agents ADD COLUMN campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL",
     "ALTER TABLE remote_agents ADD COLUMN extension TEXT",
     "CREATE INDEX IF NOT EXISTS idx_remote_agents_campaign ON remote_agents(campaign_id)",
+    // Iter 61: nodes wear multiple roles. Legacy single-role column
+    // stays around; `roles` is JSON-encoded NodeRole[] and is the
+    // new source of truth. `is_self` flags the auto-registered
+    // local-host row so destructive ops are blocked on it.
+    "ALTER TABLE nodes ADD COLUMN roles TEXT",
+    "ALTER TABLE nodes ADD COLUMN is_self INTEGER NOT NULL DEFAULT 0",
   ];
   for (const sql of migrations) {
     try {
@@ -436,6 +442,15 @@ function db(): DatabaseSync {
     `CREATE INDEX IF NOT EXISTS idx_lead_lists_campaign ON lead_lists(campaign_id)`,
   );
 
+  // Iter 61 backfill — populate nodes.roles from the legacy single-
+  // role column wherever roles is still NULL. Idempotent because
+  // the WHERE guard skips rows that already have a roles array.
+  d.exec(
+    `UPDATE nodes
+        SET roles = json_array(role)
+      WHERE roles IS NULL`,
+  );
+
   _db = d;
   return d;
 }
@@ -451,12 +466,30 @@ export function insertNode(rec: {
   port: number;
   ssh_user: string;
   role: NodeRole;
+  roles?: NodeRole[];
+  is_self?: boolean;
+  status?: NodeStatus;
 }): void {
+  // Iter 61 — both `role` (legacy single) and `roles` (JSON array)
+  // get written. roles defaults to [role] so back-compat tooling
+  // that still reads `role` keeps working.
+  const rolesArr = rec.roles && rec.roles.length > 0 ? rec.roles : [rec.role];
   db()
     .prepare(
-      `INSERT INTO nodes (id, name, host, port, ssh_user, role) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO nodes (id, name, host, port, ssh_user, role, roles, is_self, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(rec.id, rec.name, rec.host, rec.port, rec.ssh_user, rec.role);
+    .run(
+      rec.id,
+      rec.name,
+      rec.host,
+      rec.port,
+      rec.ssh_user,
+      rec.role,
+      JSON.stringify(rolesArr),
+      rec.is_self ? 1 : 0,
+      rec.status ?? 'PROVISIONING',
+    );
 }
 
 export function updateNodeStatus(
@@ -471,6 +504,22 @@ export function updateNodeStatus(
     .run(status, errorMessage ?? null, id);
 }
 
+/**
+ * Iter 61 — overwrite a node's roles array. Also keeps the legacy
+ * `role` column pointing at the first entry so any unmigrated reader
+ * sees a sensible value.
+ */
+export function updateNodeRoles(id: string, roles: NodeRole[]): boolean {
+  if (roles.length === 0) return false;
+  const result = db()
+    .prepare(
+      `UPDATE nodes SET roles = ?, role = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+    )
+    .run(JSON.stringify(roles), roles[0]!, id);
+  return Number(result.changes) > 0;
+}
+
 export function listNodesFromDb(): NodeRecord[] {
   return db()
     .prepare(`SELECT * FROM nodes ORDER BY created_at DESC`)
@@ -481,6 +530,37 @@ export function getNodeFromDb(id: string): NodeRecord | undefined {
   return db()
     .prepare(`SELECT * FROM nodes WHERE id = ?`)
     .get(id) as unknown as NodeRecord | undefined;
+}
+
+/** Iter 61 — read the JSON-encoded roles column safely. */
+export function parseNodeRoles(node: NodeRecord): NodeRole[] {
+  if (node.roles) {
+    try {
+      const arr = JSON.parse(node.roles);
+      if (Array.isArray(arr)) {
+        return arr.filter(
+          (r): r is NodeRole =>
+            r === 'telephony' ||
+            r === 'web' ||
+            r === 'database' ||
+            r === 'ai-worker',
+        );
+      }
+    } catch {
+      /* fall through to legacy single role */
+    }
+  }
+  return [node.role];
+}
+
+export function nodeHasRole(node: NodeRecord, role: NodeRole): boolean {
+  return parseNodeRoles(node).includes(role);
+}
+
+export function findNodeByHost(host: string): NodeRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM nodes WHERE host = ? LIMIT 1`)
+    .get(host) as unknown as NodeRecord | undefined;
 }
 
 // =====================================================================

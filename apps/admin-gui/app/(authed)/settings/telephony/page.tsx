@@ -5,6 +5,7 @@ import {
   hasAppSetting,
   listCarriers,
   listNodesFromDb,
+  parseNodeRoles,
   type NodeRecord,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
@@ -28,8 +29,8 @@ export default async function TelephonySettings() {
   }
 
   const hasToken = hasAppSetting(APP_SETTING_KEYS.signalwireToken);
-  const telephonyNodes = listNodesFromDb().filter(
-    (n) => n.role === 'telephony',
+  const telephonyNodes = listNodesFromDb().filter((n) =>
+    parseNodeRoles(n).includes('telephony'),
   );
   const carriers = listCarriers();
   // Ping each remote node's ESL (best-effort, parallel, short timeout so

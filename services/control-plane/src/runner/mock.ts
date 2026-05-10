@@ -80,7 +80,19 @@ export class MockAnsibleRunner implements AnsibleRunner {
     // partway through, so the FAILED status path is testable without code edits.
     const shouldFail = cfg.name.toLowerCase().includes('fail');
 
-    const steps = [...COMMON_STEPS, ...ROLE_STEPS[cfg.role]];
+    // Iter 61 — schemas accept role (legacy) or roles[] (multi).
+    // Run the steps for every requested role so a single-box
+    // provision visibly executes all three role stubs.
+    const rolesForProvision: NodeRole[] =
+      cfg.roles && cfg.roles.length > 0
+        ? cfg.roles
+        : cfg.role
+          ? [cfg.role]
+          : ['telephony'];
+    const steps = [
+      ...COMMON_STEPS,
+      ...rolesForProvision.flatMap((r) => ROLE_STEPS[r]),
+    ];
 
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i]!;

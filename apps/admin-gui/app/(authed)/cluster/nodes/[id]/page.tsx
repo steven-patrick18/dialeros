@@ -1,7 +1,8 @@
-﻿import Link from 'next/link';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { getNodeFromDb } from '@dialeros/control-plane';
+import { getNodeFromDb, parseNodeRoles } from '@dialeros/control-plane';
 import { ProvisionLog } from '@/components/provision-log';
+import { RolesEditor } from './roles-editor';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,8 @@ export default async function NodeDetail({
   const node = getNodeFromDb(id);
   if (!node) notFound();
 
+  const roles = parseNodeRoles(node);
+
   return (
     <div>
       <div className="mb-1">
@@ -21,13 +24,24 @@ export default async function NodeDetail({
           href="/cluster/nodes"
           className="text-xs text-fg-subtle hover:text-fg-muted"
         >
-          â† Cluster Nodes
+          ← Cluster Nodes
         </Link>
       </div>
-      <h1 className="text-2xl font-semibold">{node.name}</h1>
+      <div className="flex items-center gap-3 mb-1">
+        <h1 className="text-2xl font-semibold">{node.name}</h1>
+        {node.is_self === 1 && (
+          <span className="bg-accent/15 text-accent border border-accent/50 px-2 py-0.5 rounded text-xs uppercase tracking-wide">
+            This host
+          </span>
+        )}
+      </div>
       <p className="text-fg-subtle text-sm mb-6 font-mono">
-        {node.host}:{node.port} Â· {node.role}
+        {node.host}:{node.port}
       </p>
+
+      <div className="max-w-2xl mb-6">
+        <RolesEditor nodeId={node.id} initialRoles={roles} />
+      </div>
 
       <ProvisionLog
         nodeId={node.id}
@@ -52,9 +66,10 @@ export default async function NodeDetail({
       </dl>
 
       <p className="text-xs text-fg-subtle mt-6 max-w-3xl">
-        Tip â€” provision a node with <span className="font-mono text-fg-muted">fail</span>{' '}
-        in the name (e.g. <span className="font-mono text-fg-muted">test-fail</span>) to
-        deterministically trigger a FAILED outcome and exercise the error path.
+        Tip — provision a node with{' '}
+        <span className="font-mono text-fg-muted">fail</span> in the
+        name (e.g. <span className="font-mono text-fg-muted">test-fail</span>) to deterministically trigger a FAILED outcome and
+        exercise the error path.
       </p>
     </div>
   );

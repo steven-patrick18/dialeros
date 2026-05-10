@@ -26,6 +26,7 @@ import {
   findMatchingDialPlanRule,
 } from './carrier';
 import { ensureFsEventListener } from './fs-events';
+import { ensureLocalNodeRegistered } from './local-node';
 import { ensureRecordingRetentionSweep } from './recording-retention';
 import { listRemoteAgentsWithCapacity } from './remote-agent';
 import { extensionForUser } from './sip-extensions';
@@ -570,6 +571,10 @@ export function resumeActivePacers(): { started: number } {
   // same boot path. Idempotent + delayed-start so crash loops don't
   // hammer the filesystem.
   ensureRecordingRetentionSweep();
+  // Iter 61 — make sure the local box is registered as a node
+  // (web + database + telephony) before anything else asks the
+  // node table for a telephony host.
+  ensureLocalNodeRegistered();
   let started = 0;
   for (const c of listCampaignsFromDb()) {
     if (c.status === 'active') {

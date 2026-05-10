@@ -10,7 +10,7 @@ import {
   type ProvisioningLevel,
 } from './event-bus';
 import { getRunner } from './runner';
-import type { NodeInput } from './schema';
+import type { NodeInput, NodeRole } from './schema';
 
 export interface ProvisionResult {
   id: string;
@@ -29,13 +29,23 @@ export async function provisionNode(
   const actorUserId = ctx.actorUserId ?? null;
   const actorIp = ctx.actorIp ?? null;
 
+  // Iter 61 — schemas now accept either `role` (legacy single) or
+  // `roles` (multi). Normalise to a roles array; the legacy
+  // single-role column still gets written for back-compat.
+  const roles: NodeRole[] =
+    input.roles && input.roles.length > 0
+      ? input.roles
+      : input.role
+        ? [input.role]
+        : ['telephony'];
   insertNode({
     id,
     name: input.name,
     host: input.host,
     port: input.port,
     ssh_user: input.ssh_user,
-    role: input.role,
+    role: roles[0]!,
+    roles,
   });
 
   appendAudit({

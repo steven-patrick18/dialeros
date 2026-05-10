@@ -1,6 +1,10 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { listCampaigns, listNodesFromDb } from '@dialeros/control-plane';
+import {
+  listCampaigns,
+  listNodesFromDb,
+  parseNodeRoles,
+} from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { AddRemoteAgentForm } from './add-form';
 
@@ -16,8 +20,10 @@ export default async function AddRemoteAgentPage() {
       </div>
     );
   }
+  // Iter 61 — any node whose roles array contains 'telephony'
+  // qualifies, including the auto-registered single-box self.
   const telephonyNodes = listNodesFromDb()
-    .filter((n) => n.role === 'telephony')
+    .filter((n) => parseNodeRoles(n).includes('telephony'))
     .map((n) => ({ id: n.id, name: n.name, host: n.host }));
   const campaigns = listCampaigns().map((c) => ({
     id: c.id,

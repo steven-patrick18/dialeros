@@ -4,6 +4,7 @@ import {
   getRemoteAgent,
   listCampaigns,
   listNodesFromDb,
+  parseNodeRoles,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { InlineCardForm } from '@/components/inline-card-form';
@@ -30,7 +31,7 @@ export default async function RemoteAgentDetail({
   if (!r) notFound();
 
   const telephonyNodes = listNodesFromDb()
-    .filter((n) => n.role === 'telephony')
+    .filter((n) => parseNodeRoles(n).includes('telephony'))
     .map((n) => ({ value: n.id, label: `${n.name} (${n.host})` }));
 
   const campaignOptions = [

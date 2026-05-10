@@ -2,6 +2,7 @@
 export {
   NodeInputSchema,
   NodeRoleSchema,
+  NodeRolesSchema,
   NodeStatusSchema,
 } from './schema';
 export type {
@@ -22,8 +23,12 @@ export type {
 export {
   insertNode,
   updateNodeStatus,
+  updateNodeRoles,
   listNodesFromDb,
   getNodeFromDb,
+  parseNodeRoles,
+  nodeHasRole,
+  findNodeByHost,
   appendProvisioningLog,
   getProvisioningLogs,
   countUsers,
@@ -37,6 +42,7 @@ export {
   insertAuditEvent,
   listAuditEvents,
 } from './db';
+export { ensureLocalNodeRegistered } from './local-node';
 export type {
   ProvisioningLogRecord,
   UserRecord,

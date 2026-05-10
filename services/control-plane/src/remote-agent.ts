@@ -8,6 +8,7 @@ import {
   inFlightForRemoteAgent,
   insertRemoteAgent,
   listRemoteAgentsFromDb,
+  nodeHasRole,
   updateRemoteAgentFields,
   type RemoteAgentRecord,
 } from './db';
@@ -69,8 +70,8 @@ export function createRemoteAgent(
 ): CreateRemoteAgentResult | { error: string } {
   const node = getNodeFromDb(input.telephony_node_id);
   if (!node) return { error: `Node ${input.telephony_node_id} not found.` };
-  if (node.role !== 'telephony') {
-    return { error: 'Bound node must have role=telephony.' };
+  if (!nodeHasRole(node, 'telephony')) {
+    return { error: 'Bound node must include the telephony role.' };
   }
   if (input.campaign_id) {
     if (!getCampaignFromDb(input.campaign_id)) {
@@ -109,8 +110,8 @@ export function updateRemoteAgent(
   if (input.telephony_node_id) {
     node = getNodeFromDb(input.telephony_node_id);
     if (!node) return { error: `Node ${input.telephony_node_id} not found.` };
-    if (node.role !== 'telephony') {
-      return { error: 'Bound node must have role=telephony.' };
+    if (!nodeHasRole(node, 'telephony')) {
+      return { error: 'Bound node must include the telephony role.' };
     }
   }
   if (input.campaign_id) {
