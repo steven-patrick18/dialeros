@@ -3,6 +3,7 @@ import os from 'node:os';
 import { stat } from 'node:fs/promises';
 import {
   APP_SETTING_KEYS,
+  extensionForUser,
   getAppSetting,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
@@ -59,10 +60,10 @@ export async function GET(req: NextRequest) {
   // FreeSWITCH's default_domain is, and that's where users 1000-1019
   // are provisioned. Independent of where the WebSocket connects.
   const sipDomain = localExternalIp();
-  const extension = 1000 + (hash(user.id) % 20);
+  const extension = extensionForUser(user.id);
 
   return NextResponse.json({
-    extension: String(extension),
+    extension,
     uri: `sip:${extension}@${sipDomain}`,
     ws_url: wsUrl,
     secure,
@@ -91,12 +92,4 @@ function localExternalIp(): string {
     }
   }
   return '127.0.0.1';
-}
-
-function hash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
 }

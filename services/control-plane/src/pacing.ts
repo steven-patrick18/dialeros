@@ -17,6 +17,7 @@ import {
 } from './db';
 import { parseCidPool } from './route-plan';
 import { ensureFsEventListener } from './fs-events';
+import { extensionForUser } from './sip-extensions';
 
 // Iter 11 — pacing engine v1 (simulation).
 //
@@ -240,16 +241,20 @@ export async function paceCampaignOnce(
     }
     correlationId = randomUUID();
     const gateway = `dialeros-${carrier.id}`;
+    // Iter 39 — once the destination answers, ring the assigned agent's
+    // browser softphone (registered as user/<ext> in FS). FS bridges the
+    // two legs, so the agent hears + talks to the lead through their
+    // browser. If the agent isn't registered, the bridge fails and
+    // hangup_after_bridge tears the call down — surfaces as
+    // NORMAL_TEMPORARY_FAILURE in the hangup_cause column.
+    const agentExtension = extensionForUser(assigned.id);
     try {
       const jobUuid = await bgapiOriginate({
         gateway,
         destination: transformed,
         callerIdNumber: cid ?? undefined,
         correlationId,
-        // &park keeps the leg open until an agent bridges. Without
-        // agent audio (iter 34+), the leg sits parked silent until
-        // the far end hangs up — acceptable for live-fire smoke tests.
-        app: '&park',
+        app: `&bridge(user/${agentExtension})`,
       });
       originateOutcome = { ok: true, job_uuid: jobUuid };
       kind = 'originated';

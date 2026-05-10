@@ -257,6 +257,9 @@ export {
 } from './pacing';
 export type { PacingTickResult, DialIntentRecord } from './pacing';
 
+// SIP extensions (iter 39 — shared user→extension derivation)
+export { extensionForUser } from './sip-extensions';
+
 // DIDs (iter 22) — standalone management
 export {
   SingleDidInputSchema,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  extensionForUser,
   getCarrier,
   normalizePhone,
 } from '@dialeros/control-plane';
@@ -60,29 +61,18 @@ function appDialString(app: AppName, userExtension: string): string {
   }
 }
 
-// Iter 35b — same hash used in /api/telephony/softphone-config so the
-// admin's outbound test calls bridge to the SAME extension their
-// browser registered as.
-function extensionForUser(userId: string): string {
-  let h = 0;
-  for (let i = 0; i < userId.length; i++) {
-    h = ((h << 5) - h + userId.charCodeAt(i)) | 0;
-  }
-  return String(1000 + (Math.abs(h) % 20));
-}
-
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  // Admins + agents can place test calls. Agents typically use this
-  // to verify their browser softphone works against a real carrier
-  // before going live in a campaign. Operators / supervisors aren't
-  // expected to need it.
-  if (user.role !== 'admin' && user.role !== 'agent') {
+  // Admin-only. Agents don't have a UI for placing test calls — their
+  // softphone is driven by the pacer. Iter 37 briefly opened this to
+  // agents for self-test; iter 39 removes that surface from the agent
+  // console, so the API goes back to admin-only.
+  if (user.role !== 'admin') {
     return NextResponse.json(
-      { error: 'Admin or agent role required' },
+      { error: 'Admin role required' },
       { status: 403 },
     );
   }
