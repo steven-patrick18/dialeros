@@ -117,7 +117,13 @@ export default async function InGroupDetail({
         />
       </dl>
 
-      <div className="mt-8 max-w-4xl">
+      <div className="mt-8 max-w-4xl flex items-center gap-4">
+        <Link
+          href={`/in-groups/${g.id}/edit`}
+          className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm"
+        >
+          Edit in-group
+        </Link>
         <DeleteInGroupButton id={g.id} name={g.name} didCount={dids.length} />
       </div>
     </div>

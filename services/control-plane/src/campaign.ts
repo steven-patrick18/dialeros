@@ -11,6 +11,7 @@ import {
   listCampaignsFromDb,
   listCampaignsUsingLeadList,
   listCampaignsUsingRoutePlan,
+  updateCampaignFields,
   updateCampaignStatusInDb,
   type CampaignRecord,
 } from './db';
@@ -140,6 +141,79 @@ export function getCampaignsForLeadList(
   leadListId: string,
 ): CampaignRecord[] {
   return listCampaignsUsingLeadList(leadListId);
+}
+
+// Iter 14: edit. Only the simple fields — route_plan_id and attached
+// lead lists are intentionally NOT mutable here. Changing those
+// disrupts active dialing; require delete + recreate for clarity.
+export const CampaignUpdateInputSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-zA-Z0-9_-]+$/, 'Alphanumeric, dashes, underscores only.')
+      .optional(),
+    description: z.string().max(500).optional(),
+    type: CampaignTypeSchema.optional(),
+    base_ratio: z.number().min(0.5).max(10).optional(),
+    call_window_start: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM 24-hour format.')
+      .optional()
+      .or(z.literal('').transform(() => null)),
+    call_window_end: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM 24-hour format.')
+      .optional()
+      .or(z.literal('').transform(() => null)),
+    max_abandon_pct: z.number().min(0).max(100).optional(),
+  })
+  .refine(
+    (d) => {
+      // call_window_start and call_window_end must be both-or-neither.
+      // Treat undefined (not in patch) as "leave alone"; only enforce
+      // both-or-neither when at least one is being set in this call.
+      const aTouched = d.call_window_start !== undefined;
+      const bTouched = d.call_window_end !== undefined;
+      if (!aTouched && !bTouched) return true;
+      const a = d.call_window_start;
+      const b = d.call_window_end;
+      // Both must be set (non-null/non-empty) or both must be cleared (null).
+      return (a == null && b == null) || (!!a && !!b);
+    },
+    {
+      message:
+        'call_window_start and call_window_end must both be set or both be cleared.',
+      path: ['call_window_end'],
+    },
+  );
+export type CampaignUpdateInput = z.infer<typeof CampaignUpdateInputSchema>;
+
+export function updateCampaign(
+  id: string,
+  input: CampaignUpdateInput,
+): boolean {
+  if (!getCampaignFromDb(id)) {
+    throw new Error(`Campaign ${id} not found`);
+  }
+  const updates: Parameters<typeof updateCampaignFields>[1] = {};
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.description !== undefined) {
+    updates.description = input.description || null;
+  }
+  if (input.type !== undefined) updates.type = input.type;
+  if (input.base_ratio !== undefined) updates.base_ratio = input.base_ratio;
+  if (input.call_window_start !== undefined) {
+    updates.call_window_start = input.call_window_start || null;
+  }
+  if (input.call_window_end !== undefined) {
+    updates.call_window_end = input.call_window_end || null;
+  }
+  if (input.max_abandon_pct !== undefined) {
+    updates.max_abandon_pct = input.max_abandon_pct;
+  }
+  return updateCampaignFields(id, updates);
 }
 
 export type { CampaignRecord } from './db';

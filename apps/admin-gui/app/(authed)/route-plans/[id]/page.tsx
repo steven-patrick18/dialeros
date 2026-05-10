@@ -178,7 +178,13 @@ export default async function RoutePlanDetail({
         />
       </dl>
 
-      <div className="mt-8 max-w-4xl">
+      <div className="mt-8 max-w-4xl flex items-center gap-4">
+        <Link
+          href={`/route-plans/${plan.id}/edit`}
+          className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm"
+        >
+          Edit route plan
+        </Link>
         <DeleteRoutePlanButton id={plan.id} name={plan.name} />
       </div>
     </div>

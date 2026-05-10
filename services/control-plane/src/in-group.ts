@@ -9,6 +9,7 @@ import {
   insertInGroup,
   listDidsForInGroup,
   listInGroupsFromDb,
+  updateInGroupFields,
   type InGroupRecord,
 } from './db';
 import { normalizePhone } from './lead';
@@ -157,6 +158,92 @@ export function removeDidFromInGroup(
   did: string,
 ): boolean {
   return detachDidFromInGroup(inGroupId, did);
+}
+
+// Iter 14: edit. All fields editable. DIDs are managed separately
+// via the existing /api/in-groups/[id]/dids endpoint, not here.
+export const InGroupUpdateInputSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-zA-Z0-9_-]+$/, 'Alphanumeric, dashes, underscores only.')
+      .optional(),
+    description: z.string().max(500).optional(),
+    type: InGroupTypeSchema.optional(),
+    whitelist_mode: WhitelistModeSchema.optional(),
+    whitelist_static: z.array(z.string()).optional(),
+    routing_strategy: RoutingStrategySchema.optional(),
+    max_wait_seconds: z.number().int().min(5).max(3600).optional(),
+    wrap_up_seconds: z.number().int().min(0).max(600).optional(),
+    off_list_action: OffListActionSchema.optional(),
+    enabled: z.boolean().optional(),
+  })
+  .refine(
+    (d) => {
+      if (d.whitelist_mode !== 'static') return true;
+      if (d.whitelist_static === undefined) return true; // not touched
+      return d.whitelist_static.length > 0;
+    },
+    {
+      message: 'whitelist_static must contain at least one phone when mode is static.',
+      path: ['whitelist_static'],
+    },
+  );
+export type InGroupUpdateInput = z.infer<typeof InGroupUpdateInputSchema>;
+
+export function updateInGroup(
+  id: string,
+  input: InGroupUpdateInput,
+): boolean {
+  if (!getInGroupFromDb(id)) {
+    throw new Error(`In-group ${id} not found`);
+  }
+
+  // If switching TO static mode, validate the new whitelist phones now.
+  let normalizedStatic: string[] | undefined;
+  if (input.whitelist_static !== undefined) {
+    normalizedStatic = [];
+    for (const raw of input.whitelist_static) {
+      const n = normalizePhone(raw);
+      if (!n) {
+        throw new Error(`Invalid phone in whitelist: ${raw}`);
+      }
+      normalizedStatic.push(n);
+    }
+  }
+
+  const updates: Parameters<typeof updateInGroupFields>[1] = {};
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.description !== undefined) {
+    updates.description = input.description || null;
+  }
+  if (input.type !== undefined) updates.type = input.type;
+  if (input.whitelist_mode !== undefined) {
+    updates.whitelist_mode = input.whitelist_mode;
+    // Switching off 'static' clears the static list to avoid stale data.
+    if (input.whitelist_mode !== 'static') {
+      updates.whitelist_static_json = '[]';
+    }
+  }
+  if (normalizedStatic !== undefined) {
+    updates.whitelist_static_json = JSON.stringify(normalizedStatic);
+  }
+  if (input.routing_strategy !== undefined) {
+    updates.routing_strategy = input.routing_strategy;
+  }
+  if (input.max_wait_seconds !== undefined) {
+    updates.max_wait_seconds = input.max_wait_seconds;
+  }
+  if (input.wrap_up_seconds !== undefined) {
+    updates.wrap_up_seconds = input.wrap_up_seconds;
+  }
+  if (input.off_list_action !== undefined) {
+    updates.off_list_action = input.off_list_action;
+  }
+  if (input.enabled !== undefined) updates.enabled = input.enabled;
+  return updateInGroupFields(id, updates);
 }
 
 export type { InGroupRecord } from './db';

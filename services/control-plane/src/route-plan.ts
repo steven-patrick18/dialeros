@@ -7,6 +7,7 @@ import {
   insertRoutePlan,
   listRoutePlansFromDb,
   listRoutePlansUsingCarrier,
+  updateRoutePlanFields,
   type RoutePlanRecord,
 } from './db';
 
@@ -130,6 +131,103 @@ export function parseCidPool(plan: RoutePlanRecord): string[] {
   } catch {
     return [];
   }
+}
+
+// Iter 14: edit. primary_carrier_id intentionally NOT mutable here — a
+// route plan's primary carrier is the load-bearing reference; changing
+// it should be a delete + recreate flow. Failovers, CID strategy,
+// transforms, and enabled flag are all editable.
+export const RoutePlanUpdateInputSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-zA-Z0-9_-]+$/, 'Alphanumeric, dashes, underscores only.')
+      .optional(),
+    description: z.string().max(500).optional(),
+    failover_carrier_ids: z.array(z.string().uuid()).optional(),
+    cid_strategy: CidStrategySchema.optional(),
+    cid_single: z.string().optional(),
+    cid_pool: z.array(z.string()).optional(),
+    transform_strip_prefix: z.string().max(20).optional(),
+    transform_add_prefix: z.string().max(20).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .refine(
+    (d) => {
+      if (d.cid_strategy !== 'single') return true;
+      if (d.cid_single === undefined) return true; // not touched
+      return !!d.cid_single && PHONE_NUMBER_RE.test(d.cid_single);
+    },
+    {
+      message: 'cid_single must be a valid phone number.',
+      path: ['cid_single'],
+    },
+  )
+  .refine(
+    (d) => {
+      if (d.cid_strategy !== 'rotate') return true;
+      if (d.cid_pool === undefined) return true;
+      return d.cid_pool.length > 0 && d.cid_pool.every((n) => PHONE_NUMBER_RE.test(n));
+    },
+    {
+      message: 'cid_pool must contain at least one valid phone number.',
+      path: ['cid_pool'],
+    },
+  );
+export type RoutePlanUpdateInput = z.infer<typeof RoutePlanUpdateInputSchema>;
+
+export function updateRoutePlan(
+  id: string,
+  input: RoutePlanUpdateInput,
+): boolean {
+  const existing = getRoutePlanFromDb(id);
+  if (!existing) throw new Error(`Route plan ${id} not found`);
+
+  if (input.failover_carrier_ids !== undefined) {
+    if (input.failover_carrier_ids.includes(existing.primary_carrier_id)) {
+      throw new Error('primary carrier cannot also be a failover.');
+    }
+    for (const fid of input.failover_carrier_ids) {
+      if (!getCarrierFromDb(fid)) {
+        throw new Error(`Failover carrier ${fid} not found.`);
+      }
+    }
+  }
+
+  const updates: Parameters<typeof updateRoutePlanFields>[1] = {};
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.description !== undefined) {
+    updates.description = input.description || null;
+  }
+  if (input.failover_carrier_ids !== undefined) {
+    updates.failover_carrier_ids_json = JSON.stringify(
+      input.failover_carrier_ids,
+    );
+  }
+  if (input.cid_strategy !== undefined) {
+    updates.cid_strategy = input.cid_strategy;
+    // When switching strategy, clear stale data from other strategies.
+    if (input.cid_strategy === 'passthrough') {
+      updates.cid_single = null;
+      updates.cid_pool_json = '[]';
+    }
+  }
+  if (input.cid_single !== undefined) {
+    updates.cid_single = input.cid_single || null;
+  }
+  if (input.cid_pool !== undefined) {
+    updates.cid_pool_json = JSON.stringify(input.cid_pool);
+  }
+  if (input.transform_strip_prefix !== undefined) {
+    updates.transform_strip_prefix = input.transform_strip_prefix || null;
+  }
+  if (input.transform_add_prefix !== undefined) {
+    updates.transform_add_prefix = input.transform_add_prefix || null;
+  }
+  if (input.enabled !== undefined) updates.enabled = input.enabled;
+  return updateRoutePlanFields(id, updates);
 }
 
 export type { RoutePlanRecord } from './db';

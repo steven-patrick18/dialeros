@@ -178,7 +178,13 @@ export default async function CampaignDetail({
         />
       </dl>
 
-      <div className="mt-8 max-w-4xl">
+      <div className="mt-8 max-w-4xl flex items-center gap-4">
+        <Link
+          href={`/campaigns/${c.id}/edit`}
+          className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm"
+        >
+          Edit campaign
+        </Link>
         <DeleteCampaignButton
           id={c.id}
           name={c.name}

@@ -1307,6 +1307,97 @@ export function updateCampaignStatusInDb(
   return Number(result.changes) > 0;
 }
 
+export function updateCampaignFields(
+  id: string,
+  updates: Partial<{
+    name: string;
+    description: string | null;
+    type: string;
+    base_ratio: number;
+    call_window_start: string | null;
+    call_window_end: string | null;
+    max_abandon_pct: number;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    values.push(value as string | number | null);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE campaigns SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+export function updateRoutePlanFields(
+  id: string,
+  updates: Partial<{
+    name: string;
+    description: string | null;
+    failover_carrier_ids_json: string;
+    cid_strategy: string;
+    cid_single: string | null;
+    cid_pool_json: string;
+    transform_strip_prefix: string | null;
+    transform_add_prefix: string | null;
+    enabled: boolean;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    if (key === 'enabled') values.push(value ? 1 : 0);
+    else values.push(value as string | null);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE route_plans SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+export function updateInGroupFields(
+  id: string,
+  updates: Partial<{
+    name: string;
+    description: string | null;
+    type: string;
+    whitelist_mode: string;
+    whitelist_static_json: string;
+    routing_strategy: string;
+    max_wait_seconds: number;
+    wrap_up_seconds: number;
+    off_list_action: string;
+    enabled: boolean;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    if (key === 'enabled') values.push(value ? 1 : 0);
+    else values.push(value as string | number | null);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE in_groups SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
 export function getCampaignLeadListIds(campaignId: string): string[] {
   const rows = db()
     .prepare(
