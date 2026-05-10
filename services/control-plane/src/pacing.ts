@@ -17,6 +17,7 @@ import {
   refillHopper,
   type CampaignRecord,
   type DialIntentRecord,
+  type RemoteAgentRecord,
 } from './db';
 import { parseCidPool } from './route-plan';
 import {
@@ -26,6 +27,7 @@ import {
 } from './carrier';
 import { ensureFsEventListener } from './fs-events';
 import { ensureRecordingRetentionSweep } from './recording-retention';
+import { listRemoteAgentsWithCapacity } from './remote-agent';
 import { extensionForUser } from './sip-extensions';
 
 // Iter 11 — pacing engine v1 (simulation).
@@ -58,6 +60,9 @@ interface BusContainer {
   // Spreads traffic across a rule's replacement list round-robin so
   // 0805 → [310,311,312] alternates evenly across calls.
   dialPlanRotateState: Map<string, number>;
+  // Iter 58 — campaign_id -> cursor over the combined local+remote
+  // bridge pool. Recomputed each tick from live capacity.
+  bridgeRotateState: Map<string, number>;
 }
 
 declare global {
@@ -75,6 +80,7 @@ function container(): BusContainer {
       rotateState: new Map(),
       agentRotateState: new Map(),
       dialPlanRotateState: new Map(),
+      bridgeRotateState: new Map(),
     };
   }
   // Older sessions might predate the newer state maps — patch
@@ -82,6 +88,7 @@ function container(): BusContainer {
   const c = globalThis.__dialeros_pacing!;
   if (!c.agentRotateState) c.agentRotateState = new Map();
   if (!c.dialPlanRotateState) c.dialPlanRotateState = new Map();
+  if (!c.bridgeRotateState) c.bridgeRotateState = new Map();
   return c;
 }
 
@@ -212,6 +219,41 @@ function pickAgent(
   return agent;
 }
 
+// Iter 58 — bridge target = where the originated leg gets sent on
+// answer. Combined pool of (a) local available agents + (b) every
+// "line slot" of every enabled remote agent that isn't already at
+// capacity. Round-robin via a per-campaign cursor so traffic spreads
+// across all of them rather than pinning to one.
+type BridgeTarget =
+  | { kind: 'local'; agent: { id: string; username: string } }
+  | { kind: 'remote'; agent: RemoteAgentRecord };
+
+function buildBridgePool(
+  localAgents: Array<{ id: string; username: string }>,
+  remote: Array<{ agent: RemoteAgentRecord; available: number }>,
+): BridgeTarget[] {
+  const pool: BridgeTarget[] = [];
+  for (const a of localAgents) pool.push({ kind: 'local', agent: a });
+  for (const { agent, available } of remote) {
+    for (let i = 0; i < available; i++) {
+      pool.push({ kind: 'remote', agent });
+    }
+  }
+  return pool;
+}
+
+function pickBridgeTarget(
+  campaignId: string,
+  pool: BridgeTarget[],
+): BridgeTarget | null {
+  if (pool.length === 0) return null;
+  const c = container();
+  const cursor = c.bridgeRotateState.get(campaignId) ?? 0;
+  const target = pool[cursor % pool.length]!;
+  c.bridgeRotateState.set(campaignId, cursor + 1);
+  return target;
+}
+
 /**
  * Run a single pacing tick for a campaign. Exported for tests + manual
  * "Dial next" buttons.
@@ -259,7 +301,22 @@ export async function paceCampaignOnce(
   }
   if (!lead) return { outcome: 'no_lead' };
 
-  const assigned = pickAgent(campaignId, agents)!;
+  // Iter 58 — pick from the combined local+remote bridge pool. Local
+  // slots have a backing user (assigned_user_id, user/<ext> bridge);
+  // remote slots have no local user (assigned_user_id stays NULL,
+  // remote_agent_id is set, bridge goes to the raw SIP URI).
+  const remoteSlots = listRemoteAgentsWithCapacity();
+  const bridgePool = buildBridgePool(agents, remoteSlots);
+  const bridgeTarget = pickBridgeTarget(campaignId, bridgePool);
+  if (!bridgeTarget) return { outcome: 'no_agents' };
+  // Keep pickAgent's cursor in sync for local picks so other callers
+  // that only look at agentRotateState (audit, reports) don't see a
+  // stuck cursor on busy campaigns.
+  if (bridgeTarget.kind === 'local') pickAgent(campaignId, agents);
+  const assigned: { id: string; username: string } | null =
+    bridgeTarget.kind === 'local' ? bridgeTarget.agent : null;
+  const remoteAgent =
+    bridgeTarget.kind === 'remote' ? bridgeTarget.agent : null;
 
   const transformed = applyTransform(
     lead.phone,
@@ -319,18 +376,27 @@ export async function paceCampaignOnce(
     // the dial_intent row at insert time so playback can find it
     // even if FS hasn't finished writing yet.
     recordingPath = `/var/lib/dialeros/recordings/${correlationId}.wav`;
-    // Iter 39 — once the destination answers, ring the assigned agent's
-    // browser softphone (registered as user/<ext> in FS). FS bridges the
-    // two legs, so the agent hears + talks to the lead through their
-    // browser. If the agent isn't registered, the bridge fails and
-    // hangup_after_bridge tears the call down — surfaces as
-    // NORMAL_TEMPORARY_FAILURE in the hangup_cause column.
+    // Iter 39 — once the destination answers, bridge to the picked
+    // agent. Local agent: ring their browser softphone via
+    // user/<ext> (FS internal directory lookup). Remote agent:
+    // INVITE the raw SIP URI on sofia/internal so the call lands on
+    // the hard phone / partner trunk.
     //
-    // Iter 40 — prefer the agent's primary phone extension if they own
-    // one; fall back to the iter-35 hash for users without phones so
-    // the migration is non-destructive.
-    const primary = getPrimaryPhoneForUser(assigned.id);
-    const agentExtension = primary?.extension ?? extensionForUser(assigned.id);
+    // Iter 40 — prefer the agent's primary phone extension if they
+    // own one; fall back to the iter-35 hash for users without
+    // phones so the migration is non-destructive.
+    let bridgeApp: string;
+    if (assigned) {
+      const primary = getPrimaryPhoneForUser(assigned.id);
+      const agentExtension =
+        primary?.extension ?? extensionForUser(assigned.id);
+      bridgeApp = `&bridge(user/${agentExtension})`;
+    } else {
+      // Iter 58 — remote agent. Strip the sip: scheme; FS bridge
+      // syntax sofia/internal/<user@host[:port]> handles the rest.
+      const target = remoteAgent!.sip_uri.replace(/^sip:/i, '');
+      bridgeApp = `&bridge(sofia/internal/${target})`;
+    }
     try {
       const jobUuid = await bgapiOriginate({
         gateway,
@@ -338,7 +404,7 @@ export async function paceCampaignOnce(
         callerIdNumber: cid ?? undefined,
         correlationId,
         recordingPath: recordingPath ?? undefined,
-        app: `&bridge(user/${agentExtension})`,
+        app: bridgeApp,
       });
       originateOutcome = { ok: true, job_uuid: jobUuid };
       kind = 'originated';
@@ -355,7 +421,7 @@ export async function paceCampaignOnce(
   const intent = insertDialIntent({
     campaign_id: campaignId,
     lead_id: lead.lead_id,
-    assigned_user_id: assigned.id,
+    assigned_user_id: assigned?.id ?? null,
     route_plan_id: plan.id,
     phone: lead.phone,
     transformed_phone: transformed,
@@ -367,6 +433,7 @@ export async function paceCampaignOnce(
     correlation_id: correlationId,
     recording_path:
       originateOutcome?.ok && recordingPath ? recordingPath : null,
+    remote_agent_id: remoteAgent?.id ?? null,
   });
 
   // Iter 34 — live calls go to DIALING (in-flight). The fs-events
@@ -386,7 +453,7 @@ export async function paceCampaignOnce(
   return {
     outcome: 'dialed',
     intent,
-    assigned_agent: assigned,
+    assigned_agent: assigned ?? undefined,
     originate: originateOutcome,
   };
 }
@@ -401,21 +468,25 @@ export function startPacer(campaignId: string): boolean {
   if (camp?.type === 'inbound_queue') return false;
 
   const tick = async () => {
-    // Iter 49 — burst per tick. Originate up to
-    // floor(active_agents × dial_level) calls per interval (ViciDial
-    // standard pacing formula, sans remote-agent lines for now —
-    // those land in iter 50). With dial_level=1.0 and N agents that's
-    // power-dial 1:1; with dial_level=1.5 it's predictive 1.5x.
-    // Stop the loop early if a tick returns anything other than
-    // 'dialed' so we don't spin uselessly when the hopper or agent
-    // pool is exhausted.
+    // Iter 49 / 58 — burst per tick. Pacing formula:
+    //   target = floor((local_agents + Σ remote.lines_available) × dial_level)
+    // Each iteration of paceCampaignOnce picks one slot from the
+    // combined pool, originates, and advances cursors. Stop early
+    // on any non-'dialed' outcome so we don't spin uselessly when
+    // the hopper, agents, or carrier pool is exhausted.
     try {
       const c = getCampaignFromDb(campaignId);
       if (!c) return;
-      const agents = getAvailableAgentsForCampaign(campaignId);
+      const localAgents = getAvailableAgentsForCampaign(campaignId);
+      const remoteAvailable = listRemoteAgentsWithCapacity().reduce(
+        (sum, r) => sum + r.available,
+        0,
+      );
+      const poolSize = localAgents.length + remoteAvailable;
+      if (poolSize === 0) return;
       const target = Math.max(
         1,
-        Math.floor(agents.length * (c.dial_level || 1)),
+        Math.floor(poolSize * (c.dial_level || 1)),
       );
       for (let i = 0; i < target; i++) {
         const result = await paceCampaignOnce(campaignId);

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
+  inFlightForRemoteAgent,
   listRemoteAgents,
   remoteLineCapacity,
 } from '@dialeros/control-plane';
@@ -46,9 +47,10 @@ export default async function RemoteAgentsPage() {
         .
       </p>
       <p className="text-fg-subtle text-xs mb-6">
-        Provisioning surface only for now &mdash; pacer integration ships
-        next iter. <span className="font-mono">{totalLines}</span> total
-        line capacity across enabled remote agents.
+        <span className="font-mono">{totalLines}</span> total line capacity
+        across enabled remote agents. The pacer multiplies this (plus
+        local active-agent count) by each campaign&apos;s dial_level on
+        every tick.
       </p>
 
       {agents.length === 0 ? (
@@ -62,38 +64,47 @@ export default async function RemoteAgentsPage() {
             <tr>
               <th className="py-2 font-medium">Name</th>
               <th className="font-medium">SIP URI</th>
-              <th className="font-medium tabular-nums">Lines</th>
+              <th className="font-medium tabular-nums">In-flight / Lines</th>
               <th className="font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
-            {agents.map((a) => (
-              <tr key={a.id} className="border-b border-border/50">
-                <td className="py-3">
-                  <Link
-                    href={`/remote-agents/${a.id}`}
-                    className="hover:underline"
-                  >
-                    {a.name}
-                  </Link>
-                </td>
-                <td className="text-fg-muted font-mono text-xs break-all">
-                  {a.sip_uri}
-                </td>
-                <td className="text-fg tabular-nums">{a.lines}</td>
-                <td>
-                  {a.enabled === 1 ? (
-                    <span className="bg-success/15 text-success border border-success/50 px-2 py-0.5 rounded text-xs">
-                      ENABLED
+            {agents.map((a) => {
+              const inFlight = inFlightForRemoteAgent(a.id);
+              const atCap = a.enabled === 1 && inFlight >= a.lines;
+              return (
+                <tr key={a.id} className="border-b border-border/50">
+                  <td className="py-3">
+                    <Link
+                      href={`/remote-agents/${a.id}`}
+                      className="hover:underline"
+                    >
+                      {a.name}
+                    </Link>
+                  </td>
+                  <td className="text-fg-muted font-mono text-xs break-all">
+                    {a.sip_uri}
+                  </td>
+                  <td className="tabular-nums">
+                    <span className={atCap ? 'text-warn' : 'text-fg'}>
+                      {inFlight}
                     </span>
-                  ) : (
-                    <span className="bg-card-hover/40 text-fg-muted border border-border px-2 py-0.5 rounded text-xs">
-                      DISABLED
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                    <span className="text-fg-subtle"> / {a.lines}</span>
+                  </td>
+                  <td>
+                    {a.enabled === 1 ? (
+                      <span className="bg-success/15 text-success border border-success/50 px-2 py-0.5 rounded text-xs">
+                        ENABLED
+                      </span>
+                    ) : (
+                      <span className="bg-card-hover/40 text-fg-muted border border-border px-2 py-0.5 rounded text-xs">
+                        DISABLED
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

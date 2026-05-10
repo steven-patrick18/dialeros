@@ -390,6 +390,13 @@ function db(): DatabaseSync {
     // to the configured recordings dir if you want to host on
     // remote storage later). NULL means this intent wasn't recorded.
     "ALTER TABLE dial_intents ADD COLUMN recording_path TEXT",
+    // Iter 58: remote-agent bridging. When the pacer bridges to a
+    // remote agent (SIP URI) instead of a local user/<ext>, this
+    // column holds the remote_agents.id so we can roll up in-flight
+    // calls per remote agent for capacity checks. NULL when the
+    // bridge target was a local agent.
+    "ALTER TABLE dial_intents ADD COLUMN remote_agent_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_dial_intents_remote_agent ON dial_intents(remote_agent_id, hangup_at)",
   ];
   for (const sql of migrations) {
     try {
@@ -1373,6 +1380,7 @@ export interface DialIntentRecord {
   hangup_at: string | null;
   duration_ms: number | null;
   recording_path: string | null;
+  remote_agent_id: string | null;
 }
 
 export function insertDialIntent(rec: {
@@ -1388,12 +1396,13 @@ export function insertDialIntent(rec: {
   originate_error?: string | null;
   correlation_id?: string | null;
   recording_path?: string | null;
+  remote_agent_id?: string | null;
 }): DialIntentRecord {
   const result = db()
     .prepare(
       `INSERT INTO dial_intents
-         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id, recording_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id, recording_path, remote_agent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.campaign_id,
@@ -1408,11 +1417,29 @@ export function insertDialIntent(rec: {
       rec.originate_error ?? null,
       rec.correlation_id ?? null,
       rec.recording_path ?? null,
+      rec.remote_agent_id ?? null,
     );
   const id = Number(result.lastInsertRowid);
   return db()
     .prepare(`SELECT * FROM dial_intents WHERE id = ?`)
     .get(id) as unknown as DialIntentRecord;
+}
+
+/**
+ * Iter 58 — live count of in-flight calls bridged to a given remote
+ * agent. In-flight = remote_agent_id matches AND hangup_at IS NULL
+ * (fs-events populates hangup_at when the call ends). Used by the
+ * pacer to skip remote agents that already have `lines` calls live.
+ */
+export function inFlightForRemoteAgent(remoteAgentId: string): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dial_intents
+        WHERE remote_agent_id = ? AND hangup_at IS NULL`,
+    )
+    .get(remoteAgentId) as { n: number };
+  return row.n;
 }
 
 /**

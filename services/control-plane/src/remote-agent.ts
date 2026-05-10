@@ -4,6 +4,7 @@ import {
   deleteRemoteAgentFromDb,
   getNodeFromDb,
   getRemoteAgentFromDb,
+  inFlightForRemoteAgent,
   insertRemoteAgent,
   listRemoteAgentsFromDb,
   updateRemoteAgentFields,
@@ -130,7 +131,7 @@ export function deleteRemoteAgent(id: string): boolean {
 
 /**
  * Iter 57 — total `lines` capacity across all enabled remote agents.
- * Iter 58 will multiply this into the pacer's dial-level math:
+ * Iter 58 multiplies this into the pacer's dial-level math:
  *   target_concurrency = (local_agents + remoteLineCapacity()) * dial_level
  */
 export function remoteLineCapacity(): number {
@@ -139,6 +140,27 @@ export function remoteLineCapacity(): number {
     if (r.enabled === 1) total += r.lines;
   }
   return total;
+}
+
+/**
+ * Iter 58 — enumerate enabled remote agents with the slot count each
+ * has free right now (lines - in_flight). The pacer flattens this
+ * into a round-robin pool alongside local agents and picks bridge
+ * targets from it. Capacity reads off live dial_intent rows so we
+ * survive restarts without drift.
+ */
+export function listRemoteAgentsWithCapacity(): Array<{
+  agent: RemoteAgentRecord;
+  available: number;
+}> {
+  const out: Array<{ agent: RemoteAgentRecord; available: number }> = [];
+  for (const r of listRemoteAgentsFromDb()) {
+    if (r.enabled !== 1) continue;
+    const inFlight = inFlightForRemoteAgent(r.id);
+    const available = Math.max(0, r.lines - inFlight);
+    out.push({ agent: r, available });
+  }
+  return out;
 }
 
 export type { RemoteAgentRecord };

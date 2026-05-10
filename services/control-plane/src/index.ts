@@ -170,7 +170,9 @@ export {
   getRemoteAgent,
   deleteRemoteAgent,
   remoteLineCapacity,
+  listRemoteAgentsWithCapacity,
 } from './remote-agent';
+export { inFlightForRemoteAgent } from './db';
 export type {
   RemoteAgentInput,
   RemoteAgentUpdateInput,
