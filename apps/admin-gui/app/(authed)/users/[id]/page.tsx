@@ -8,10 +8,13 @@ import {
   listInGroups,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
-import { EditUserForm } from './edit-form';
+import { InlineCardForm } from '@/components/inline-card-form';
 import { DeactivateButton } from './deactivate-button';
 import { AttachmentsForm } from './attachments-form';
 import { PhonesPanel } from './phones-panel';
+
+const ROLES = ['admin', 'supervisor', 'operator', 'agent'] as const;
+const TIERS = ['new', 'certified', 'expert'] as const;
 
 export const dynamic = 'force-dynamic';
 
@@ -60,21 +63,60 @@ export default async function UserDetail({
         <p className="text-fg-muted text-sm mb-6">{u.display_name}</p>
       )}
 
-      <div className="border border-border rounded p-4 max-w-2xl mb-6">
-        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
-          Edit
-        </h2>
-        <EditUserForm
-          user={{
-            id: u.id,
-            username: u.username,
-            email: u.email,
-            role: u.role,
-            display_name: u.display_name,
-            skill_tier: u.skill_tier,
-            manual_dial: u.manual_dial === 1,
-          }}
-          isSelf={isMe}
+      <div className="max-w-2xl mb-6">
+        <InlineCardForm
+          title="Profile"
+          endpoint={`/api/users/${u.id}`}
+          method="PATCH"
+          fields={[
+            {
+              type: 'text',
+              name: 'display_name',
+              label: 'Display name',
+              value: u.display_name,
+              maxLength: 120,
+            },
+            {
+              type: 'text',
+              name: 'email',
+              label: 'Email',
+              value: u.email,
+              hint: 'Optional. Used for password resets and notifications.',
+            },
+            {
+              type: 'select',
+              name: 'role',
+              label: 'Role',
+              value: u.role,
+              options: ROLES.map((r) => ({ value: r, label: r })),
+              hint: isMe
+                ? 'Heads up — changing your own role from admin can lock you out.'
+                : 'admin = full access; supervisor = read-only + take-over; agent = call only; operator = no telephony.',
+            },
+            {
+              type: 'select',
+              name: 'skill_tier',
+              label: 'Skill tier',
+              value: u.skill_tier,
+              options: TIERS.map((t) => ({ value: t, label: t })),
+              hint: 'Pacer can prefer higher-tier agents when wiring weighted routing (planned).',
+            },
+            {
+              type: 'boolean',
+              name: 'manual_dial',
+              label: 'Manual dial (expert)',
+              value: u.manual_dial === 1,
+              hint: 'When on, this agent’s softphone exposes a dial input — they can place outbound calls manually. Off = auto-answer pacer-bridged calls only.',
+            },
+            {
+              type: 'password',
+              name: 'password',
+              label: 'New password',
+              value: null,
+              placeholder: '●●●●●●●● (unchanged)',
+              hint: 'Leave blank to keep the current password. Minimum 8 characters.',
+            },
+          ]}
         />
       </div>
 

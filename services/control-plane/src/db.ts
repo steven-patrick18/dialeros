@@ -1051,6 +1051,29 @@ export function deleteLeadListFromDb(id: string): boolean {
   return Number(result.changes) > 0;
 }
 
+export function updateLeadListFields(
+  id: string,
+  updates: Partial<{
+    name: string;
+    description: string | null;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined) continue;
+    fields.push(`${key} = ?`);
+    values.push(value as string | null);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE lead_lists SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
 export function countLeadsInList(listId: string): number {
   const row = db()
     .prepare(`SELECT COUNT(*) AS n FROM leads WHERE list_id = ?`)

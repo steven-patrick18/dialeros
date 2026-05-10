@@ -8,6 +8,7 @@ import {
   listCampaigns,
   pageLeads,
 } from '@dialeros/control-plane';
+import { InlineCardForm } from '@/components/inline-card-form';
 import { UploadCsvForm } from './upload-form';
 import { DeleteLeadListButton } from './delete-button';
 import { MoveListPicker } from './move-picker';
@@ -49,13 +50,35 @@ export default async function LeadListDetail({
         </Link>
       </div>
       <h1 className="text-2xl font-semibold">{list.name}</h1>
-      {list.description && (
-        <p className="text-fg-muted text-sm mb-2">{list.description}</p>
-      )}
       <p className="text-fg-subtle text-xs mb-6">
         {total.toLocaleString()} leads · created{' '}
         {new Date(list.created_at).toLocaleString()}
       </p>
+
+      <div className="max-w-4xl mb-6">
+        <InlineCardForm
+          title="List details"
+          endpoint={`/api/lead-lists/${list.id}`}
+          fields={[
+            {
+              type: 'text',
+              name: 'name',
+              label: 'Name',
+              value: list.name,
+              maxLength: 64,
+              hint: 'Alphanumeric, dashes, underscores only.',
+            },
+            {
+              type: 'textarea',
+              name: 'description',
+              label: 'Description',
+              value: list.description,
+              maxLength: 500,
+              placeholder: 'Optional notes — what this list is for, source, etc.',
+            },
+          ]}
+        />
+      </div>
 
       <div className="border border-border rounded p-4 max-w-4xl mb-6">
         <div className="flex items-center justify-between mb-2">

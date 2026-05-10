@@ -13,6 +13,7 @@ import {
   listLeadsInList,
   moveLeadListToCampaign,
   setCampaignLeadLists,
+  updateLeadListFields,
   type LeadListRecord,
   type LeadRecord,
   type LeadStatusBreakdown,
@@ -72,6 +73,37 @@ export function listLeadLists(): LeadListRecord[] {
 
 export function getLeadList(id: string): LeadListRecord | undefined {
   return getLeadListFromDb(id);
+}
+
+// Iter 41 — partial-update for the lead-list detail page's inline form.
+// Only `name` and `description` are mutable; campaign reassignment goes
+// through the existing moveLeadList flow.
+export const LeadListUpdateInputSchema = z.object({
+  name: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Alphanumeric, dashes, underscores only.')
+    .optional(),
+  description: z
+    .string()
+    .max(500)
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
+});
+export type LeadListUpdateInput = z.infer<typeof LeadListUpdateInputSchema>;
+
+export function updateLeadList(
+  id: string,
+  input: LeadListUpdateInput,
+): { changed: boolean } | { error: string } {
+  if (!getLeadListFromDb(id)) return { error: 'not found' };
+  const updates: Parameters<typeof updateLeadListFields>[1] = {};
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.description !== undefined) {
+    updates.description = input.description || null;
+  }
+  return { changed: updateLeadListFields(id, updates) };
 }
 
 /**

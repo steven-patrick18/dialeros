@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 
 export type InlineField =
   | {
-      type: 'text' | 'textarea';
+      type: 'text' | 'textarea' | 'password';
       name: string;
       label: string;
       value: string | null;
@@ -303,6 +303,19 @@ function renderInput(
         onChange={(e) => onChange(e.target.value)}
         placeholder={f.placeholder}
         className="input h-32 text-sm w-full font-mono"
+      />
+    );
+  }
+  if (f.type === 'password') {
+    return (
+      <input
+        type="password"
+        value={(value as string) ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={f.placeholder}
+        maxLength={f.maxLength}
+        autoComplete="new-password"
+        className="input text-sm w-full"
       />
     );
   }

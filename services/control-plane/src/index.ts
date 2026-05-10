@@ -187,9 +187,11 @@ export type {
 // Lead lists + leads
 export {
   LeadListInputSchema,
+  LeadListUpdateInputSchema,
   createLeadList,
   listLeadLists,
   getLeadList,
+  updateLeadList,
   deleteLeadList,
   leadCountFor,
   leadBreakdown,
@@ -202,6 +204,7 @@ export {
 } from './lead';
 export type {
   LeadListInput,
+  LeadListUpdateInput,
   CreateLeadListResult,
   CsvIngestResult,
   LeadListRecord,
