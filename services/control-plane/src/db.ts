@@ -286,6 +286,18 @@ function db(): DatabaseSync {
     // table campaign_lead_lists stays around (silently ignored) so old
     // installations migrate cleanly; the new column is the source of truth.
     "ALTER TABLE lead_lists ADD COLUMN campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL",
+    // Iter 32: per-campaign dial mode. 'simulated' (default, safe) inserts
+    // dial-intent rows only. 'live' issues a real bgapi originate via the
+    // route plan's primary carrier gateway. Default is intentionally safe
+    // so existing campaigns keep their no-cost behavior until an admin
+    // opts in.
+    "ALTER TABLE campaigns ADD COLUMN dial_mode TEXT NOT NULL DEFAULT 'simulated'",
+    // Iter 32: track the FreeSWITCH-side outcome of each live tick.
+    // call_uuid is the channel/job UUID returned by bgapi originate;
+    // originate_error captures the FS error string when the originate
+    // failed. Both NULL on simulated rows.
+    "ALTER TABLE dial_intents ADD COLUMN call_uuid TEXT",
+    "ALTER TABLE dial_intents ADD COLUMN originate_error TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -1230,6 +1242,8 @@ export interface DialIntentRecord {
   disposition: string | null;
   dispositioned_at: string | null;
   callback_at: string | null;
+  call_uuid: string | null;
+  originate_error: string | null;
 }
 
 export function insertDialIntent(rec: {
@@ -1241,12 +1255,14 @@ export function insertDialIntent(rec: {
   cid_used: string | null;
   kind?: string;
   assigned_user_id?: string | null;
+  call_uuid?: string | null;
+  originate_error?: string | null;
 }): DialIntentRecord {
   const result = db()
     .prepare(
       `INSERT INTO dial_intents
-         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.campaign_id,
@@ -1257,6 +1273,8 @@ export function insertDialIntent(rec: {
       rec.cid_used,
       rec.kind ?? 'simulated',
       rec.assigned_user_id ?? null,
+      rec.call_uuid ?? null,
+      rec.originate_error ?? null,
     );
   const id = Number(result.lastInsertRowid);
   return db()
@@ -1678,6 +1696,7 @@ export interface CampaignRecord {
   call_window_start: string | null;
   call_window_end: string | null;
   max_abandon_pct: number;
+  dial_mode: string;
   created_at: string;
   updated_at: string;
 }
@@ -1692,13 +1711,15 @@ export function insertCampaign(rec: {
   call_window_start: string | null;
   call_window_end: string | null;
   max_abandon_pct: number;
+  dial_mode?: string;
 }): void {
   db()
     .prepare(
       `INSERT INTO campaigns (
         id, name, description, type, route_plan_id,
-        base_ratio, call_window_start, call_window_end, max_abandon_pct
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        base_ratio, call_window_start, call_window_end, max_abandon_pct,
+        dial_mode
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
@@ -1710,6 +1731,7 @@ export function insertCampaign(rec: {
       rec.call_window_start,
       rec.call_window_end,
       rec.max_abandon_pct,
+      rec.dial_mode ?? 'simulated',
     );
 }
 
@@ -1939,6 +1961,7 @@ export function updateCampaignFields(
     call_window_start: string | null;
     call_window_end: string | null;
     max_abandon_pct: number;
+    dial_mode: string;
   }>,
 ): boolean {
   const fields: string[] = [];

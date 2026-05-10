@@ -150,6 +150,23 @@ export default async function CampaignDetail({
           endpoint={`/api/campaigns/${c.id}`}
           fields={[
             {
+              type: 'select',
+              name: 'dial_mode',
+              label: 'Dial mode',
+              value: c.dial_mode,
+              options: [
+                {
+                  value: 'simulated',
+                  label: 'simulated — no real calls (default, safe)',
+                },
+                {
+                  value: 'live',
+                  label: 'live — bgapi originate via FreeSWITCH',
+                },
+              ],
+              hint: 'simulated inserts a dial-intent row only — useful for QA, training, traffic shape testing. live calls FreeSWITCH bgapi originate against the route plan\'s primary-carrier gateway. Default is simulated so an active campaign never accidentally places real calls.',
+            },
+            {
               type: 'number',
               name: 'base_ratio',
               label: 'Base ratio',
@@ -170,7 +187,7 @@ export default async function CampaignDetail({
               hint: 'Maximum % of calls allowed to drop because no agent was free. Predictive pacers throttle when this ceiling is hit. US TCPA compliance is typically ≤3%.',
             },
           ]}
-          helpText="Live: edits hot-reload into the pacer's per-tick math on the next tick — no service restart."
+          helpText="Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart."
         />
 
         <InlineCardForm

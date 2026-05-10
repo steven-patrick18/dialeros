@@ -56,6 +56,11 @@ export type CampaignType = z.infer<typeof CampaignTypeSchema>;
 export const CampaignStatusSchema = z.enum(['paused', 'active', 'archived']);
 export type CampaignStatus = z.infer<typeof CampaignStatusSchema>;
 
+// Iter 32 — opt-in real dialing. Default 'simulated' so an admin who
+// just sets a campaign to ACTIVE doesn't accidentally place real calls.
+export const DialModeSchema = z.enum(['simulated', 'live']);
+export type DialMode = z.infer<typeof DialModeSchema>;
+
 const TimeOfDay = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM 24-hour format.');
@@ -76,6 +81,7 @@ export const CampaignInputSchema = z
     call_window_start: TimeOfDay.optional(),
     call_window_end: TimeOfDay.optional(),
     max_abandon_pct: z.number().min(0).max(100).default(3.0),
+    dial_mode: DialModeSchema.default('simulated'),
   })
   .refine(
     (d) => {
@@ -138,6 +144,7 @@ export function createCampaign(input: CampaignInput): CreateCampaignResult {
     call_window_start: input.call_window_start ?? null,
     call_window_end: input.call_window_end ?? null,
     max_abandon_pct: input.max_abandon_pct,
+    dial_mode: input.dial_mode,
   });
   attachCampaignLeadLists(id, input.lead_list_ids);
   attachCampaignInGroups(id, input.in_group_ids);
@@ -216,6 +223,7 @@ export const CampaignUpdateInputSchema = z
       .optional(),
     description: z.string().max(500).optional(),
     type: CampaignTypeSchema.optional(),
+    dial_mode: DialModeSchema.optional(),
     base_ratio: z.number().min(0.5).max(10).optional(),
     call_window_start: z
       .string()
@@ -263,6 +271,7 @@ export function updateCampaign(
     updates.description = input.description || null;
   }
   if (input.type !== undefined) updates.type = input.type;
+  if (input.dial_mode !== undefined) updates.dial_mode = input.dial_mode;
   if (input.base_ratio !== undefined) updates.base_ratio = input.base_ratio;
   if (input.call_window_start !== undefined) {
     updates.call_window_start = input.call_window_start || null;

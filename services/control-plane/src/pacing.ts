@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events';
+import net from 'node:net';
 import {
   countDialIntentsForCampaign,
   getActiveAgentsForCampaign,
   getCampaignFromDb,
+  getCarrierFromDb,
   getRoutePlanFromDb,
   insertDialIntent,
   listCampaignsFromDb,
@@ -103,12 +105,17 @@ export interface PacingTickResult {
     | 'no_route_plan'
     | 'no_lead'
     | 'no_agents'
+    | 'no_carrier'
     | 'outside_window'
     | 'inbound_no_pacer'
     | 'campaign_missing'
     | 'campaign_inactive';
   intent?: DialIntentRecord;
   assigned_agent?: { id: string; username: string };
+  /** Iter 32 — when dial_mode='live'. Job UUID on success, error on failure. */
+  originate?:
+    | { ok: true; job_uuid: string }
+    | { ok: false; error: string };
 }
 
 /**
@@ -169,11 +176,19 @@ function pickAgent(
  * "Dial next" buttons.
  *
  * Iter 16 — agent-aware. The pacer only fires if at least one active
- * agent is attached to the campaign. With telephony absent, every
- * attached agent is treated as "always AVAILABLE"; real online state
- * (LOGGED_IN, ON_CALL, WRAP_UP, PAUSED) lands with the agent UI.
+ * agent is attached to the campaign.
+ *
+ * Iter 32 — dial-mode aware. When campaign.dial_mode='simulated' (default,
+ * no-cost), behavior is unchanged: insert a dial-intent row and mark the
+ * lead. When dial_mode='live', the pacer ALSO sends a bgapi originate to
+ * FreeSWITCH via the route plan's primary-carrier gateway. The job UUID
+ * (or error) is captured on the dial_intent row. The originate is
+ * non-blocking — bgapi returns immediately with the job UUID, so a slow
+ * carrier handshake doesn't pile up pacer ticks.
  */
-export function paceCampaignOnce(campaignId: string): PacingTickResult {
+export async function paceCampaignOnce(
+  campaignId: string,
+): Promise<PacingTickResult> {
   const campaign = getCampaignFromDb(campaignId);
   if (!campaign) return { outcome: 'campaign_missing' };
   if (campaign.status !== 'active') return { outcome: 'campaign_inactive' };
@@ -206,6 +221,39 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
     parseCidPool(plan),
   );
 
+  // Iter 32 — when dial_mode='live', issue a real bgapi originate. We
+  // do this BEFORE inserting the dial_intent so we can capture the job
+  // UUID (or error) on the same row.
+  let originateOutcome: PacingTickResult['originate'];
+  let kind = 'simulated';
+  if (campaign.dial_mode === 'live') {
+    const carrier = getCarrierFromDb(plan.primary_carrier_id);
+    if (!carrier) {
+      return { outcome: 'no_carrier' };
+    }
+    const gateway = `dialeros-${carrier.id}`;
+    try {
+      const jobUuid = await bgapiOriginate({
+        gateway,
+        destination: transformed,
+        callerIdNumber: cid ?? undefined,
+        // &park keeps the leg open until an agent bridges. Without
+        // agent audio (iter 33+), the leg sits parked silent until
+        // the far end hangs up — acceptable for live-fire smoke tests.
+        app: '&park',
+      });
+      originateOutcome = { ok: true, job_uuid: jobUuid };
+      kind = 'originated';
+    } catch (e) {
+      const err = e as { message?: string };
+      originateOutcome = {
+        ok: false,
+        error: err.message ?? 'originate failed',
+      };
+      kind = 'originate_failed';
+    }
+  }
+
   const intent = insertDialIntent({
     campaign_id: campaignId,
     lead_id: lead.lead_id,
@@ -214,7 +262,10 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
     phone: lead.phone,
     transformed_phone: transformed,
     cid_used: cid,
-    kind: 'simulated',
+    kind,
+    call_uuid: originateOutcome?.ok ? originateOutcome.job_uuid : null,
+    originate_error:
+      originateOutcome && !originateOutcome.ok ? originateOutcome.error : null,
   });
 
   markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
@@ -222,7 +273,12 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
   container().bus.emit(`intent:${campaignId}`, intent);
   container().bus.emit('intent:any', intent);
 
-  return { outcome: 'dialed', intent, assigned_agent: assigned };
+  return {
+    outcome: 'dialed',
+    intent,
+    assigned_agent: assigned,
+    originate: originateOutcome,
+  };
 }
 
 export function startPacer(campaignId: string): boolean {
@@ -235,13 +291,14 @@ export function startPacer(campaignId: string): boolean {
   if (camp?.type === 'inbound_queue') return false;
 
   const tick = () => {
-    try {
-      paceCampaignOnce(campaignId);
-    } catch (e) {
-      // never crash the pacer loop on a single bad lead / DB blip;
-      // log and continue.
+    // paceCampaignOnce is async (iter 32 — may await ESL). We treat each
+    // tick as fire-and-forget here: errors are logged but never crash the
+    // pacer loop. setInterval doesn't await, but a tick that takes longer
+    // than DEMO_INTERVAL_MS just overlaps the next one — bgapi is fast
+    // enough (~50ms) that this is fine.
+    paceCampaignOnce(campaignId).catch((e: unknown) => {
       console.error(`[pacing] tick failed for ${campaignId}:`, e);
-    }
+    });
   };
 
   // Run one tick immediately so the user sees activity right away,
@@ -328,3 +385,140 @@ export function totalIntentsFor(campaignId: string): number {
 }
 
 export type { DialIntentRecord, CampaignRecord };
+
+// =====================================================================
+// Iter 32 — minimal ESL bgapi helper (control-plane internal)
+// =====================================================================
+//
+// Mirrors apps/admin-gui/lib/esl.ts but lives here so the pacer can
+// originate without a circular dep on the admin-gui. Kept narrow:
+// connect → auth → bgapi <command> → read +OK Job-UUID line → close.
+//
+// `bgapi` returns IMMEDIATELY with a job UUID; the actual call setup
+// (RING / answer / hangup) happens asynchronously in FreeSWITCH. The
+// pacer just wants to know "did we hand off the originate request?"
+// — slow carrier handshakes don't block the tick loop.
+
+interface BgapiOptions {
+  gateway: string;
+  destination: string;
+  callerIdNumber?: string;
+  app: string;
+  host?: string;
+  port?: number;
+  password?: string;
+  timeoutMs?: number;
+}
+
+const ESL_DEFAULTS = {
+  host: '127.0.0.1',
+  port: 8021,
+  password: 'ClueCon',
+  timeoutMs: 4000,
+};
+
+function bgapiOriginate(opts: BgapiOptions): Promise<string> {
+  const cfg = { ...ESL_DEFAULTS, ...opts };
+  const channelVars: string[] = [];
+  if (opts.callerIdNumber) {
+    channelVars.push(
+      `origination_caller_id_number=${escapeChannelValue(opts.callerIdNumber)}`,
+    );
+  }
+  channelVars.push('ignore_early_media=true');
+  channelVars.push('hangup_after_bridge=true');
+  const vars = `{${channelVars.join(',')}}`;
+  const dial = `${vars}sofia/gateway/${opts.gateway}/${opts.destination}`;
+  const cmd = `bgapi originate ${dial} ${opts.app}`;
+
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: cfg.host, port: cfg.port });
+    socket.setEncoding('utf8');
+    socket.setTimeout(cfg.timeoutMs);
+
+    let buffer = '';
+    let phase: 'auth-req' | 'auth-reply' | 'bgapi-reply' = 'auth-req';
+
+    const fail = (code: string, msg: string) => {
+      try {
+        socket.destroy();
+      } catch {
+        /* ignore */
+      }
+      const err = new Error(msg);
+      (err as { code?: string }).code = code;
+      reject(err);
+    };
+
+    socket.on('error', (e) => fail('connect_failed', e.message));
+    socket.on('timeout', () =>
+      fail('timeout', `bgapi timed out after ${cfg.timeoutMs}ms`),
+    );
+
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      while (true) {
+        const sep = buffer.indexOf('\n\n');
+        if (sep === -1) return;
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const headers = parseHeaders(block);
+
+        if (phase === 'auth-req') {
+          if (headers['content-type'] !== 'auth/request') {
+            return fail(
+              'unexpected_state',
+              `expected auth/request, got ${headers['content-type']}`,
+            );
+          }
+          phase = 'auth-reply';
+          socket.write(`auth ${cfg.password}\n\n`);
+          continue;
+        }
+        if (phase === 'auth-reply') {
+          if (!headers['reply-text']?.startsWith('+OK')) {
+            return fail('auth_failed', headers['reply-text'] ?? 'auth failed');
+          }
+          phase = 'bgapi-reply';
+          socket.write(`${cmd}\n\n`);
+          continue;
+        }
+        if (phase === 'bgapi-reply') {
+          const reply = headers['reply-text'] ?? '';
+          // Expected: "+OK Job-UUID: <uuid>" — the Job-UUID header is also
+          // separately set, prefer that when present.
+          const jobUuid =
+            headers['job-uuid'] ??
+            reply.match(/Job-UUID:\s*([a-f0-9-]+)/i)?.[1];
+          if (jobUuid) {
+            try {
+              socket.end();
+              socket.destroy();
+            } catch {
+              /* ignore */
+            }
+            resolve(jobUuid);
+            return;
+          }
+          return fail('originate_failed', reply || 'no Job-UUID in reply');
+        }
+      }
+    });
+  });
+}
+
+function parseHeaders(block: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of block.split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx === -1) continue;
+    const k = line.slice(0, idx).trim().toLowerCase();
+    const v = line.slice(idx + 1).trim();
+    out[k] = v;
+  }
+  return out;
+}
+
+function escapeChannelValue(v: string): string {
+  return v.replace(/[,{}'\n\r]/g, '_');
+}

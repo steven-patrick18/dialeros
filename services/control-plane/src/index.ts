@@ -213,6 +213,7 @@ export type {
 export {
   CampaignTypeSchema,
   CampaignStatusSchema,
+  DialModeSchema,
   CampaignInputSchema,
   CampaignUpdateInputSchema,
   createCampaign,
