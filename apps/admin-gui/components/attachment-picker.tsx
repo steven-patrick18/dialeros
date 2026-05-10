@@ -6,18 +6,19 @@ import { useRouter } from 'next/navigation';
 export interface AttachmentItem {
   id: string;
   name: string;
-  hint?: string; // shown after the name in muted text — e.g. "(in another campaign)"
-  warn?: boolean; // dim/red the row to flag (e.g. disabled in-group)
+  hint?: string; // shown after the name in muted text
+  warn?: boolean; // dim the row to flag (e.g. disabled item)
 }
 
 /**
- * Iter 24 — ViciDial-style inline picker. Renders a checkbox list with a
- * single Save button. The button only enables when the selection diverges
- * from the initial set, and POSTs the full desired set to `endpoint`.
+ * Iter 24/27 — ViciDial-style inline multi-select picker. Renders a
+ * checkbox list with a single Save button. The button only enables when
+ * the selection diverges from the initial set, and POSTs/PUTs the full
+ * desired set to `endpoint` under `bodyKey`.
  *
- * Used by both the in-groups card and the lead-lists card on the campaign
- * detail page. They share the dirty-state + diff + save logic; only the
- * label and the endpoint differ.
+ * Used by:
+ *   - campaign in-groups + lead-lists (POST /api/campaigns/[id]/...)
+ *   - route-plan failover carriers     (PUT /api/route-plans/[id])
  */
 export function AttachmentPicker({
   endpoint,
@@ -25,12 +26,14 @@ export function AttachmentPicker({
   options,
   initialSelected,
   emptyMessage,
+  method = 'POST',
 }: {
   endpoint: string;
   bodyKey: string;
   options: AttachmentItem[];
   initialSelected: string[];
   emptyMessage?: string;
+  method?: 'POST' | 'PUT' | 'PATCH';
 }) {
   const router = useRouter();
   const initialSet = useMemo(() => new Set(initialSelected), [initialSelected]);
@@ -61,7 +64,7 @@ export function AttachmentPicker({
     setMsg(null);
     try {
       const res = await fetch(endpoint, {
-        method: 'POST',
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [bodyKey]: [...selected] }),
       });

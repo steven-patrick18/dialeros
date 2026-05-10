@@ -1,10 +1,11 @@
-﻿import Link from 'next/link';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   getCarrier,
   getRoutePlansForCarrier,
   parseCodecs,
 } from '@dialeros/control-plane';
+import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteCarrierButton } from './delete-button';
 
 export const dynamic = 'force-dynamic';
@@ -28,7 +29,7 @@ export default async function CarrierDetail({
           href="/carriers"
           className="text-xs text-fg-subtle hover:text-fg-muted"
         >
-          â† Carriers
+          &larr; Carriers
         </Link>
       </div>
       <div className="flex items-center justify-between mb-1">
@@ -47,91 +48,170 @@ export default async function CarrierDetail({
         {carrier.transport}://{carrier.host}:{carrier.port}
       </p>
 
+      <div className="max-w-4xl mb-6">
+        <InlineCardForm
+          title="Network"
+          endpoint={`/api/carriers/${carrier.id}`}
+          fields={[
+            {
+              type: 'text',
+              name: 'name',
+              label: 'Name',
+              value: carrier.name,
+              maxLength: 64,
+              hint: 'Internal identifier. Letters, digits, dashes, underscores. Shown in the route-plan carrier picker.',
+            },
+            {
+              type: 'text',
+              name: 'host',
+              label: 'Host',
+              value: carrier.host,
+              placeholder: 'sip.carrier.example.com',
+              hint: 'SIP host the dialer registers to / sends INVITEs to. Hostname or IP. No port.',
+            },
+            {
+              type: 'number',
+              name: 'port',
+              label: 'Port',
+              value: carrier.port,
+              min: 1,
+              max: 65535,
+              step: 1,
+              hint: 'SIP port. Typically 5060 (UDP/TCP) or 5061 (TLS).',
+            },
+            {
+              type: 'select',
+              name: 'transport',
+              label: 'Transport',
+              value: carrier.transport,
+              options: [
+                { value: 'UDP', label: 'UDP' },
+                { value: 'TCP', label: 'TCP' },
+                { value: 'TLS', label: 'TLS (encrypted)' },
+              ],
+              hint: 'SIP transport. TLS is the only option that encrypts signaling - required by some regulators.',
+            },
+            {
+              type: 'boolean',
+              name: 'enabled',
+              label: 'Enabled',
+              value: carrier.enabled === 1,
+              hint: 'Disabled carriers stay in inventory but route plans skip them. Use to take a carrier offline without deleting.',
+            },
+          ]}
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
-        <Card title="Authentication">
-          <Detail label="Mode" value={carrier.auth_mode} />
-          {carrier.auth_mode === 'digest' && (
-            <>
-              <Detail
-                label="Username"
-                value={carrier.digest_username ?? 'â€”'}
-              />
-              <Detail
-                label="Password"
-                value={
-                  carrier.digest_password_encrypted ? (
-                    <span className="text-fg-subtle">
-                      â—â—â—â—â—â—â—â— (encrypted at rest)
-                    </span>
-                  ) : (
-                    'â€”'
-                  )
-                }
-              />
-            </>
-          )}
-          {carrier.auth_mode === 'ip-acl' && (
-            <Detail
-              label="Allowed IPs"
-              value={
-                <span className="font-mono text-xs">
-                  {carrier.ip_acl ?? 'â€”'}
-                </span>
-              }
-            />
-          )}
-        </Card>
+        <InlineCardForm
+          title="Authentication"
+          endpoint={`/api/carriers/${carrier.id}`}
+          fields={[
+            {
+              type: 'select',
+              name: 'auth_mode',
+              label: 'Mode',
+              value: carrier.auth_mode,
+              options: [
+                { value: 'digest', label: 'digest - username + password' },
+                { value: 'ip-acl', label: 'ip-acl - IP whitelist' },
+              ],
+              hint: 'digest sends SIP credentials on every request; ip-acl trusts requests from a whitelisted IP / CIDR. Some carriers offer both.',
+            },
+            {
+              type: 'text',
+              name: 'digest_username',
+              label: 'Digest username',
+              value: carrier.digest_username,
+              hint: 'Required when mode is digest. Carrier-issued.',
+            },
+            {
+              type: 'text',
+              name: 'digest_password',
+              label: 'Digest password',
+              value: null,
+              placeholder: carrier.digest_password_encrypted
+                ? '(stored encrypted - leave blank to keep)'
+                : '',
+              hint: 'Required when mode is digest. Stored AES-256-GCM-encrypted at rest. Leave blank to keep the existing value.',
+            },
+            {
+              type: 'text',
+              name: 'ip_acl',
+              label: 'IP allow-list',
+              value: carrier.ip_acl,
+              placeholder: '203.0.113.0/24, 198.51.100.7',
+              hint: 'Required when mode is ip-acl. Comma-separated CIDR / single IPs.',
+            },
+          ]}
+        />
 
-        <Card title="Codecs (preference order)">
-          {codecs.length === 0 ? (
-            <p className="text-fg-subtle text-sm">No codecs configured.</p>
-          ) : (
-            <ol className="space-y-1">
-              {codecs.map((c, i) => (
-                <li
-                  key={c}
-                  className="flex items-center gap-3 text-sm"
-                >
-                  <span className="text-fg-subtle tabular-nums w-4">
-                    {i + 1}.
-                  </span>
-                  <span className="font-mono">{c}</span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </Card>
+        <InlineCardForm
+          title="Codecs (preference order)"
+          endpoint={`/api/carriers/${carrier.id}`}
+          fields={[
+            {
+              type: 'lines',
+              name: 'codecs',
+              label: `Codecs (${codecs.length})`,
+              value: codecs,
+              placeholder: 'PCMU\nPCMA\nOPUS\nG729',
+              hint: 'One per line, in preference order. Allowed: PCMU, PCMA, OPUS, G729. Topmost is offered first; carrier picks the first it supports.',
+            },
+          ]}
+        />
 
-        <Card title="Capacity">
-          <Detail
-            label="Max channels"
-            value={
-              <span className="tabular-nums">{carrier.max_channels}</span>
-            }
-          />
-          <Detail
-            label="Max CPS"
-            value={<span className="tabular-nums">{carrier.max_cps}</span>}
-          />
-        </Card>
+        <InlineCardForm
+          title="Capacity"
+          endpoint={`/api/carriers/${carrier.id}`}
+          fields={[
+            {
+              type: 'number',
+              name: 'max_channels',
+              label: 'Max channels',
+              value: carrier.max_channels,
+              min: 1,
+              max: 10000,
+              step: 1,
+              hint: 'Concurrent calls cap. Pacer throttles when this carrier hits the cap to avoid SIP rejects.',
+            },
+            {
+              type: 'number',
+              name: 'max_cps',
+              label: 'Max CPS',
+              value: carrier.max_cps,
+              min: 1,
+              max: 1000,
+              step: 1,
+              hint: 'Calls-per-second ceiling. Most carriers enforce this server-side; matching it here prevents bursts that would be rejected.',
+            },
+          ]}
+        />
 
-        <Card title="Quality">
-          <Detail
-            label="MOS threshold"
-            value={
-              <span className="tabular-nums">
-                {carrier.mos_threshold.toFixed(1)}
-              </span>
-            }
-          />
-          <p className="text-xs text-fg-subtle mt-2">
-            Active quality probing is a planned feature.
-          </p>
-        </Card>
+        <InlineCardForm
+          title="Quality"
+          endpoint={`/api/carriers/${carrier.id}`}
+          fields={[
+            {
+              type: 'number',
+              name: 'mos_threshold',
+              label: 'MOS threshold',
+              value: carrier.mos_threshold,
+              min: 0,
+              max: 5,
+              step: 0.1,
+              hint: 'Mean Opinion Score floor (0-5). Active probing not implemented yet - value is stored but not enforced.',
+            },
+          ]}
+          helpText="Active quality probing is a planned feature."
+        />
       </div>
 
       <dl className="mt-6 grid grid-cols-2 gap-3 text-xs max-w-4xl">
-        <Detail label="ID" value={<span className="font-mono">{carrier.id}</span>} />
+        <Detail
+          label="ID"
+          value={<span className="font-mono">{carrier.id}</span>}
+        />
         <Detail
           label="Created"
           value={new Date(carrier.created_at).toLocaleString()}
@@ -167,31 +247,8 @@ export default async function CarrierDetail({
       )}
 
       <div className="mt-8 max-w-4xl flex items-center gap-4">
-        <Link
-          href={`/carriers/${carrier.id}/edit`}
-          className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm"
-        >
-          Edit carrier
-        </Link>
         <DeleteCarrierButton id={carrier.id} name={carrier.name} />
       </div>
-    </div>
-  );
-}
-
-function Card({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="border border-border rounded p-4 space-y-2">
-      <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-        {title}
-      </h2>
-      {children}
     </div>
   );
 }

@@ -3,9 +3,11 @@ import { notFound } from 'next/navigation';
 import {
   getCarrier,
   getRoutePlan,
+  listCarriers,
   parseCidPool,
   parseFailoverIds,
 } from '@dialeros/control-plane';
+import { AttachmentPicker } from '@/components/attachment-picker';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteRoutePlanButton } from './delete-button';
 
@@ -24,6 +26,7 @@ export default async function RoutePlanDetail({
   const failoverIds = parseFailoverIds(plan);
   const failovers = failoverIds.map((fid) => getCarrier(fid));
   const cidPool = parseCidPool(plan);
+  const allCarriers = listCarriers();
 
   const exampleNumber = '+14155551234';
   const transformed = applyTransform(
@@ -105,31 +108,30 @@ export default async function RoutePlanDetail({
           )}
         </Card>
 
-        <Card title={`Failover carriers (${failovers.length})`}>
-          {failovers.length === 0 ? (
-            <p className="text-fg-subtle text-sm">No failovers configured.</p>
-          ) : (
-            <ol className="space-y-1 text-sm">
-              {failovers.map((c, i) => (
-                <li key={i} className="flex items-center gap-2">
-                  <span className="text-fg-subtle tabular-nums w-4">
-                    {i + 1}.
-                  </span>
-                  {c ? (
-                    <Link
-                      href={`/carriers/${c.id}`}
-                      className="hover:underline"
-                    >
-                      {c.name}
-                    </Link>
-                  ) : (
-                    <span className="text-error">missing carrier</span>
-                  )}
-                </li>
-              ))}
-            </ol>
-          )}
-        </Card>
+        <div className="border border-border rounded p-4 space-y-2">
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+            Failover carriers ({failovers.length})
+          </h2>
+          <p className="text-xs text-fg-subtle mb-2">
+            Tick the carriers to fall back to when the primary fails. Order
+            in the list reflects priority. The primary is excluded — it
+            can&apos;t also be a failover.
+          </p>
+          <AttachmentPicker
+            endpoint={`/api/route-plans/${plan.id}`}
+            bodyKey="failover_carrier_ids"
+            method="PUT"
+            options={allCarriers
+              .filter((cc) => cc.id !== plan.primary_carrier_id)
+              .map((cc) => ({
+                id: cc.id,
+                name: cc.name,
+                hint: `${cc.transport}://${cc.host}:${cc.port}`,
+                warn: cc.enabled === 0,
+              }))}
+            initialSelected={failoverIds}
+          />
+        </div>
 
         <InlineCardForm
           title="Caller ID"
