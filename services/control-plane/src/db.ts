@@ -257,6 +257,9 @@ function db(): DatabaseSync {
     "ALTER TABLE dial_intents ADD COLUMN disposition TEXT",
     "ALTER TABLE dial_intents ADD COLUMN dispositioned_at TEXT",
     "ALTER TABLE dial_intents ADD COLUMN callback_at TEXT",
+    // iter 19: schedule-aware picker. Mirrors callback_at onto the lead so
+    // pickNextDialableLead can compare without joining to dial_intents.
+    "ALTER TABLE leads ADD COLUMN callback_at TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -1306,9 +1309,14 @@ export function disposeIntent(args: {
        WHERE id = ?`,
     ).run(args.disposition, args.callbackAt, args.intentId);
 
+    // Mirror callback_at onto the lead so the schedule-aware picker can
+    // compare without joining back to dial_intents. Cleared on every
+    // disposition (other outcomes nuke any stale callback time).
     d.prepare(
-      `UPDATE leads SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    ).run(args.newLeadStatus, intent.lead_id);
+      `UPDATE leads
+         SET status = ?, callback_at = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+    ).run(args.newLeadStatus, args.callbackAt, intent.lead_id);
 
     tx('COMMIT');
   } catch (e) {
@@ -1339,25 +1347,51 @@ export function countDispositionsTodayForUser(userId: string): number {
 }
 
 /**
- * Pacing's lead picker. Returns the next dialable lead from the campaign's
- * attached lists, ordered by priority. A lead is dialable if:
- *   - status in (NEW, CALLED_NO_ANSWER, CALLBACK_SCHEDULED)
- *   - last_called_at is NULL OR older than `cooldownSeconds` ago
+ * Pacing's lead picker.
+ *
+ * Iter 19 — schedule-aware. Two passes, callbacks first:
+ *   Pass 1: CALLBACK_SCHEDULED leads whose callback_at is in the past
+ *           (oldest scheduled time wins — agent shouldn't be late)
+ *   Pass 2: NEW + CALLED_NO_ANSWER leads, gated by the per-tick cooldown
+ *
+ * If a CALLBACK_SCHEDULED lead has a NULL callback_at (legacy data, or
+ * a future one not yet due) it stays out of the queue — never picked
+ * accidentally, never picked early.
  */
 export function pickNextDialableLead(
   campaignId: string,
   cooldownSeconds: number,
 ): { lead_id: string; list_id: string; phone: string; name: string | null } | undefined {
-  const cutoff = new Date(
+  const now = new Date().toISOString();
+  const cooldownCutoff = new Date(
     Date.now() - cooldownSeconds * 1000,
   ).toISOString();
-  return db()
+  const d = db();
+
+  const callback = d
     .prepare(
       `SELECT l.id AS lead_id, l.list_id, l.phone, l.name
        FROM leads l
        JOIN campaign_lead_lists cll ON cll.lead_list_id = l.list_id
        WHERE cll.campaign_id = ?
-         AND l.status IN ('NEW', 'CALLED_NO_ANSWER', 'CALLBACK_SCHEDULED')
+         AND l.status = 'CALLBACK_SCHEDULED'
+         AND l.callback_at IS NOT NULL
+         AND l.callback_at <= ?
+       ORDER BY l.callback_at ASC, cll.priority ASC, l.created_at ASC
+       LIMIT 1`,
+    )
+    .get(campaignId, now) as
+    | { lead_id: string; list_id: string; phone: string; name: string | null }
+    | undefined;
+  if (callback) return callback;
+
+  return d
+    .prepare(
+      `SELECT l.id AS lead_id, l.list_id, l.phone, l.name
+       FROM leads l
+       JOIN campaign_lead_lists cll ON cll.lead_list_id = l.list_id
+       WHERE cll.campaign_id = ?
+         AND l.status IN ('NEW', 'CALLED_NO_ANSWER')
          AND (l.last_called_at IS NULL OR l.last_called_at < ?)
        ORDER BY cll.priority ASC,
                 CASE WHEN l.last_called_at IS NULL THEN 0 ELSE 1 END,
@@ -1365,7 +1399,7 @@ export function pickNextDialableLead(
                 l.created_at ASC
        LIMIT 1`,
     )
-    .get(campaignId, cutoff) as
+    .get(campaignId, cooldownCutoff) as
     | { lead_id: string; list_id: string; phone: string; name: string | null }
     | undefined;
 }
