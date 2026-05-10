@@ -115,6 +115,17 @@ export {
 } from './db';
 export type { AgentIntentRecord } from './db';
 
+// Lead disposition (iter 18)
+export {
+  countDispositionsTodayForUser,
+} from './db';
+export {
+  DispositionSchema,
+  DisposeInputSchema,
+  disposeAgentIntent,
+} from './disposition';
+export type { Disposition, DisposeInput, DisposeResult } from './disposition';
+
 // Secrets (envelope encryption)
 export { encryptSecret, decryptSecret } from './secrets';
 

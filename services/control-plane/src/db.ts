@@ -253,6 +253,10 @@ function db(): DatabaseSync {
     // iter 16: pacing v2 attributes each dial intent to an agent.
     // Nullable: existing rows + future "no agent" intents stay NULL.
     "ALTER TABLE dial_intents ADD COLUMN assigned_user_id TEXT",
+    // iter 18: agent dispositions. NULL = not yet dispositioned.
+    "ALTER TABLE dial_intents ADD COLUMN disposition TEXT",
+    "ALTER TABLE dial_intents ADD COLUMN dispositioned_at TEXT",
+    "ALTER TABLE dial_intents ADD COLUMN callback_at TEXT",
   ];
   for (const sql of migrations) {
     try {
@@ -1139,6 +1143,9 @@ export interface DialIntentRecord {
   cid_used: string | null;
   kind: string;
   assigned_user_id: string | null;
+  disposition: string | null;
+  dispositioned_at: string | null;
+  callback_at: string | null;
 }
 
 export function insertDialIntent(rec: {
@@ -1253,6 +1260,81 @@ export function countDialIntentsForUser(userId: string): number {
   const row = db()
     .prepare(`SELECT COUNT(*) AS n FROM dial_intents WHERE assigned_user_id = ?`)
     .get(userId) as { n: number };
+  return row.n;
+}
+
+/**
+ * Iter 18 — apply an agent disposition to a single dial intent and the
+ * underlying lead in one transaction. Returns the freshly-updated
+ * intent, or undefined if the intent does not exist or does not belong
+ * to userId (so HTTP layer can 404 vs 200 cleanly).
+ *
+ * Lead status is the source of truth that the pacer's pickNextDialableLead
+ * filters on. Outcome → lead status mapping:
+ *   SALE                → CONVERTED
+ *   DNC                 → DNC
+ *   NO_INTEREST         → DEAD
+ *   WRONG_NUMBER        → BAD_NUMBER
+ *   BAD_NUMBER          → BAD_NUMBER
+ *   ANSWERING_MACHINE   → CALLED_NO_ANSWER (re-dialable)
+ *   CALLBACK            → CALLBACK_SCHEDULED (re-dialable after callback_at)
+ */
+export function disposeIntent(args: {
+  intentId: number;
+  userId: string;
+  disposition: string;
+  newLeadStatus: string;
+  callbackAt: string | null;
+}): DialIntentRecord | undefined {
+  const d = db();
+  const tx = d.exec.bind(d);
+
+  // Verify intent exists + belongs to user + is not already dispositioned
+  const intent = d
+    .prepare(`SELECT * FROM dial_intents WHERE id = ?`)
+    .get(args.intentId) as unknown as DialIntentRecord | undefined;
+  if (!intent) return undefined;
+  if (intent.assigned_user_id !== args.userId) return undefined;
+  if (intent.disposition) return intent; // idempotent — second click is a no-op
+
+  tx('BEGIN');
+  try {
+    d.prepare(
+      `UPDATE dial_intents
+         SET disposition = ?, dispositioned_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+             callback_at = ?
+       WHERE id = ?`,
+    ).run(args.disposition, args.callbackAt, args.intentId);
+
+    d.prepare(
+      `UPDATE leads SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    ).run(args.newLeadStatus, intent.lead_id);
+
+    tx('COMMIT');
+  } catch (e) {
+    tx('ROLLBACK');
+    throw e;
+  }
+
+  return d
+    .prepare(`SELECT * FROM dial_intents WHERE id = ?`)
+    .get(args.intentId) as unknown as DialIntentRecord;
+}
+
+/** Number of intents the user dispositioned since UTC midnight of `now`. */
+export function countDispositionsTodayForUser(userId: string): number {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const since = dayStart.toISOString();
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dial_intents
+        WHERE assigned_user_id = ?
+          AND disposition IS NOT NULL
+          AND dispositioned_at >= ?`,
+    )
+    .get(userId, since) as { n: number };
   return row.n;
 }
 

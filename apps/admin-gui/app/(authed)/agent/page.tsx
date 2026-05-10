@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import {
   countDialIntentsForUser,
+  countDispositionsTodayForUser,
   listDialIntentsForUser,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
@@ -15,6 +16,7 @@ export default async function AgentConsole() {
   // Admins can preview the agent console too — useful for QA — but the
   // primary audience is role=agent.
   const total = countDialIntentsForUser(user.id);
+  const dispoToday = countDispositionsTodayForUser(user.id);
   const initial = [...listDialIntentsForUser(user.id, 20)].reverse();
 
   return (
@@ -36,7 +38,11 @@ export default async function AgentConsole() {
       </p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mb-6">
-        <Stat label="Calls today" value="—" hint="Per-day rollup TBD" />
+        <Stat
+          label="Dispositions today"
+          value={dispoToday.toLocaleString()}
+          accent={dispoToday > 0 ? 'text-success' : 'text-fg-subtle'}
+        />
         <Stat label="On call" value="—" hint="Telephony layer TBD" />
         <Stat label="Wrap-up" value="—" hint="Telephony layer TBD" />
         <Stat
