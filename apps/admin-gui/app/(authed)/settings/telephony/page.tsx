@@ -12,6 +12,7 @@ import { getFreeSwitchHealth, type FreeSwitchHealth } from '@/lib/esl';
 import { TokenForm } from './token-form';
 import { InstallPanel } from './install-panel';
 import { TestCallCard } from './test-call-card';
+import { SoftphoneProvider } from './softphone';
 
 export const dynamic = 'force-dynamic';
 
@@ -89,13 +90,15 @@ export default async function TelephonySettings() {
             FreeSWITCH isn&apos;t running yet &mdash; the originate will
             fail at the ESL connect.
           </p>
-          <TestCallCard
-            carriers={carriers.map((c) => ({
-              id: c.id,
-              name: c.name,
-              enabled: c.enabled === 1,
-            }))}
-          />
+          <SoftphoneProvider>
+            <TestCallCard
+              carriers={carriers.map((c) => ({
+                id: c.id,
+                name: c.name,
+                enabled: c.enabled === 1,
+              }))}
+            />
+          </SoftphoneProvider>
         </section>
 
         <section>

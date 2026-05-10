@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useSoftphone } from './softphone';
 
 interface CarrierOption {
   id: string;
@@ -8,7 +9,7 @@ interface CarrierOption {
   enabled: boolean;
 }
 
-type App = 'echo' | 'playback' | 'park' | 'amd-detect';
+type App = 'echo' | 'playback' | 'park' | 'amd-detect' | 'bridge-to-me';
 
 const APP_HINT: Record<App, string> = {
   echo: 'After answer, FreeSWITCH echoes whatever the called party says back. Best for confirming 2-way audio.',
@@ -17,6 +18,8 @@ const APP_HINT: Record<App, string> = {
   park: 'After answer, the call sits parked silent until you hit Hangup. Use for "did the carrier connect at all" tests.',
   'amd-detect':
     'After answer, FreeSWITCH listens for ~3 seconds and decides HUMAN vs MACHINE vs UNSURE. Result shows in the call panel below. Call hangs up automatically once AMD decides — no agent audio.',
+  'bridge-to-me':
+    'Once the destination answers, FreeSWITCH bridges the call to your browser softphone. Talk and listen through your computer. Mute / DTMF / Hangup buttons below control the call live.',
 };
 
 interface PlaceResult {
@@ -43,6 +46,7 @@ interface LiveStatus {
 }
 
 export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
+  const softphone = useSoftphone();
   const [carrierId, setCarrierId] = useState(
     carriers.find((c) => c.enabled)?.id ?? carriers[0]?.id ?? '',
   );
@@ -59,6 +63,9 @@ export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
   const [snapshot, setSnapshot] = useState<LiveStatus | null>(null);
   const [hangupBusy, setHangupBusy] = useState(false);
   const tickerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const bridgeMode = app === 'bridge-to-me';
+  const bridgeBlocked = bridgeMode && !softphone.registered;
 
   async function place() {
     if (!carrierId || !to.trim()) {
@@ -152,9 +159,12 @@ export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
 
   return (
     <div className="border border-border rounded p-4">
-      <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-        Test call
-      </h2>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+          Test call
+        </h2>
+        <SoftphoneBadge />
+      </div>
       <p className="text-xs text-fg-subtle mb-3">
         Place a one-shot call through a carrier&apos;s pushed FreeSWITCH
         gateway. The carrier must be in <span className="font-mono">UP</span>{' '}
@@ -215,6 +225,9 @@ export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
               onChange={(e) => setApp(e.target.value as App)}
               className="input text-sm"
             >
+              <option value="bridge-to-me">
+                bridge-to-me &mdash; talk through your browser
+              </option>
               <option value="echo">echo &mdash; test 2-way audio</option>
               <option value="playback">playback &mdash; 440/480 Hz tone</option>
               <option value="park">park &mdash; silent (manual hangup)</option>
@@ -245,18 +258,27 @@ export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
           <button
             type="button"
             onClick={place}
-            disabled={busy || !!activeUuid}
+            disabled={busy || !!activeUuid || bridgeBlocked}
             className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm disabled:opacity-40"
           >
             {busy
               ? 'Placing call…'
               : activeUuid
                 ? 'Call active — hang up first'
-                : 'Place test call'}
+                : bridgeBlocked
+                  ? 'Softphone not ready'
+                  : 'Place test call'}
           </button>
-          {!activeUuid && (
+          {bridgeBlocked && (
+            <span className="text-xs text-warn">
+              Wait for the softphone to register before placing a bridge-to-me call.
+            </span>
+          )}
+          {!activeUuid && !bridgeBlocked && (
             <span className="text-xs text-fg-subtle">
-              Synchronous &mdash; the request blocks until the leg connects or fails.
+              {bridgeMode
+                ? 'Your browser will auto-answer when the destination picks up.'
+                : 'Synchronous — the request blocks until the leg connects or fails.'}
             </span>
           )}
         </div>
@@ -282,7 +304,14 @@ export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
           destination={result?.to}
           cid={result?.cid ?? null}
           app={result?.app}
-          onHangup={hangup}
+          onHangup={async () => {
+            // For bridge-to-me, also tear down the browser leg cleanly
+            // before killing the carrier leg.
+            if (result?.app === 'bridge-to-me') {
+              await softphone.hangup();
+            }
+            await hangup();
+          }}
           hangupBusy={hangupBusy}
           onClose={() => {
             setActiveUuid(null);
@@ -293,6 +322,42 @@ export function TestCallCard({ carriers }: { carriers: CarrierOption[] }) {
         />
       )}
     </div>
+  );
+}
+
+function SoftphoneBadge() {
+  const sp = useSoftphone();
+  if (sp.error) {
+    return (
+      <span
+        className="text-[10px] uppercase px-1.5 py-0.5 rounded border bg-error/10 text-error border-error/40"
+        title={sp.error}
+      >
+        Softphone error
+      </span>
+    );
+  }
+  if (sp.registered) {
+    return (
+      <span
+        className="text-[10px] uppercase px-1.5 py-0.5 rounded border bg-success/10 text-success border-success/40"
+        title={`Registered as ${sp.extension}`}
+      >
+        Softphone {sp.extension}
+      </span>
+    );
+  }
+  if (sp.ready) {
+    return (
+      <span className="text-[10px] uppercase px-1.5 py-0.5 rounded border bg-warn/10 text-warn border-warn/40">
+        Softphone registering…
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] uppercase px-1.5 py-0.5 rounded border bg-fg-subtle/15 text-fg-muted border-border">
+      Softphone connecting…
+    </span>
   );
 }
 
@@ -390,13 +455,10 @@ function LiveCallPanel({
         </div>
       )}
 
-      {/* Future-softphone control row — wires up next iter */}
-      <div className="flex items-center gap-2 mb-3">
-        <ControlButton disabled label="Mute" hint="Browser audio + sip.js arrives in iter 35b" />
-        <ControlButton disabled label="DTMF" hint="Dialpad — iter 35b" />
-        <ControlButton disabled label="Speaker" hint="Volume control — iter 35b" />
-        <ControlButton disabled label="Hold" hint="Hold/resume — iter 35b" />
-      </div>
+      {/* Iter 35b — softphone controls. Active only when bridge-to-me
+          is the app and the browser side is in-call. */}
+      <SoftphoneControls app={app} />
+
 
       <div className="flex items-center gap-3">
         {isLive ? (
@@ -427,21 +489,99 @@ function LiveCallPanel({
   );
 }
 
-function ControlButton({
+/**
+ * Iter 35b — softphone control row. Active when the test call is in
+ * 'bridge-to-me' mode AND the browser-side leg has actually joined
+ * the call. For other apps the row is hidden — there's no agent
+ * audio to control.
+ */
+function SoftphoneControls({ app }: { app: App | undefined }) {
+  const sp = useSoftphone();
+  const [dtmfOpen, setDtmfOpen] = useState(false);
+
+  if (app !== 'bridge-to-me') return null;
+
+  const inCall = sp.inCall;
+
+  return (
+    <div className="mb-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <ControlBtn
+          active={sp.muted}
+          label={sp.muted ? 'Unmute' : 'Mute'}
+          onClick={sp.toggleMute}
+          disabled={!inCall}
+        />
+        <ControlBtn
+          label="DTMF"
+          onClick={() => setDtmfOpen((o) => !o)}
+          disabled={!inCall}
+          active={dtmfOpen}
+        />
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded border border-border bg-card-hover/30">
+          <span className="text-xs text-fg-muted">Volume</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={sp.volume}
+            onChange={(e) => sp.setVolume(Number(e.target.value))}
+            disabled={!inCall}
+            className="w-24"
+          />
+          <span className="text-[10px] text-fg-subtle tabular-nums w-8">
+            {Math.round(sp.volume * 100)}%
+          </span>
+        </div>
+        <span className="text-[10px] text-fg-subtle ml-auto">
+          {inCall
+            ? `Browser leg: ${sp.remoteIdentity ?? 'connecting'}`
+            : 'Waiting for bridge…'}
+        </span>
+      </div>
+      {dtmfOpen && (
+        <div className="grid grid-cols-3 gap-1 max-w-[220px]">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(
+            (d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => sp.sendDtmf(d)}
+                disabled={!inCall}
+                className="text-sm py-2 rounded border border-border text-fg hover:bg-card-hover disabled:opacity-40"
+              >
+                {d}
+              </button>
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ControlBtn({
   label,
-  hint,
+  onClick,
   disabled,
+  active,
 }: {
   label: string;
-  hint: string;
-  disabled: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
 }) {
   return (
     <button
       type="button"
+      onClick={onClick}
       disabled={disabled}
-      title={hint}
-      className="text-xs px-3 py-1.5 rounded border border-border text-fg-muted bg-card-hover/30 cursor-not-allowed"
+      className={`text-xs px-3 py-1.5 rounded border ${
+        active
+          ? 'bg-accent text-accent-fg border-accent'
+          : 'border-border text-fg-muted hover:text-fg hover:bg-card-hover'
+      } disabled:opacity-40 disabled:cursor-not-allowed`}
     >
       {label}
     </button>

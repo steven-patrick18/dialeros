@@ -29,6 +29,9 @@ importers:
       react-dom:
         specifier: ^19.0.0
         version: 19.2.6(react@19.2.6)
+      sip.js:
+        specifier: ^0.21.2
+        version: 0.21.2
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -678,6 +681,10 @@ packages:
     resolution: {integrity: sha512-Ou9I5Ft9WNcCbXrU9cMgPBcCK8LiwLqcbywW3t4oDV37n1pzpuNLsYiAV8eODnjbtQlSDwZ2cUEeQz4E54Hltg==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
 
+  sip.js@0.21.2:
+    resolution: {integrity: sha512-tSqTcIgrOd2IhP/rd70JablvAp+fSfLSxO4hGNY6LkWRY1SKygTO7OtJEV/BQb8oIxtMRx0LE7nUF2MaqGbFzA==}
+    engines: {node: '>=10.0'}
+
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
@@ -1245,6 +1252,8 @@ snapshots:
       '@img/sharp-win32-ia32': 0.34.5
       '@img/sharp-win32-x64': 0.34.5
     optional: true
+
+  sip.js@0.21.2: {}
 
   source-map-js@1.2.1: {}
 

@@ -26,21 +26,50 @@ const TestCallBody = z.object({
   carrier_id: z.string().uuid(),
   to: z.string().min(4).max(40),
   cid: z.string().min(0).max(40).optional(),
-  app: z.enum(['echo', 'playback', 'park', 'amd-detect']).default('echo'),
+  app: z
+    .enum(['echo', 'playback', 'park', 'amd-detect', 'bridge-to-me'])
+    .default('echo'),
   timeout_seconds: z.number().int().min(5).max(120).default(30),
 });
 
-const APP_DIAL: Record<'echo' | 'playback' | 'park' | 'amd-detect', string> = {
-  echo: '&echo',
-  playback: '&playback(tone_stream://%(2000,4000,440,480))',
-  park: '&park',
-  // Iter 35 — answering-machine detection. amd_v2 listens for ~3s after
-  // answer and decides HUMAN/MACHINE/UNSURE, sets variable_amd_result,
-  // then breaks the call. The result lands in /api/telephony/calls/[uuid]
-  // via uuid_dump (live) or in CHANNEL_HANGUP_COMPLETE for fs-events
-  // pickup.
-  'amd-detect': '&amd_v2(break_on_machine,async:false)',
-};
+type AppName =
+  | 'echo'
+  | 'playback'
+  | 'park'
+  | 'amd-detect'
+  | 'bridge-to-me';
+
+function appDialString(app: AppName, userExtension: string): string {
+  switch (app) {
+    case 'echo':
+      return '&echo';
+    case 'playback':
+      return '&playback(tone_stream://%(2000,4000,440,480))';
+    case 'park':
+      return '&park';
+    case 'amd-detect':
+      // Iter 35a — listen ~3s after answer, decide HUMAN/MACHINE,
+      // set variable_amd_result, then hang up.
+      return '&amd_v2(break_on_machine,async:false)';
+    case 'bridge-to-me':
+      // Iter 35b — once the destination answers, ring the admin's
+      // SIP user (registered from their browser). Bridge once the
+      // browser auto-answers — admin hears + talks through their
+      // browser audio.
+      return `&bridge(user/${userExtension})`;
+  }
+}
+
+// Iter 35b — same hash used in /api/telephony/softphone-config so the
+// admin's outbound test calls bridge to the SAME extension their
+// browser registered as.
+function extensionForUser(userId: string): string {
+  let h = 0;
+  for (let i = 0; i < userId.length; i++) {
+    h = ((h << 5) - h + userId.charCodeAt(i)) | 0;
+  }
+  return String(1000 + (Math.abs(h) % 20));
+}
 
 export async function POST(req: NextRequest) {
   const user = await getCurrentUser();
@@ -82,13 +111,14 @@ export async function POST(req: NextRequest) {
   }
 
   const gateway = gatewayNameFor(carrier);
+  const dialApp = appDialString(app, extensionForUser(user.id));
   let uuid: string;
   try {
     uuid = await originate({
       gateway,
       destination: dest,
       callerIdNumber: cidNorm ?? undefined,
-      app: APP_DIAL[app],
+      app: dialApp,
       originateTimeout: timeout_seconds,
     });
   } catch (e) {
