@@ -20,6 +20,7 @@ import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
 import { PacingPanel } from './pacing-panel';
 import { AttachmentPicker } from './attachment-picker';
+import { InlineCardForm } from './inline-card-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,10 +74,25 @@ export default async function CampaignDetail({
           {c.status}
         </span>
       </div>
-      <p className="text-fg-subtle text-sm font-mono mb-1">{c.type}</p>
-      {c.description && (
-        <p className="text-fg-muted text-sm mb-6">{c.description}</p>
-      )}
+      <p className="text-fg-subtle text-sm font-mono mb-4">{c.type}</p>
+
+      <div className="max-w-4xl mb-6">
+        <InlineCardForm
+          title="Description"
+          endpoint={`/api/campaigns/${c.id}`}
+          fields={[
+            {
+              type: 'textarea',
+              name: 'description',
+              label: 'Description',
+              value: c.description,
+              maxLength: 500,
+              placeholder: 'Optional — what this campaign dials, who it serves, etc.',
+              hint: 'Free-form notes for other admins. 500 characters max.',
+            },
+          ]}
+        />
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mb-6">
         <Card title="Route plan">
@@ -129,41 +145,55 @@ export default async function CampaignDetail({
           )}
         </Card>
 
-        <Card title="Pacing">
-          <Detail
-            label="Base ratio"
-            value={
-              <span className="tabular-nums">{c.base_ratio.toFixed(1)}</span>
-            }
-          />
-          <Detail
-            label="Max abandon %"
-            value={
-              <span className="tabular-nums">
-                {c.max_abandon_pct.toFixed(1)}
-              </span>
-            }
-          />
-          <p className="text-xs text-fg-subtle mt-2">
-            Pacing engine + dial loop arrives in iter 10. For now this is just
-            stored configuration.
-          </p>
-        </Card>
+        <InlineCardForm
+          title="Pacing"
+          endpoint={`/api/campaigns/${c.id}`}
+          fields={[
+            {
+              type: 'number',
+              name: 'base_ratio',
+              label: 'Base ratio',
+              value: c.base_ratio,
+              min: 0.5,
+              max: 10,
+              step: 0.1,
+              hint: 'Calls placed per available agent. 1.0 = one call per agent (progressive). Higher = predictive (overdial). 0.5–10.',
+            },
+            {
+              type: 'number',
+              name: 'max_abandon_pct',
+              label: 'Max abandon %',
+              value: c.max_abandon_pct,
+              min: 0,
+              max: 100,
+              step: 0.1,
+              hint: 'Maximum % of calls allowed to drop because no agent was free. Predictive pacers throttle when this ceiling is hit. US TCPA compliance is typically ≤3%.',
+            },
+          ]}
+          helpText="Live: edits hot-reload into the pacer's per-tick math on the next tick — no service restart."
+        />
 
-        <Card title="Compliance">
-          {c.call_window_start && c.call_window_end ? (
-            <Detail
-              label="Call window"
-              value={
-                <span className="font-mono text-xs">
-                  {c.call_window_start} – {c.call_window_end} caller-local
-                </span>
-              }
-            />
-          ) : (
-            <p className="text-fg-subtle text-sm">No window restriction.</p>
-          )}
-        </Card>
+        <InlineCardForm
+          title="Compliance"
+          endpoint={`/api/campaigns/${c.id}`}
+          fields={[
+            {
+              type: 'time',
+              name: 'call_window_start',
+              label: 'Call window start',
+              value: c.call_window_start,
+              hint: 'Earliest local time of day to dial. Leave blank to remove the restriction. Pacer skips ticks outside the window.',
+            },
+            {
+              type: 'time',
+              name: 'call_window_end',
+              label: 'Call window end',
+              value: c.call_window_end,
+              hint: 'Latest local time of day. Set later than start for same-day windows, earlier than start to wrap midnight (e.g. 23:00 → 01:00).',
+            },
+          ]}
+          helpText="Both blank = always dial. Both set = honor window. Mixed values are rejected."
+        />
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
