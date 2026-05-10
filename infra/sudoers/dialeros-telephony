@@ -1,0 +1,13 @@
+# Iter 28 — telephony bootstrap.
+#
+# The dialeros user (the admin-gui systemd service runs as this user)
+# can run /opt/dialeros/scripts/install-freeswitch.sh as root, with no
+# password and the ability to set environment variables (SETENV). The
+# admin GUI sets SIGNALWIRE_TOKEN + DEBIAN_FRONTEND via env; sudo
+# normally strips those, so the API uses
+# `sudo --preserve-env=SIGNALWIRE_TOKEN,DEBIAN_FRONTEND`, which requires
+# SETENV in this rule.
+#
+# Privilege scope is bounded to JUST this script: the dialeros user
+# cannot use sudo for anything else.
+dialeros ALL=(root) NOPASSWD: SETENV: /opt/dialeros/scripts/install-freeswitch.sh

@@ -19,20 +19,18 @@ Environment=PORT=1111
 Environment=DIALEROS_DB=/opt/dialeros/apps/admin-gui/data/dialeros.db
 Environment=DIALEROS_MASTER_KEY_PATH=/opt/dialeros/apps/admin-gui/data/.master_key
 
-# Hardening
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
+# Hardening — minimal. ANY of the systemd "Protect*" / "Restrict*" /
+# "Lock*" sandboxing directives implicitly set NoNewPrivileges=yes,
+# which blocks sudo from elevating to run the telephony install
+# script. Since the install must run from the admin-gui process tree,
+# we keep only the lightweight isolation that doesn't trigger
+# NoNewPrivileges:
+#   - PrivateTmp gives an isolated /tmp without touching privs.
+# Everything else relies on:
+#   - User=dialeros (the process can't do anything privileged on its own)
+#   - /etc/sudoers.d/dialeros-telephony (narrow grant for the one script)
+#   - The install script itself being root-owned + 755.
 PrivateTmp=yes
-PrivateDevices=yes
-ReadWritePaths=/opt/dialeros/apps/admin-gui/data /opt/dialeros/apps/admin-gui/.next
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-# AF_NETLINK needed for uv_interface_addresses (Next.js startup network introspection)
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
-LockPersonality=yes
-RestrictRealtime=yes
 
 # Logging
 StandardOutput=journal

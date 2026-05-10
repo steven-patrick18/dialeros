@@ -143,6 +143,24 @@ systemctl daemon-reload
 ok "systemd unit installed"
 
 # -----------------------------------------------------------------------------
+# sudoers — narrow grant for the telephony bootstrap script (iter 28)
+# -----------------------------------------------------------------------------
+
+log "Installing telephony sudoers entry"
+install -m 0440 "${REPO_ROOT}/infra/sudoers/dialeros-telephony" /etc/sudoers.d/dialeros-telephony
+# Patch the script path if the repo isn't at /opt/dialeros
+if [[ "${REPO_ROOT}" != "/opt/dialeros" ]]; then
+  sed -i "s|/opt/dialeros|${REPO_ROOT}|g" /etc/sudoers.d/dialeros-telephony
+fi
+visudo -c -f /etc/sudoers.d/dialeros-telephony >/dev/null
+ok "telephony sudoers installed"
+
+# Ensure the install script is owned by root + executable so sudo will
+# accept it (sudo refuses scripts that are world-writable etc.)
+chown root:root "${REPO_ROOT}/scripts/install-freeswitch.sh"
+chmod 0755 "${REPO_ROOT}/scripts/install-freeswitch.sh"
+
+# -----------------------------------------------------------------------------
 # done
 # -----------------------------------------------------------------------------
 

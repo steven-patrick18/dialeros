@@ -67,10 +67,26 @@ interface RunResult {
 
 function runInstall(token: string): Promise<RunResult> {
   return new Promise((resolve) => {
-    const child = spawn('sudo', ['-n', INSTALL_SCRIPT], {
-      env: { ...process.env, SIGNALWIRE_TOKEN: token, DEBIAN_FRONTEND: 'noninteractive' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    // sudo strips most env vars by default. The sudoers entry for this
+    // script has SETENV, which lets us use --preserve-env=VAR1,VAR2
+    // to whitelist specific variables. The token is passed via env
+    // (not argv) so it never appears in `ps -ef`.
+    const child = spawn(
+      'sudo',
+      [
+        '-n',
+        '--preserve-env=SIGNALWIRE_TOKEN,DEBIAN_FRONTEND',
+        INSTALL_SCRIPT,
+      ],
+      {
+        env: {
+          ...process.env,
+          SIGNALWIRE_TOKEN: token,
+          DEBIAN_FRONTEND: 'noninteractive',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
 
     let log = '';
     let settled = false;
