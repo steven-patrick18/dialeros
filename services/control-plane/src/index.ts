@@ -188,6 +188,7 @@ export {
   ingestCsv,
   moveLeadList,
   leadListsForCampaign,
+  setLeadListsForCampaign,
   normalizePhone,
 } from './lead';
 export type {

@@ -12,6 +12,7 @@ import {
   listLeadListsFromDb,
   listLeadsInList,
   moveLeadListToCampaign,
+  setCampaignLeadLists,
   type LeadListRecord,
   type LeadRecord,
   type LeadStatusBreakdown,
@@ -97,6 +98,26 @@ export function leadListsForCampaign(
   campaignId: string,
 ): LeadListRecord[] {
   return listLeadListsForCampaign(campaignId);
+}
+
+/**
+ * Iter 24 — replace the campaign's lead-list set in one transaction.
+ * Validates each id exists; throws on bad input. Returns counts so the
+ * API can report what changed in the audit payload.
+ */
+export function setLeadListsForCampaign(
+  campaignId: string,
+  leadListIds: string[],
+): { detached: number; attached: number; moved: number } {
+  if (!getCampaignFromDb(campaignId)) {
+    throw new Error(`Campaign ${campaignId} not found.`);
+  }
+  for (const id of leadListIds) {
+    if (!getLeadListFromDb(id)) {
+      throw new Error(`Lead list ${id} not found.`);
+    }
+  }
+  return setCampaignLeadLists(campaignId, leadListIds);
 }
 
 export function deleteLeadList(id: string): boolean {

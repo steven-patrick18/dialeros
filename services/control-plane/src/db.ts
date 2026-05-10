@@ -1700,6 +1700,65 @@ export function moveLeadListToCampaign(
   return Number(result.changes) > 0;
 }
 
+/**
+ * Iter 24 — atomic replace for the campaign's lead-list set. Diffs the
+ * desired set against the current attachment, in one transaction:
+ *   - lists currently attached but not in the new set → detach (campaign_id=NULL)
+ *   - lists in the new set but not currently attached → attach (campaign_id=this)
+ * Lists already attached and still in the new set are left alone (no-op
+ * UPDATE skipped to keep updated_at honest).
+ *
+ * Stealing from another campaign is intentional — pass the same list id
+ * here from a campaign that didn't previously own it and the list moves.
+ */
+export function setCampaignLeadLists(
+  campaignId: string,
+  leadListIds: string[],
+): { detached: number; attached: number; moved: number } {
+  const d = db();
+  const desired = new Set(leadListIds);
+
+  const currentlyAttached = (d
+    .prepare(
+      `SELECT id FROM lead_lists WHERE campaign_id = ?`,
+    )
+    .all(campaignId) as Array<{ id: string }>).map((r) => r.id);
+  const currentSet = new Set(currentlyAttached);
+
+  const toDetach = currentlyAttached.filter((id) => !desired.has(id));
+  const toAttach = leadListIds.filter((id) => !currentSet.has(id));
+
+  d.exec('BEGIN');
+  let moved = 0;
+  try {
+    if (toDetach.length > 0) {
+      const stmt = d.prepare(
+        `UPDATE lead_lists SET campaign_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      );
+      for (const id of toDetach) stmt.run(id);
+    }
+    if (toAttach.length > 0) {
+      // Count how many were stolen from another campaign for the audit payload.
+      const wasOwned = d.prepare(
+        `SELECT campaign_id FROM lead_lists WHERE id = ?`,
+      );
+      const stmt = d.prepare(
+        `UPDATE lead_lists SET campaign_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      );
+      for (const id of toAttach) {
+        const owner = wasOwned.get(id) as { campaign_id: string | null } | undefined;
+        if (owner?.campaign_id && owner.campaign_id !== campaignId) moved++;
+        stmt.run(campaignId, id);
+      }
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return { detached: toDetach.length, attached: toAttach.length, moved };
+}
+
 export function listLeadListsForCampaign(
   campaignId: string,
 ): LeadListRecord[] {

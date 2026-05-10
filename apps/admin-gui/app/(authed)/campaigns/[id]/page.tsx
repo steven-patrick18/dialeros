@@ -12,11 +12,14 @@ import {
   getUser,
   isCampaignWithinCallWindow,
   leadCountFor,
+  listInGroups,
+  listLeadLists,
   totalIntentsFor,
 } from '@dialeros/control-plane';
 import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
 import { PacingPanel } from './pacing-panel';
+import { AttachmentPicker } from './attachment-picker';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +50,10 @@ export default async function CampaignDetail({
   const inGroupIds = getCampaignInGroups(id);
   const inGroups = inGroupIds.map((gid) => getInGroup(gid)).filter(Boolean);
   const isInbound = c.type === 'inbound_queue';
+
+  // Iter 24 — option lists for the inline pickers.
+  const allInGroups = listInGroups();
+  const allLeadLists = listLeadLists();
 
   return (
     <div>
@@ -90,7 +97,7 @@ export default async function CampaignDetail({
             <p className="text-fg-subtle text-sm">
               {isInbound
                 ? 'Not used — inbound campaigns are driven by in-groups.'
-                : 'none'}
+                : 'none — attach below'}
             </p>
           ) : (
             <ul className="space-y-1 text-sm">
@@ -160,36 +167,58 @@ export default async function CampaignDetail({
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
-        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
-          In-groups ({inGroups.length} attached)
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+          Lead lists attached ({leadLists.length})
         </h2>
-        {inGroups.length === 0 ? (
-          <p className="text-fg-subtle text-sm">
-            {isInbound
-              ? 'No in-groups attached — inbound calls have nowhere to land.'
-              : 'No in-groups attached. Add one to receive transferred or blended inbound calls on this campaign.'}
-          </p>
-        ) : (
-          <ul className="space-y-1 text-sm">
-            {inGroups.map((g) =>
-              g ? (
-                <li key={g.id} className="flex items-center gap-3">
-                  <Link href={`/in-groups/${g.id}`} className="hover:underline">
-                    {g.name}
-                  </Link>
-                  <span className="text-fg-subtle text-xs uppercase">
-                    {g.type}
-                  </span>
-                  {g.enabled === 0 && (
-                    <span className="bg-card-hover/40 text-fg-muted border border-border px-2 py-0.5 rounded text-xs">
-                      DISABLED
-                    </span>
-                  )}
-                </li>
-              ) : null,
-            )}
-          </ul>
-        )}
+        <p className="text-xs text-fg-subtle mb-3">
+          Tick a list to attach it. Lists already owned by another campaign
+          are marked — checking one moves it here. Save commits the full
+          set in one transaction.
+        </p>
+        <AttachmentPicker
+          endpoint={`/api/campaigns/${c.id}/lead-lists`}
+          bodyKey="lead_list_ids"
+          options={allLeadLists.map((l) => {
+            const ownerId = l.campaign_id;
+            const inThis = ownerId === c.id;
+            const owned = ownerId && !inThis;
+            return {
+              id: l.id,
+              name: l.name,
+              hint: owned
+                ? `(in another campaign — will move)`
+                : !ownerId
+                  ? '(unattached)'
+                  : undefined,
+              warn: !!owned,
+            };
+          })}
+          initialSelected={leadListIds}
+          emptyMessage="No lead lists exist yet. Create one from the Lead Lists page first."
+        />
+      </div>
+
+      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+          In-groups attached ({inGroups.length})
+        </h2>
+        <p className="text-xs text-fg-subtle mb-3">
+          Tick the in-groups whose calls land on this campaign. Inbound /
+          blended campaigns route incoming calls from these queues to
+          attached agents. Save commits the full set.
+        </p>
+        <AttachmentPicker
+          endpoint={`/api/campaigns/${c.id}/in-groups`}
+          bodyKey="in_group_ids"
+          options={allInGroups.map((g) => ({
+            id: g.id,
+            name: g.name,
+            hint: g.type === 'transfer_only' ? '(transfer-only)' : undefined,
+            warn: g.enabled === 0,
+          }))}
+          initialSelected={inGroupIds}
+          emptyMessage="No in-groups exist yet. Create one from the In-Groups page first."
+        />
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
