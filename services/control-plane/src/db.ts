@@ -1161,6 +1161,29 @@ export interface LeadStatusBreakdown {
   count: number;
 }
 
+/**
+ * Iter 60 — bucket a list's leads by inferred timezone (from the
+ * phone number). Returns the rows ordered by descending count so
+ * the UI's "where is the biggest chunk of this list right now?"
+ * question is answered top-to-bottom.
+ */
+export function leadListTimezoneBreakdown(
+  listId: string,
+  infer: (phone: string) => string | null,
+): Array<{ tz: string; count: number }> {
+  const rows = db()
+    .prepare(`SELECT phone FROM leads WHERE list_id = ?`)
+    .all(listId) as Array<{ phone: string }>;
+  const buckets = new Map<string, number>();
+  for (const r of rows) {
+    const tz = infer(r.phone) ?? '—';
+    buckets.set(tz, (buckets.get(tz) ?? 0) + 1);
+  }
+  return Array.from(buckets, ([tz, count]) => ({ tz, count })).sort(
+    (a, b) => b.count - a.count,
+  );
+}
+
 export function leadStatusBreakdown(listId: string): LeadStatusBreakdown[] {
   return db()
     .prepare(

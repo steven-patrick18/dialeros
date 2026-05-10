@@ -3,9 +3,12 @@ import { notFound } from 'next/navigation';
 import {
   getCampaign,
   getLeadList,
+  hourInTimezone,
   leadBreakdown,
   leadCountFor,
+  leadTimezoneBreakdown,
   listCampaigns,
+  localTimeInTimezone,
   pageLeads,
 } from '@dialeros/control-plane';
 import { InlineCardForm } from '@/components/inline-card-form';
@@ -31,6 +34,7 @@ export default async function LeadListDetail({
 
   const total = leadCountFor(id);
   const breakdown = leadBreakdown(id);
+  const tzBreakdown = leadTimezoneBreakdown(id);
   const page = Math.max(1, Number(sp.page ?? 1));
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const leads = pageLeads(id, page, PAGE_SIZE);
@@ -38,6 +42,20 @@ export default async function LeadListDetail({
     ? getCampaign(list.campaign_id)
     : null;
   const allCampaigns = listCampaigns();
+
+  // Iter 60 — campaign-window aware "dialable now?" per timezone.
+  // Window is HH:MM 24h on the campaign; null means no restriction.
+  const winStart = ownerCampaign?.call_window_start ?? null;
+  const winEnd = ownerCampaign?.call_window_end ?? null;
+  function isInWindow(tz: string): boolean {
+    if (!winStart || !winEnd) return true;
+    const h = hourInTimezone(tz);
+    const [sh] = winStart.split(':').map(Number) as [number, number];
+    const [eh] = winEnd.split(':').map(Number) as [number, number];
+    // Same-day vs wraps-midnight (e.g. 22:00 → 06:00).
+    if (sh <= eh) return h >= sh && h < eh;
+    return h >= sh || h < eh;
+  }
 
   return (
     <div>
@@ -145,6 +163,74 @@ export default async function LeadListDetail({
           </h2>
           <UploadCsvForm listId={id} />
         </div>
+      </div>
+
+      <div className="border border-border rounded p-4 max-w-4xl mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+            Timezone availability
+          </h2>
+          {winStart && winEnd ? (
+            <span className="text-[11px] text-fg-subtle">
+              Campaign call window {winStart}–{winEnd} (local)
+            </span>
+          ) : (
+            <span className="text-[11px] text-fg-subtle">
+              No campaign call window — all hours dialable
+            </span>
+          )}
+        </div>
+        {tzBreakdown.length === 0 ? (
+          <p className="text-fg-subtle text-sm">No leads yet.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-left text-fg-subtle border-b border-border">
+              <tr>
+                <th className="py-1.5 font-medium">Timezone</th>
+                <th className="font-medium tabular-nums">Leads</th>
+                <th className="font-medium tabular-nums">Local time</th>
+                <th className="font-medium">Dialable now</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tzBreakdown.map((row) => {
+                const known = row.tz !== '—';
+                const localTime = known
+                  ? localTimeInTimezone(row.tz)
+                  : '—';
+                const dialable = known ? isInWindow(row.tz) : false;
+                return (
+                  <tr key={row.tz} className="border-b border-border/40">
+                    <td className="py-2 font-mono text-xs text-fg">
+                      {known ? row.tz : (
+                        <span className="text-fg-subtle">unknown</span>
+                      )}
+                    </td>
+                    <td className="tabular-nums text-fg">
+                      {row.count.toLocaleString()}
+                    </td>
+                    <td className="tabular-nums text-fg-muted">{localTime}</td>
+                    <td>
+                      {known ? (
+                        dialable ? (
+                          <span className="bg-success/15 text-success border border-success/50 px-2 py-0.5 rounded text-xs">
+                            DIALABLE
+                          </span>
+                        ) : (
+                          <span className="bg-warn/15 text-warn border border-warn/40 px-2 py-0.5 rounded text-xs">
+                            OUTSIDE WINDOW
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-fg-subtle text-xs">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {leads.length > 0 && (

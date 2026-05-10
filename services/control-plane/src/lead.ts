@@ -7,6 +7,7 @@ import {
   getLeadListFromDb,
   insertLeadList,
   insertLeadsBulk,
+  leadListTimezoneBreakdown,
   leadStatusBreakdown,
   listLeadListsForCampaign,
   listLeadListsFromDb,
@@ -18,6 +19,7 @@ import {
   type LeadRecord,
   type LeadStatusBreakdown,
 } from './db';
+import { inferLeadTimezone } from './timezones';
 
 // Phone shape: digits with optional +, dashes, spaces, parens. Min 4 digits,
 // max 20 digits. Loose by design — different countries have different formats
@@ -162,6 +164,17 @@ export function leadCountFor(listId: string): number {
 
 export function leadBreakdown(listId: string): LeadStatusBreakdown[] {
   return leadStatusBreakdown(listId);
+}
+
+/**
+ * Iter 60 — bucket a list's leads by inferred TZ (from phone NPA /
+ * country code). Returned rows sort by descending count so the UI
+ * answers "where is the biggest chunk of this list right now?".
+ */
+export function leadTimezoneBreakdown(
+  listId: string,
+): Array<{ tz: string; count: number }> {
+  return leadListTimezoneBreakdown(listId, inferLeadTimezone);
 }
 
 export function pageLeads(
