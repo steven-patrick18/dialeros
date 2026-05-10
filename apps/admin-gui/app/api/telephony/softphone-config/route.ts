@@ -38,7 +38,13 @@ export async function GET(req: NextRequest) {
   let wsUrl: string;
   let secure = false;
   if (domain && (await certExists(domain))) {
-    wsUrl = `wss://${domain}/sip`;
+    // Browser → FS direct on the WSS port, NOT via nginx /sip.
+    // nginx terminates TLS, which causes a Via:WSS-vs-WS transport
+    // mismatch at the SIP layer that makes FS silently drop our
+    // REGISTERs. setup-tls.sh feeds the Let's Encrypt cert into
+    // /etc/freeswitch/tls/wss.pem so browsers trust the direct
+    // connection.
+    wsUrl = `wss://${domain}:7443/`;
     secure = true;
   } else {
     const host =

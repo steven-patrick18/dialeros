@@ -73,8 +73,13 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    # Note: HTTP/2 deliberately NOT enabled here. nginx <1.25 can't
+    # bridge HTTP/2 ↔ WebSocket upgrades (RFC 8441), so sip.js
+    # registration over wss://<domain>/sip stalls forever — FS sends
+    # back 101 Switching Protocols but nginx never forwards it. Plain
+    # HTTPS over HTTP/1.1 works for both the admin GUI and WS path.
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name ${DOMAIN};
 
     ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
@@ -84,8 +89,10 @@ server {
     # SIP-over-WebSocket reverse-proxy → FreeSWITCH. FS binds ws on
     # ${LOCAL_IP}:5066, NOT 127.0.0.1, because the internal profile's
     # ws-binding param is "default-IP only". Match that here.
+    # Trailing slash on proxy_pass strips the /sip location prefix so
+    # the request reaches FS as path "/" (FS doesn't accept /sip).
     location /sip {
-        proxy_pass http://${LOCAL_IP}:5066;
+        proxy_pass http://${LOCAL_IP}:5066/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -145,5 +152,44 @@ systemctl start nginx
 log "opening /etc/letsencrypt traversal for dialeros user"
 chmod 0755 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive
 
-log "done. admin GUI: https://${DOMAIN}/"
-log "softphone WSS: wss://${DOMAIN}/sip"
+# === step 7: copy cert into FreeSWITCH's TLS dir and reload sofia ===
+#
+# We can't proxy SIP-over-WebSocket through nginx because nginx
+# terminates TLS, but the browser's sip.js sets Via: SIP/2.0/WSS in
+# the SIP message (because the WS transport IS WSS from sip.js's
+# point of view). FS sees Via:WSS arriving over a plain WS socket
+# and silently drops the request — transport mismatch.
+#
+# So the browser instead connects DIRECTLY to FS's wss-binding on
+# port 7443. FS already has wss-binding=:7443; we just need to give
+# it our real Let's Encrypt cert (it ships with a self-signed one
+# that browsers refuse). FS expects /etc/freeswitch/tls/wss.pem to
+# contain the private key + full chain concatenated.
+log "installing Let's Encrypt cert into FreeSWITCH (/etc/freeswitch/tls/wss.pem)"
+mkdir -p /etc/freeswitch/tls
+cat \
+  /etc/letsencrypt/live/${DOMAIN}/privkey.pem \
+  /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \
+  > /etc/freeswitch/tls/wss.pem
+chown freeswitch:freeswitch /etc/freeswitch/tls/wss.pem
+chmod 0640 /etc/freeswitch/tls/wss.pem
+
+log "restarting sofia internal profile to pick up new cert"
+fs_cli -x "sofia profile internal restart reloadxml" >/dev/null 2>&1 || \
+  log "(fs_cli not available — restart freeswitch manually if needed)"
+
+# Renewal hook: on cert rotation, refresh wss.pem and reload sofia.
+HOOK=/etc/letsencrypt/renewal-hooks/post/dialeros-fs-cert.sh
+cat > "$HOOK" <<HOOK_EOF
+#!/usr/bin/env bash
+cat /etc/letsencrypt/live/${DOMAIN}/privkey.pem \\
+    /etc/letsencrypt/live/${DOMAIN}/fullchain.pem \\
+  > /etc/freeswitch/tls/wss.pem
+chown freeswitch:freeswitch /etc/freeswitch/tls/wss.pem
+chmod 0640 /etc/freeswitch/tls/wss.pem
+fs_cli -x "sofia profile internal restart reloadxml" >/dev/null 2>&1 || true
+HOOK_EOF
+chmod 0755 "$HOOK"
+
+log "done. admin GUI:  https://${DOMAIN}/"
+log "softphone WSS:    wss://${DOMAIN}:7443/  (direct to FreeSWITCH)"
