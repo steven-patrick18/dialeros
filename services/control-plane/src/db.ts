@@ -572,6 +572,132 @@ export function listAuditEvents(limit = 200): AuditEventRecord[] {
 }
 
 // =====================================================================
+// reports — aggregate queries for the /reports dashboard (iter 15)
+// =====================================================================
+
+export function dialIntentsByHour(
+  sinceIso: string,
+): Array<{ hour: string; count: number }> {
+  return db()
+    .prepare(
+      `SELECT substr(ts, 1, 13) AS hour, COUNT(*) AS count
+       FROM dial_intents
+       WHERE ts >= ?
+       GROUP BY hour
+       ORDER BY hour ASC`,
+    )
+    .all(sinceIso) as unknown as Array<{ hour: string; count: number }>;
+}
+
+export function totalDialIntents(sinceIso: string): number {
+  const row = db()
+    .prepare(`SELECT COUNT(*) AS n FROM dial_intents WHERE ts >= ?`)
+    .get(sinceIso) as { n: number };
+  return row.n;
+}
+
+export function globalLeadStatusBreakdown(): Array<{
+  status: string;
+  count: number;
+}> {
+  return db()
+    .prepare(
+      `SELECT status, COUNT(*) AS count
+       FROM leads
+       GROUP BY status
+       ORDER BY count DESC`,
+    )
+    .all() as unknown as Array<{ status: string; count: number }>;
+}
+
+export function topCampaignsByIntents(
+  sinceIso: string,
+  limit: number,
+): Array<{
+  campaign_id: string;
+  name: string;
+  status: string;
+  intents: number;
+}> {
+  return db()
+    .prepare(
+      `SELECT c.id AS campaign_id, c.name, c.status,
+              COALESCE(SUM(CASE WHEN di.ts >= ? THEN 1 ELSE 0 END), 0) AS intents
+       FROM campaigns c
+       LEFT JOIN dial_intents di ON di.campaign_id = c.id
+       GROUP BY c.id
+       ORDER BY intents DESC, c.name ASC
+       LIMIT ?`,
+    )
+    .all(sinceIso, limit) as unknown as Array<{
+    campaign_id: string;
+    name: string;
+    status: string;
+    intents: number;
+  }>;
+}
+
+export function auditCountsByAction(
+  sinceIso: string,
+): Array<{ action: string; count: number }> {
+  return db()
+    .prepare(
+      `SELECT action, COUNT(*) AS count
+       FROM audit_events
+       WHERE ts >= ?
+       GROUP BY action
+       ORDER BY count DESC`,
+    )
+    .all(sinceIso) as unknown as Array<{ action: string; count: number }>;
+}
+
+export function loginActivityRollup(
+  sinceIso: string,
+): Array<{ username: string; success: number; failure: number }> {
+  // SQLite refuses ORDER BY (success + failure) directly after a UNION
+  // because the ORDER BY can't see "across" the union legs. Wrap in an
+  // outer SELECT and order there.
+  return db()
+    .prepare(
+      `SELECT * FROM (
+         WITH succ AS (
+           SELECT COALESCE(json_extract(payload_json, '$.username'), '?') AS username,
+                  COUNT(*) AS n
+           FROM audit_events
+           WHERE ts >= ? AND action = 'user.login_success'
+           GROUP BY username
+         ),
+         fail AS (
+           SELECT COALESCE(json_extract(payload_json, '$.username'), '?') AS username,
+                  COUNT(*) AS n
+           FROM audit_events
+           WHERE ts >= ? AND action = 'user.login_failure'
+           GROUP BY username
+         )
+         SELECT
+           COALESCE(succ.username, fail.username) AS username,
+           COALESCE(succ.n, 0) AS success,
+           COALESCE(fail.n, 0) AS failure
+         FROM succ
+         LEFT JOIN fail ON fail.username = succ.username
+         UNION
+         SELECT
+           fail.username AS username,
+           COALESCE(succ.n, 0) AS success,
+           fail.n AS failure
+         FROM fail
+         LEFT JOIN succ ON succ.username = fail.username
+       )
+       ORDER BY (success + failure) DESC, username ASC`,
+    )
+    .all(sinceIso, sinceIso) as unknown as Array<{
+    username: string;
+    success: number;
+    failure: number;
+  }>;
+}
+
+// =====================================================================
 // carriers
 // =====================================================================
 

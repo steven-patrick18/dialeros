@@ -97,6 +97,16 @@ export type {
 export { appendAudit, queryAudit } from './audit';
 export type { AuditAppendInput } from './audit';
 
+// Reports / aggregate queries (iter 15)
+export {
+  dialIntentsByHour,
+  totalDialIntents,
+  globalLeadStatusBreakdown,
+  topCampaignsByIntents,
+  auditCountsByAction,
+  loginActivityRollup,
+} from './db';
+
 // Secrets (envelope encryption)
 export { encryptSecret, decryptSecret } from './secrets';
 

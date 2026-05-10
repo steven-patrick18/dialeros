@@ -30,6 +30,7 @@ export function Nav({
 
       <ul className="space-y-1 text-sm">
         <NavLink href="/">Dashboard</NavLink>
+        <NavLink href="/reports">Reports</NavLink>
         <NavLink href="/cluster/nodes">Cluster Nodes</NavLink>
         <NavLink href="/carriers">Carriers</NavLink>
         <NavLink href="/route-plans">Route Plans</NavLink>
