@@ -45,7 +45,14 @@ export function gatewayXml({ carrier, digestPassword }: GatewayInputs): string {
     // Digest carriers register with the carrier; ip-acl carriers don't
     // (the carrier trusts our IP, no SIP auth round-trip needed).
     ['register', isDigest ? 'true' : 'false'],
-    ['ping', '30'],
+    // OPTIONS ping. Many ip-acl-only carriers (VOS3000, FreeSWITCH-as-
+    // upstream, some ITSPs) reject unauthenticated OPTIONS, which would
+    // mark the gateway DOWN and block originates. Only ping digest
+    // carriers, where registration AND OPTIONS are part of the same
+    // authenticated SIP flow.
+    ...(isDigest
+      ? ([['ping', '30']] as Array<[string, string]>)
+      : ([] as Array<[string, string]>)),
     ['codec-prefs', codecPref],
     ['transport', carrier.transport.toLowerCase()],
   ];

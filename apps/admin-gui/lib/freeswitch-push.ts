@@ -68,7 +68,18 @@ export async function pushCarrierToFreeSwitch(
     };
   }
 
-  // 4: tell FS to rescan the external profile
+  // 4: tell FS to load the new XML.
+  //
+  // `sofia profile external rescan` only picks up NEW gateways — it
+  // does NOT re-read an existing gateway's params. To force a
+  // full reload of THIS gateway (e.g. after toggling ping or rotating
+  // a digest password), kill it first, then rescan. killgw is a no-op
+  // on the first push when the gateway doesn't yet exist.
+  try {
+    await eslApi(`sofia profile external killgw ${gwName}`, { timeoutMs: 5000 });
+  } catch {
+    // First-push case (no existing gateway) — fine, ignore.
+  }
   try {
     await eslApi('sofia profile external rescan reloadxml', { timeoutMs: 8000 });
   } catch (e) {
