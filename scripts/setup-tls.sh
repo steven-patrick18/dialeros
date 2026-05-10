@@ -125,5 +125,13 @@ log "starting nginx"
 systemctl enable nginx
 systemctl start nginx
 
+# Allow the dialeros user (admin-gui process) to traverse the
+# letsencrypt tree so /api/settings/domain/tls-status can read the
+# expiry from fullchain.pem and softphone-config can detect the
+# cert exists. fullchain.pem is mode 644 from certbot already;
+# privkey.pem stays 600 (only root reads).
+log "opening /etc/letsencrypt traversal for dialeros user"
+chmod 0755 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive
+
 log "done. admin GUI: https://${DOMAIN}/"
 log "softphone WSS: wss://${DOMAIN}/sip"
