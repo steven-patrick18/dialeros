@@ -228,6 +228,7 @@ export {
   startPacer,
   stopPacer,
   isPacing,
+  isCampaignWithinCallWindow,
   listPacingCampaignIds,
   subscribeToIntents,
   subscribeToAllIntents,

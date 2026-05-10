@@ -103,11 +103,53 @@ export interface PacingTickResult {
     | 'no_route_plan'
     | 'no_lead'
     | 'no_agents'
+    | 'outside_window'
     | 'campaign_missing'
     | 'campaign_inactive';
   intent?: DialIntentRecord;
   assigned_agent?: { id: string; username: string };
 }
+
+/**
+ * Iter 20 — call-window enforcement. Returns true if the campaign has
+ * no window restriction, or if the dialer's current local time-of-day
+ * falls inside [start, end].
+ *
+ * `caller-local` in the spec — but we don't have per-lead timezones yet,
+ * so we treat the configured window as dialer-local. Acceptable for a
+ * single-region deployment; revisit when leads carry timezone metadata
+ * (likely derived from area code).
+ *
+ * Wraps midnight: if start > end (e.g. 22:00–06:00) the window includes
+ * everything outside [end, start].
+ */
+export function isCampaignWithinCallWindow(
+  campaign: CampaignRecord,
+  now = new Date(),
+): boolean {
+  return isWithinCallWindow(campaign, now);
+}
+
+function isWithinCallWindow(campaign: CampaignRecord, now = new Date()): boolean {
+  const start = campaign.call_window_start;
+  const end = campaign.call_window_end;
+  if (!start || !end) return true; // no restriction
+
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const [sh, sm] = start.split(':').map(Number) as [number, number];
+  const [eh, em] = end.split(':').map(Number) as [number, number];
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+
+  if (startMin === endMin) return false; // empty window — never dial
+  if (startMin < endMin) {
+    return minutes >= startMin && minutes < endMin;
+  }
+  // wraps midnight
+  return minutes >= startMin || minutes < endMin;
+}
+
+export const __test__ = { isWithinCallWindow };
 
 function pickAgent(
   campaignId: string,
@@ -134,6 +176,7 @@ export function paceCampaignOnce(campaignId: string): PacingTickResult {
   const campaign = getCampaignFromDb(campaignId);
   if (!campaign) return { outcome: 'campaign_missing' };
   if (campaign.status !== 'active') return { outcome: 'campaign_inactive' };
+  if (!isWithinCallWindow(campaign)) return { outcome: 'outside_window' };
 
   const plan = getRoutePlanFromDb(campaign.route_plan_id);
   if (!plan) return { outcome: 'no_route_plan' };

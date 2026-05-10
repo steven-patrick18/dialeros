@@ -8,6 +8,7 @@ import {
   getLeadList,
   getRoutePlan,
   getUser,
+  isCampaignWithinCallWindow,
   leadCountFor,
   totalIntentsFor,
 } from '@dialeros/control-plane';
@@ -40,6 +41,7 @@ export default async function CampaignDetail({
     0,
   );
   const activeAgents = getActiveAgentsForCampaign(id);
+  const insideWindow = isCampaignWithinCallWindow(c);
 
   return (
     <div>
@@ -161,6 +163,19 @@ export default async function CampaignDetail({
           <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
             No active agents attached — pacer is running but cannot dial.
             Attach an active agent below to start delivering calls.
+          </p>
+        )}
+        {c.status === 'active' && !insideWindow && (
+          <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
+            Outside the configured call window
+            {c.call_window_start && c.call_window_end && (
+              <>
+                {' '}
+                ({c.call_window_start}–{c.call_window_end})
+              </>
+            )}{' '}
+            — pacer is ticking but skipping every dial. Calls resume
+            automatically when the window opens.
           </p>
         )}
       </div>
