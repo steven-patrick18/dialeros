@@ -298,6 +298,18 @@ function db(): DatabaseSync {
     // failed. Both NULL on simulated rows.
     "ALTER TABLE dial_intents ADD COLUMN call_uuid TEXT",
     "ALTER TABLE dial_intents ADD COLUMN originate_error TEXT",
+    // Iter 33: hangup correlation. We generate a UUID and set it as a
+    // channel variable on originate (dialeros_correlation_id=<uuid>).
+    // The FS event listener picks the variable out of CHANNEL_ANSWER /
+    // CHANNEL_HANGUP_COMPLETE events and writes the call's outcome
+    // back onto the matching dial_intent. Job UUIDs aren't reliable
+    // across event types, but a custom variable always survives.
+    "ALTER TABLE dial_intents ADD COLUMN correlation_id TEXT",
+    "ALTER TABLE dial_intents ADD COLUMN hangup_cause TEXT",
+    "ALTER TABLE dial_intents ADD COLUMN answered_at TEXT",
+    "ALTER TABLE dial_intents ADD COLUMN hangup_at TEXT",
+    "ALTER TABLE dial_intents ADD COLUMN duration_ms INTEGER",
+    "CREATE INDEX IF NOT EXISTS idx_dial_intents_correlation ON dial_intents(correlation_id)",
   ];
   for (const sql of migrations) {
     try {
@@ -1244,6 +1256,11 @@ export interface DialIntentRecord {
   callback_at: string | null;
   call_uuid: string | null;
   originate_error: string | null;
+  correlation_id: string | null;
+  hangup_cause: string | null;
+  answered_at: string | null;
+  hangup_at: string | null;
+  duration_ms: number | null;
 }
 
 export function insertDialIntent(rec: {
@@ -1257,12 +1274,13 @@ export function insertDialIntent(rec: {
   assigned_user_id?: string | null;
   call_uuid?: string | null;
   originate_error?: string | null;
+  correlation_id?: string | null;
 }): DialIntentRecord {
   const result = db()
     .prepare(
       `INSERT INTO dial_intents
-         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.campaign_id,
@@ -1275,11 +1293,67 @@ export function insertDialIntent(rec: {
       rec.assigned_user_id ?? null,
       rec.call_uuid ?? null,
       rec.originate_error ?? null,
+      rec.correlation_id ?? null,
     );
   const id = Number(result.lastInsertRowid);
   return db()
     .prepare(`SELECT * FROM dial_intents WHERE id = ?`)
     .get(id) as unknown as DialIntentRecord;
+}
+
+/**
+ * Iter 33 — write FS event outcomes back onto a dial_intent row,
+ * matched by correlation_id. Returns the updated row, or undefined if
+ * no row matched (e.g. event for a call we didn't originate, like the
+ * sample default gateway calls).
+ */
+export function applyDialIntentHangup(args: {
+  correlation_id: string;
+  hangup_cause: string;
+  hangup_at: string;
+  duration_ms: number;
+  answered_at?: string | null;
+}): DialIntentRecord | undefined {
+  const sets: string[] = [
+    'hangup_cause = ?',
+    'hangup_at = ?',
+    'duration_ms = ?',
+  ];
+  const vals: unknown[] = [
+    args.hangup_cause,
+    args.hangup_at,
+    args.duration_ms,
+  ];
+  if (args.answered_at !== undefined) {
+    sets.push('answered_at = ?');
+    vals.push(args.answered_at);
+  }
+  vals.push(args.correlation_id);
+  const result = db()
+    .prepare(
+      `UPDATE dial_intents SET ${sets.join(', ')}
+       WHERE correlation_id = ?`,
+    )
+    .run(...(vals as never[]));
+  if (Number(result.changes) === 0) return undefined;
+  return db()
+    .prepare(`SELECT * FROM dial_intents WHERE correlation_id = ?`)
+    .get(args.correlation_id) as unknown as DialIntentRecord;
+}
+
+export function applyDialIntentAnswered(args: {
+  correlation_id: string;
+  answered_at: string;
+}): DialIntentRecord | undefined {
+  const result = db()
+    .prepare(
+      `UPDATE dial_intents SET answered_at = ? WHERE correlation_id = ?`,
+    )
+    .run(args.answered_at, args.correlation_id);
+  if (Number(result.changes) === 0) return undefined;
+  return db()
+    .prepare(`SELECT * FROM dial_intents WHERE correlation_id = ?`)
+    .get(args.correlation_id) as unknown as DialIntentRecord;
 }
 
 /**

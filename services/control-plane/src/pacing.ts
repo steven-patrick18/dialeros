@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import {
   countDialIntentsForCampaign,
@@ -15,6 +16,7 @@ import {
   type DialIntentRecord,
 } from './db';
 import { parseCidPool } from './route-plan';
+import { ensureFsEventListener } from './fs-events';
 
 // Iter 11 — pacing engine v1 (simulation).
 //
@@ -224,21 +226,28 @@ export async function paceCampaignOnce(
   // Iter 32 — when dial_mode='live', issue a real bgapi originate. We
   // do this BEFORE inserting the dial_intent so we can capture the job
   // UUID (or error) on the same row.
+  // Iter 33 — pre-generate a correlation_id and pass it through the
+  // originate as a channel variable. CHANNEL_HANGUP_COMPLETE etc.
+  // events carry it back as variable_dialeros_correlation_id, letting
+  // the FS event listener find this row.
   let originateOutcome: PacingTickResult['originate'];
   let kind = 'simulated';
+  let correlationId: string | null = null;
   if (campaign.dial_mode === 'live') {
     const carrier = getCarrierFromDb(plan.primary_carrier_id);
     if (!carrier) {
       return { outcome: 'no_carrier' };
     }
+    correlationId = randomUUID();
     const gateway = `dialeros-${carrier.id}`;
     try {
       const jobUuid = await bgapiOriginate({
         gateway,
         destination: transformed,
         callerIdNumber: cid ?? undefined,
+        correlationId,
         // &park keeps the leg open until an agent bridges. Without
-        // agent audio (iter 33+), the leg sits parked silent until
+        // agent audio (iter 34+), the leg sits parked silent until
         // the far end hangs up — acceptable for live-fire smoke tests.
         app: '&park',
       });
@@ -266,6 +275,7 @@ export async function paceCampaignOnce(
     call_uuid: originateOutcome?.ok ? originateOutcome.job_uuid : null,
     originate_error:
       originateOutcome && !originateOutcome.ok ? originateOutcome.error : null,
+    correlation_id: correlationId,
   });
 
   markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
@@ -361,8 +371,13 @@ export function subscribeToAllIntents(
  * Re-arm pacers for any campaign whose status is 'active' at startup.
  * Safe to call multiple times — startPacer is idempotent. Called from
  * the control-plane index on first import.
+ *
+ * Iter 33 — also kicks off the FS event listener if it isn't already
+ * connected. The listener is what writes hangup_cause back onto
+ * dial_intent rows for live calls.
  */
 export function resumeActivePacers(): { started: number } {
+  ensureFsEventListener();
   let started = 0;
   for (const c of listCampaignsFromDb()) {
     if (c.status === 'active') {
@@ -403,6 +418,8 @@ interface BgapiOptions {
   gateway: string;
   destination: string;
   callerIdNumber?: string;
+  /** Iter 33 — set as channel variable so hangup events can find the row. */
+  correlationId?: string;
   app: string;
   host?: string;
   port?: number;
@@ -425,6 +442,11 @@ function bgapiOriginate(opts: BgapiOptions): Promise<string> {
     channelVars.push(`origination_caller_id_number=${cid}`);
     // Force the SIP From: user to match — see lib/esl.ts comment.
     channelVars.push(`sip_from_user=${cid}`);
+  }
+  if (opts.correlationId) {
+    channelVars.push(
+      `dialeros_correlation_id=${escapeChannelValue(opts.correlationId)}`,
+    );
   }
   channelVars.push('ignore_early_media=true');
   channelVars.push('hangup_after_bridge=true');

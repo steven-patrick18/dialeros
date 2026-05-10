@@ -13,6 +13,8 @@ interface DialIntent {
   cid_used: string | null;
   kind: string;
   assigned_username: string | null;
+  hangup_cause: string | null;
+  duration_ms: number | null;
 }
 
 export function PacingPanel({
@@ -135,9 +137,37 @@ function IntentLine({ intent }: { intent: DialIntent }) {
         )}
         {intent.cid_used && <span className="mr-2">cid {intent.cid_used}</span>}
         <span className="text-fg-subtle/70">[{intent.kind}]</span>
+        {intent.hangup_cause && (
+          <span className={`ml-2 ${hangupColor(intent.hangup_cause)}`}>
+            {intent.hangup_cause}
+            {typeof intent.duration_ms === 'number' && intent.duration_ms > 0 && (
+              <span className="text-fg-subtle/70 ml-1">
+                ({formatDuration(intent.duration_ms)})
+              </span>
+            )}
+          </span>
+        )}
       </span>
     </div>
   );
+}
+
+function hangupColor(cause: string): string {
+  if (cause === 'NORMAL_CLEARING') return 'text-success';
+  if (cause === 'USER_BUSY' || cause === 'NO_ANSWER' || cause === 'NO_USER_RESPONSE') {
+    return 'text-warn';
+  }
+  if (cause === 'ORIGINATOR_CANCEL') return 'text-fg-muted';
+  return 'text-error';
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  return rem === 0 ? `${min}m` : `${min}m${rem}s`;
 }
 
 function formatTime(iso: string): string {
