@@ -236,118 +236,132 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Iter 51 — AudioContext-only playback. Routing the remote stream
-  // through both an <audio> element AND createMediaStreamSource()
-  // makes Chrome/Firefox hijack the stream and silently mute the
-  // <audio>. Customer audio stayed inaudible even though VU bars
-  // showed levels. Fix: skip the <audio> element entirely. Build a
-  // single signal chain inside the AudioContext —
+  // Iter 52 — track-driven media attach.
   //
   //   remoteStream → MediaStreamSource → AnalyserNode (VU)
   //                                    → GainNode (volume + hold)
   //                                    → ctx.destination
   //
-  // The mic side stays a measurement-only branch (no destination
-  // connection — feeding it to speakers would cause echo).
+  // Critical: MediaStreamAudioSourceNode binds to the FIRST audio
+  // track present in the stream at creation time and does NOT pick
+  // up tracks added later. Earlier versions built a fresh empty
+  // MediaStream then dumped getReceivers tracks into it — if the
+  // receiver track wasn't ready at Established (common: ontrack
+  // fires a tick later), the source was bound to a track-less
+  // stream forever and SPK level stayed flat. Now we wait for an
+  // actual track via ontrack and also probe getReceivers once for
+  // the already-present case. The chain is built exactly once per
+  // call (idempotent guards on the refs).
   const attachMedia = useCallback((session: Session) => {
     const sdh = session.sessionDescriptionHandler;
     if (!sdh || !('peerConnection' in sdh)) return;
     const pc = (sdh as { peerConnection: RTCPeerConnection }).peerConnection;
 
-    const remoteStream = new MediaStream();
-    pc.getReceivers().forEach((r) => {
-      if (r.track && r.track.kind === 'audio') remoteStream.addTrack(r.track);
-    });
-    pc.ontrack = (event) => {
-      if (event.track && event.track.kind === 'audio') {
-        remoteStream.addTrack(event.track);
-      }
-    };
+    if (!audioCtxRef.current) {
+      const Ctx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      audioCtxRef.current = new Ctx();
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx.state === 'suspended') void ctx.resume();
 
-    try {
-      if (!audioCtxRef.current) {
-        const Ctx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext })
-            .webkitAudioContext;
-        audioCtxRef.current = new Ctx();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') void ctx.resume();
-
-      // REMOTE: source → analyser → gain → destination. Volume +
-      // hold both drive the gain.
-      if (remoteStream.getAudioTracks().length > 0) {
-        const remoteSrc = ctx.createMediaStreamSource(remoteStream);
+    function buildRemoteChain(track: MediaStreamTrack) {
+      if (spkAnalyserRef.current) return; // already built
+      try {
+        const stream = new MediaStream([track]);
+        const src = ctx.createMediaStreamSource(stream);
         const an = ctx.createAnalyser();
         an.fftSize = 256;
         const gain = ctx.createGain();
         gain.gain.value = state.volume;
-        remoteSrc.connect(an);
+        src.connect(an);
         an.connect(gain);
         gain.connect(ctx.destination);
+        remoteSourceRef.current = src;
         spkAnalyserRef.current = an;
         remoteGainRef.current = gain;
-        remoteSourceRef.current = remoteSrc;
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('softphone: remote chain failed', e);
       }
+    }
 
-      // LOCAL: source → analyser only. Mic must NEVER reach the
-      // destination — that would echo the agent's own voice into
-      // their headphones.
-      const localStream = new MediaStream();
-      pc.getSenders().forEach((s) => {
-        if (s.track && s.track.kind === 'audio') localStream.addTrack(s.track);
-      });
-      if (localStream.getAudioTracks().length > 0) {
-        const micSrc = ctx.createMediaStreamSource(localStream);
+    function buildMicChain(track: MediaStreamTrack) {
+      if (micAnalyserRef.current) return;
+      try {
+        const stream = new MediaStream([track]);
+        const src = ctx.createMediaStreamSource(stream);
         const an = ctx.createAnalyser();
         an.fftSize = 256;
-        micSrc.connect(an);
+        src.connect(an);
+        // Mic NEVER connects to destination — that would echo the
+        // agent's voice back at them.
+        micSourceRef.current = src;
         micAnalyserRef.current = an;
-        micSourceRef.current = micSrc;
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('softphone: mic chain failed', e);
       }
+    }
 
-      const buf = new Uint8Array(256);
-      const sample = () => {
-        let mic = 0;
-        let spk = 0;
-        const m = micAnalyserRef.current;
-        const s = spkAnalyserRef.current;
-        if (m) {
-          m.getByteTimeDomainData(buf);
-          let peak = 0;
-          for (let i = 0; i < buf.length; i++) {
-            const v = Math.abs(buf[i]! - 128) / 128;
-            if (v > peak) peak = v;
-          }
-          mic = peak;
-        }
-        if (s) {
-          s.getByteTimeDomainData(buf);
-          let peak = 0;
-          for (let i = 0; i < buf.length; i++) {
-            const v = Math.abs(buf[i]! - 128) / 128;
-            if (v > peak) peak = v;
-          }
-          spk = peak;
-        }
-        setState((prev) => {
-          if (
-            Math.abs(prev.micLevel - mic) < 0.02 &&
-            Math.abs(prev.spkLevel - spk) < 0.02
-          ) {
-            return prev;
-          }
-          return { ...prev, micLevel: mic, spkLevel: spk };
-        });
-        rafRef.current = requestAnimationFrame(sample);
-      };
-      if (rafRef.current === null) {
-        rafRef.current = requestAnimationFrame(sample);
+    // Probe what's already in place at Established …
+    const existingReceiver = pc
+      .getReceivers()
+      .find((r) => r.track && r.track.kind === 'audio');
+    if (existingReceiver?.track) buildRemoteChain(existingReceiver.track);
+
+    const existingSender = pc
+      .getSenders()
+      .find((s) => s.track && s.track.kind === 'audio');
+    if (existingSender?.track) buildMicChain(existingSender.track);
+
+    // … and react to anything that lands later (e.g. re-INVITE,
+    // mic permission resolved late, etc.).
+    pc.ontrack = (event) => {
+      if (event.track && event.track.kind === 'audio') {
+        buildRemoteChain(event.track);
       }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('softphone: media attach failed', e);
+    };
+
+    const buf = new Uint8Array(256);
+    const sample = () => {
+      let mic = 0;
+      let spk = 0;
+      const m = micAnalyserRef.current;
+      const s = spkAnalyserRef.current;
+      if (m) {
+        m.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const v = Math.abs(buf[i]! - 128) / 128;
+          if (v > peak) peak = v;
+        }
+        mic = peak;
+      }
+      if (s) {
+        s.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const v = Math.abs(buf[i]! - 128) / 128;
+          if (v > peak) peak = v;
+        }
+        spk = peak;
+      }
+      setState((prev) => {
+        if (
+          Math.abs(prev.micLevel - mic) < 0.02 &&
+          Math.abs(prev.spkLevel - spk) < 0.02
+        ) {
+          return prev;
+        }
+        return { ...prev, micLevel: mic, spkLevel: spk };
+      });
+      rafRef.current = requestAnimationFrame(sample);
+    };
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(sample);
     }
   }, [state.volume]);
 
