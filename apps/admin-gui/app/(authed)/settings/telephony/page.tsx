@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import {
   APP_SETTING_KEYS,
   hasAppSetting,
+  listCarriers,
   listNodesFromDb,
   type NodeRecord,
 } from '@dialeros/control-plane';
@@ -10,6 +11,7 @@ import { getCurrentUser } from '@/lib/session';
 import { getFreeSwitchHealth, type FreeSwitchHealth } from '@/lib/esl';
 import { TokenForm } from './token-form';
 import { InstallPanel } from './install-panel';
+import { TestCallCard } from './test-call-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +30,7 @@ export default async function TelephonySettings() {
   const telephonyNodes = listNodesFromDb().filter(
     (n) => n.role === 'telephony',
   );
+  const carriers = listCarriers();
   // Ping each remote node's ESL (best-effort, parallel, short timeout so
   // one unreachable node doesn't block the page).
   const remoteHealths = await Promise.all(
@@ -75,6 +78,24 @@ export default async function TelephonySettings() {
             split deployment (admin on one box, telephony on others).
           </p>
           <InstallPanel hasToken={hasToken} />
+        </section>
+
+        <section>
+          <h2 className="text-sm font-medium mb-2">Test call</h2>
+          <p className="text-xs text-fg-subtle mb-3 max-w-3xl">
+            Quick way to confirm a carrier is wired all the way through:
+            FreeSWITCH up &rarr; gateway pushed &rarr; SIP registered &rarr;
+            INVITE actually reaches the destination. Skip this section if
+            FreeSWITCH isn&apos;t running yet &mdash; the originate will
+            fail at the ESL connect.
+          </p>
+          <TestCallCard
+            carriers={carriers.map((c) => ({
+              id: c.id,
+              name: c.name,
+              enabled: c.enabled === 1,
+            }))}
+          />
         </section>
 
         <section>

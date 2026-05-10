@@ -39,15 +39,18 @@ export function gatewayXml({ carrier, digestPassword }: GatewayInputs): string {
       ? carrier.host
       : `${carrier.host}:${carrier.port}`;
 
+  const isDigest = carrier.auth_mode === 'digest';
   const params: Array<[string, string]> = [
     ['proxy', proxyHostPort],
-    ['register', 'true'],
+    // Digest carriers register with the carrier; ip-acl carriers don't
+    // (the carrier trusts our IP, no SIP auth round-trip needed).
+    ['register', isDigest ? 'true' : 'false'],
     ['ping', '30'],
     ['codec-prefs', codecPref],
     ['transport', carrier.transport.toLowerCase()],
   ];
 
-  if (carrier.auth_mode === 'digest') {
+  if (isDigest) {
     if (!carrier.digest_username) {
       throw new Error(
         `Carrier ${carrier.id} is auth_mode=digest but has no username.`,
@@ -61,9 +64,6 @@ export function gatewayXml({ carrier, digestPassword }: GatewayInputs): string {
     params.unshift(['username', carrier.digest_username]);
     params.unshift(['realm', carrier.host]);
     params.unshift(['password', digestPassword]);
-  } else {
-    // ip-acl: no SIP auth needed; rely on the carrier's IP whitelist.
-    params.push(['register', 'false']);
   }
 
   const paramLines = params

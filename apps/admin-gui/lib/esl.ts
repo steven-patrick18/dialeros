@@ -171,6 +171,69 @@ export interface FreeSwitchHealth {
   errorCode?: string;
 }
 
+/**
+ * Iter 31 — synchronous originate via ESL. Waits for FreeSWITCH to set
+ * the call up (or fail), with a configurable timeout. On success returns
+ * the channel UUID; on failure throws EslError with code='originate_failed'
+ * and the FS error string as the message.
+ *
+ * Dial string format:
+ *   {origination_caller_id_number=<cid>,...}sofia/gateway/<gw>/<dest>
+ *
+ * Application: what FreeSWITCH does after the leg connects. Common:
+ *   - &echo               — echo audio back (handy for line tests)
+ *   - &playback(tone:...) — play a tone
+ *   - &park               — park the call for an agent to pick up
+ */
+export interface OriginateOptions {
+  gateway: string;
+  destination: string;
+  callerIdNumber?: string;
+  /** application + args, e.g. "&echo" or "&playback(tone_stream://%(2000,4000,440,480))" */
+  app: string;
+  /** seconds; FS-side originate timeout */
+  originateTimeout?: number;
+  /** ms; ESL socket timeout (must comfortably exceed originateTimeout * 1000) */
+  esl?: EslOptions;
+}
+
+export async function originate(opts: OriginateOptions): Promise<string> {
+  const channelVars: string[] = [];
+  if (opts.callerIdNumber) {
+    channelVars.push(
+      `origination_caller_id_number=${escapeChannelValue(opts.callerIdNumber)}`,
+    );
+  }
+  channelVars.push('ignore_early_media=true');
+  channelVars.push('hangup_after_bridge=true');
+  if (opts.originateTimeout) {
+    channelVars.push(`originate_timeout=${opts.originateTimeout}`);
+  }
+  const vars = channelVars.length > 0 ? `{${channelVars.join(',')}}` : '';
+  const dial = `${vars}sofia/gateway/${opts.gateway}/${opts.destination}`;
+  const cmd = `originate ${dial} ${opts.app}`;
+
+  const eslOpts: EslOptions = {
+    ...opts.esl,
+    timeoutMs: opts.esl?.timeoutMs ?? (opts.originateTimeout ?? 30) * 1000 + 5000,
+  };
+  const reply = (await eslApi(cmd, eslOpts)).trim();
+  if (reply.startsWith('+OK ')) {
+    return reply.slice(4).trim();
+  }
+  // -ERR <reason> or other unexpected responses
+  const err = new Error(reply || 'originate failed (empty reply)');
+  (err as { code?: string }).code = 'originate_failed';
+  throw err;
+}
+
+/** ESL command parameters can't contain unescaped commas/braces. */
+function escapeChannelValue(v: string): string {
+  // Replace unsupported chars with underscores. Phone numbers + CIDs
+  // are digits + leading + at most, so this is conservative.
+  return v.replace(/[,{}'\n\r]/g, '_');
+}
+
 export async function getFreeSwitchHealth(
   opts: EslOptions = {},
 ): Promise<FreeSwitchHealth> {
