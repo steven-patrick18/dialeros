@@ -351,8 +351,23 @@ function BasicTab({
                     label:
                       'DOWN_TIME — newest created leads first (work fresh imports)',
                   },
+                  {
+                    value: 'TZ_RANDOM',
+                    label:
+                      'TZ_RANDOM — random, only leads whose TZ is dialable now',
+                  },
+                  {
+                    value: 'TZ_UP_TIME',
+                    label:
+                      'TZ_UP_TIME — oldest first, only TZ-dialable now',
+                  },
+                  {
+                    value: 'TZ_DOWN_TIME',
+                    label:
+                      'TZ_DOWN_TIME — newest first, only TZ-dialable now',
+                  },
                 ],
-                hint: 'How the hopper picks leads from this campaign’s lists during refill. Callback-due leads always take priority regardless of strategy.',
+                hint: 'How the hopper picks leads from this campaign’s lists during refill. Callback-due leads always take priority regardless of strategy. TZ_* variants filter to leads whose local hour is inside the campaign call window (or business hours 08:00–21:00 if no window set).',
               },
             ]}
             helpText={`Currently holding ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} leads. Refills automatically when depth drops below half target.`}

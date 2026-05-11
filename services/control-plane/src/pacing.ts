@@ -20,11 +20,14 @@ import {
   listCarriersForRoutePlanFromDb,
   listCidsInGroupFromDb,
   listDialIntentsForCampaign,
+  listLeadTimezonesForCampaign,
+  listLeadsWithoutTimezone,
   markLeadDialed,
   parseNodeRoles,
   popHopperLead,
   reapStaleDialIntents,
   refillHopper,
+  setLeadTimezone,
   type CampaignRecord,
   type CarrierRecord,
   type DialIntentRecord,
@@ -485,12 +488,29 @@ export async function paceCampaignOnce(
   // Iter 49 — pop from the campaign hopper. If it's empty (or below
   // half-full), refill on demand and try again. The refill query is
   // INSERT-OR-IGNORE-driven so concurrent ticks won't double-add.
+  // Iter 91 — when list_order is TZ_*, compute the set of
+  // currently-dialable timezones (lead's local hour inside the
+  // campaign's call window, or default 08:00-21:00 if no window
+  // set) and pass to the refill. SQL filters
+  // `l.timezone IN (...)` so only eligible-now leads enter the
+  // hopper.
+  const dialableTimezones = computeDialableTimezones(campaign);
   let lead = popHopperLead(campaignId);
   if (!lead) {
-    refillHopper(campaignId, campaign.hopper_level, COOLDOWN_SECONDS);
+    refillHopper(
+      campaignId,
+      campaign.hopper_level,
+      COOLDOWN_SECONDS,
+      dialableTimezones,
+    );
     lead = popHopperLead(campaignId);
   } else if (hopperSize(campaignId) < Math.floor(campaign.hopper_level / 2)) {
-    refillHopper(campaignId, campaign.hopper_level, COOLDOWN_SECONDS);
+    refillHopper(
+      campaignId,
+      campaign.hopper_level,
+      COOLDOWN_SECONDS,
+      dialableTimezones,
+    );
   }
   if (!lead) return { outcome: 'no_lead' };
 
@@ -937,6 +957,14 @@ export function resumeActivePacers(): { started: number } {
   // forever. One-shot reap at boot clears anything left behind by
   // the previous process; setInterval keeps things tidy at runtime.
   ensureIntentReaper();
+  // Iter 91 — one-shot leads.timezone backfill for any rows that
+  // pre-date the column. Idempotent: only touches rows where
+  // timezone IS NULL.
+  const tzFilled = backfillLeadTimezones();
+  if (tzFilled > 0) {
+    // eslint-disable-next-line no-console
+    console.info(`[boot] backfilled timezone on ${tzFilled} lead(s)`);
+  }
   // Iter 61 — make sure the local box is registered as a node
   // (web + database + telephony) before anything else asks the
   // node table for a telephony host.
@@ -959,6 +987,72 @@ export function resumeActivePacers(): { started: number } {
     }
   }
   return { started };
+}
+
+/** Iter 91 — list of timezones whose local hour is currently inside
+ * the campaign's dialable window. Falls back to a default
+ * "business hours" window (08:00–21:00 local) when the campaign
+ * has no window set, so TZ_* strategies still produce useful
+ * results without forcing the operator to configure a window.
+ *
+ * Only consulted when the campaign's list_order is TZ_*. The pacer
+ * passes the result into refillHopper, which filters
+ * `WHERE l.timezone IN (...)`. */
+function computeDialableTimezones(campaign: CampaignRecord): string[] {
+  const strategy = campaign.list_order ?? 'RANDOM';
+  if (
+    strategy !== 'TZ_RANDOM' &&
+    strategy !== 'TZ_UP_TIME' &&
+    strategy !== 'TZ_DOWN_TIME'
+  ) {
+    return [];
+  }
+  // Window bounds — campaign override, else 08:00-21:00.
+  const [sh, eh] = parseWindow(
+    campaign.call_window_start,
+    campaign.call_window_end,
+  );
+  const all = listLeadTimezonesForCampaign(campaign.id);
+  const dialable: string[] = [];
+  for (const tz of all) {
+    const h = hourInTimezone(tz);
+    const ok = sh <= eh ? h >= sh && h < eh : h >= sh || h < eh;
+    if (ok) dialable.push(tz);
+  }
+  return dialable;
+}
+
+function parseWindow(
+  start: string | null,
+  end: string | null,
+): [number, number] {
+  if (start && end) {
+    const [sh] = start.split(':').map(Number) as [number, number];
+    const [eh] = end.split(':').map(Number) as [number, number];
+    return [sh, eh];
+  }
+  return [8, 21]; // sensible default — business hours local
+}
+
+/** Iter 91 — backfill leads.timezone for any rows still NULL. Runs
+ * once at admin startup (cheap, indexed by `timezone IS NULL`). New
+ * rows from CSV ingest set the column directly so the backfill is
+ * a transition aid, not a steady-state operation. */
+function backfillLeadTimezones(): number {
+  let total = 0;
+  // Loop in batches so a huge initial list doesn't tie up the
+  // event loop with one giant SELECT.
+  while (true) {
+    const batch = listLeadsWithoutTimezone(500);
+    if (batch.length === 0) break;
+    for (const row of batch) {
+      const tz = inferLeadTimezone(row.phone) ?? null;
+      setLeadTimezone(row.id, tz ?? '');
+      total++;
+    }
+    if (batch.length < 500) break;
+  }
+  return total;
 }
 
 /** Iter 78 — emit an intent update to the campaign's SSE bus so the

@@ -259,7 +259,19 @@ export const CampaignUpdateInputSchema = z
     // Iter 70 — list-order strategy. RANDOM picks each refill at
     // random; UP_TIME walks oldest leads first (clear backlog);
     // DOWN_TIME walks newest first (work fresh imports).
-    list_order: z.enum(['RANDOM', 'UP_TIME', 'DOWN_TIME']).optional(),
+    // Iter 91 — TZ_* variants only feed leads whose inferred TZ is
+    // currently inside the campaign's call window. Order semantics
+    // mirror the non-TZ variants (random / oldest / newest).
+    list_order: z
+      .enum([
+        'RANDOM',
+        'UP_TIME',
+        'DOWN_TIME',
+        'TZ_RANDOM',
+        'TZ_UP_TIME',
+        'TZ_DOWN_TIME',
+      ])
+      .optional(),
   })
   .refine(
     (d) => {

@@ -504,6 +504,13 @@ function db(): DatabaseSync {
     // operator provisions one from the Remote Agent detail page.
     "ALTER TABLE remote_agents ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE SET NULL",
     "CREATE INDEX IF NOT EXISTS idx_remote_agents_user ON remote_agents(user_id)",
+    // Iter 91: cache lead's inferred timezone so the TZ-aware list
+    // orders can filter cheaply in SQL. Inferred from the phone's
+    // area code / country code at insert time (and backfilled for
+    // existing rows on the next boot pass below). NULL when the
+    // phone shape doesn't map to a known TZ.
+    "ALTER TABLE leads ADD COLUMN timezone TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_leads_timezone ON leads(timezone)",
   ];
   for (const sql of migrations) {
     try {
@@ -1615,6 +1622,9 @@ export interface LeadRecord {
   custom_fields_json: string;
   status: string;
   last_called_at: string | null;
+  /** Iter 91 — inferred timezone from phone area code. NULL until
+   * the backfill pass (or CSV ingest) populates it. */
+  timezone: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1713,6 +1723,30 @@ export function leadStatusBreakdown(listId: string): LeadStatusBreakdown[] {
       `SELECT status, COUNT(*) AS count FROM leads WHERE list_id = ? GROUP BY status ORDER BY count DESC`,
     )
     .all(listId) as unknown as LeadStatusBreakdown[];
+}
+
+/** Iter 91 — return leads whose `timezone` column is still NULL,
+ * so a startup pass can fill it in via inferLeadTimezone(phone).
+ * The pacer module owns the actual backfill loop because db.ts
+ * can't import from timezones.ts without a circular ref. */
+export function listLeadsWithoutTimezone(
+  limit = 500,
+): Array<{ id: string; phone: string }> {
+  return db()
+    .prepare(
+      `SELECT id, phone FROM leads
+        WHERE timezone IS NULL
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as Array<{ id: string; phone: string }>;
+}
+
+/** Iter 91 — patch the inferred timezone onto a lead row.
+ * Called both at startup (backfill) and during CSV ingest. */
+export function setLeadTimezone(leadId: string, timezone: string | null): void {
+  db()
+    .prepare(`UPDATE leads SET timezone = ? WHERE id = ?`)
+    .run(timezone, leadId);
 }
 
 export function listLeadsInList(
@@ -1835,18 +1869,30 @@ export function insertLeadsBulk(
     phone: string;
     name: string | null;
     email: string | null;
+    /** Iter 91 — optional inferred TZ. lead.ts ingestCsv populates
+     * it via inferLeadTimezone(phone) on each row so the column is
+     * filled at insert time instead of waiting for the next
+     * startup backfill pass. */
+    timezone?: string | null;
   }>,
 ): { inserted: number; skipped: number } {
   if (rows.length === 0) return { inserted: 0, skipped: 0 };
   const d = db();
   const stmt = d.prepare(
-    `INSERT OR IGNORE INTO leads (id, list_id, phone, name, email) VALUES (?, ?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO leads (id, list_id, phone, name, email, timezone) VALUES (?, ?, ?, ?, ?, ?)`,
   );
   let inserted = 0;
   d.exec('BEGIN');
   try {
     for (const r of rows) {
-      const result = stmt.run(r.id, r.list_id, r.phone, r.name, r.email);
+      const result = stmt.run(
+        r.id,
+        r.list_id,
+        r.phone,
+        r.name,
+        r.email,
+        r.timezone ?? null,
+      );
       if (Number(result.changes) > 0) inserted++;
     }
     d.exec('COMMIT');
@@ -3520,6 +3566,14 @@ export function refillHopper(
   campaignId: string,
   target: number,
   cooldownSeconds: number,
+  /** Iter 91 — optional list of currently-dialable timezone IDs
+   * (from the campaign's call window). When the list_order
+   * strategy is TZ_* and this is non-empty, the refill query adds
+   * `AND l.timezone IN (...)` so only leads whose local hour is
+   * inside the window get fed into the hopper. Caller (pacer)
+   * computes the list in JS per tick from the campaign's
+   * call_window_start/end + every distinct lead timezone. */
+  dialableTimezones?: string[],
 ): number {
   const d = db();
   const current = hopperSize(campaignId);
@@ -3533,7 +3587,8 @@ export function refillHopper(
 
   let added = 0;
 
-  // Pass 1: callback-due
+  // Pass 1: callback-due — timezone gate doesn't apply; honoring a
+  // scheduled callback time outweighs the window heuristic.
   const cbResult = d
     .prepare(
       `INSERT OR IGNORE INTO lead_hopper (campaign_id, lead_id)
@@ -3558,18 +3613,37 @@ export function refillHopper(
   if (remaining <= 0) return added;
 
   // Pass 2: NEW / CALLED_NO_ANSWER / BUSY — order depends on the
-  // campaign's list_order strategy (iter 70). Untouched leads
+  // campaign's list_order strategy. Untouched leads
   // (last_called_at IS NULL) always come before previously-tried
-  // ones in any strategy; that's the typical ViciDial behaviour
-  // and matches "work the new stuff first".
+  // ones in any strategy.
   const campaign = getCampaignFromDb(campaignId);
   const strategy = campaign?.list_order ?? 'RANDOM';
+  // Iter 91 — TZ-aware strategies layer a "lead's TZ is currently
+  // in the dialable window" filter on top of the order. Order
+  // semantics mirror the non-TZ variants: random / oldest /
+  // newest within the eligible-now subset.
+  const isTzStrategy =
+    strategy === 'TZ_RANDOM' ||
+    strategy === 'TZ_UP_TIME' ||
+    strategy === 'TZ_DOWN_TIME';
   const orderClause =
-    strategy === 'UP_TIME'
+    strategy === 'UP_TIME' || strategy === 'TZ_UP_TIME'
       ? `ORDER BY (l.last_called_at IS NULL) DESC, l.created_at ASC`
-      : strategy === 'DOWN_TIME'
+      : strategy === 'DOWN_TIME' || strategy === 'TZ_DOWN_TIME'
         ? `ORDER BY (l.last_called_at IS NULL) DESC, l.created_at DESC`
         : `ORDER BY (l.last_called_at IS NULL) DESC, RANDOM()`;
+
+  let tzClause = '';
+  const tzValues: string[] = [];
+  if (isTzStrategy && dialableTimezones && dialableTimezones.length > 0) {
+    const placeholders = dialableTimezones.map(() => '?').join(',');
+    tzClause = `AND l.timezone IN (${placeholders})`;
+    tzValues.push(...dialableTimezones);
+  } else if (isTzStrategy) {
+    // TZ strategy chosen but no dialable TZs right now — feed
+    // nothing; the campaign is effectively idle until a TZ opens.
+    return added;
+  }
 
   const dResult = d
     .prepare(
@@ -3580,6 +3654,7 @@ export function refillHopper(
         WHERE ll.campaign_id = ?
           AND l.status IN ('NEW', 'CALLED_NO_ANSWER', 'BUSY')
           AND (l.last_called_at IS NULL OR l.last_called_at < ?)
+          ${tzClause}
           AND NOT EXISTS (
             SELECT 1 FROM lead_hopper h
              WHERE h.campaign_id = ? AND h.lead_id = l.id
@@ -3587,10 +3662,33 @@ export function refillHopper(
         ${orderClause}
         LIMIT ?`,
     )
-    .run(campaignId, campaignId, cooldownCutoff, campaignId, remaining);
+    .run(
+      campaignId,
+      campaignId,
+      cooldownCutoff,
+      ...(tzValues as never[]),
+      campaignId,
+      remaining,
+    );
   added += Number(dResult.changes);
 
   return added;
+}
+
+/** Iter 91 — distinct non-null timezones across all leads of a
+ * campaign's attached lists. Caller can use this list to bound the
+ * "which TZs are dialable right now?" check in JS. */
+export function listLeadTimezonesForCampaign(campaignId: string): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT DISTINCT l.timezone AS tz
+         FROM leads l
+         JOIN lead_lists ll ON ll.id = l.list_id
+        WHERE ll.campaign_id = ?
+          AND l.timezone IS NOT NULL`,
+    )
+    .all(campaignId) as Array<{ tz: string }>;
+  return rows.map((r) => r.tz);
 }
 
 /**

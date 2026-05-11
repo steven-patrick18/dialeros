@@ -335,6 +335,7 @@ export function ingestCsv(listId: string, csv: string): CsvIngestResult {
     phone: string;
     name: string | null;
     email: string | null;
+    timezone: string | null;
   }> = [];
 
   for (let i = dataStart; i < lines.length; i++) {
@@ -361,6 +362,10 @@ export function ingestCsv(listId: string, csv: string): CsvIngestResult {
       phone,
       name: nameIdx >= 0 ? (cells[nameIdx] ?? null) || null : null,
       email: emailIdx >= 0 ? (cells[emailIdx] ?? null) || null : null,
+      // Iter 91 — infer + store the lead's TZ at ingest so the
+      // TZ-aware list orders can filter without a backfill round
+      // trip.
+      timezone: inferLeadTimezone(phone) ?? null,
     });
   }
 
