@@ -9,6 +9,7 @@ import {
   IN_FLIGHT_STATUSES,
   leadStatusFromHangup,
 } from './call-outcome';
+import { emitIntentUpdate } from './pacing';
 
 /**
  * Iter 33 — long-running ESL listener that subscribes to FreeSWITCH
@@ -252,10 +253,14 @@ function handleEventBody(
     const answeredAt = epochToIso(ev['caller-channel-answered-time']);
     if (!answeredAt) return;
     try {
-      applyDialIntentAnswered({
+      const updated = applyDialIntentAnswered({
         correlation_id: correlationId,
         answered_at: answeredAt,
       });
+      // Iter 78 — push the new state out to the SSE bus so the
+      // live campaign panel transitions from DIALING → CONNECTED
+      // immediately instead of waiting for the hangup.
+      if (updated) emitIntentUpdate(updated);
     } catch (e) {
       console.error('[fs-events] applyDialIntentAnswered failed:', e);
     }
@@ -288,13 +293,18 @@ function handleEventBody(
     if (answered) answeredAt = answered;
 
     try {
-      applyDialIntentHangup({
+      const updated = applyDialIntentHangup({
         correlation_id: correlationId,
         hangup_cause: cause,
         hangup_at: hangupAt,
         duration_ms: durationMs,
         answered_at: answeredAt,
       });
+      // Iter 78 — push the terminal state out to the SSE bus so the
+      // live campaign panel transitions the row to its final label
+      // (NO_ANSWER / BUSY / NORMAL_CLEARING / …) instead of being
+      // stuck at DIALING.
+      if (updated) emitIntentUpdate(updated);
     } catch (e) {
       console.error('[fs-events] applyDialIntentHangup failed:', e);
     }

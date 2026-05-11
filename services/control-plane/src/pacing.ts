@@ -847,6 +847,18 @@ export function resumeActivePacers(): { started: number } {
   return { started };
 }
 
+/** Iter 78 — emit an intent update to the campaign's SSE bus so the
+ * /campaigns/[id] real-time panel re-renders the row with its new
+ * state (answered / hung up / cause). Called by the FS event
+ * listener after applyDialIntentAnswered / applyDialIntentHangup
+ * land their UPDATE. Without this, rows show "DIALING" forever even
+ * though the DB has the final outcome. */
+export function emitIntentUpdate(intent: DialIntentRecord): void {
+  const c = container();
+  c.bus.emit(`intent:${intent.campaign_id}`, intent);
+  c.bus.emit('intent:any', intent);
+}
+
 /** Iter 77 — start the periodic stale-intent reaper if it isn't
  * already running. One-shot at startup + every 60s thereafter. Safe
  * to call repeatedly; the timer is stored on globalThis so hot
