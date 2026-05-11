@@ -171,13 +171,23 @@ export default async function CampaignDetail({
             },
             {
               type: 'number',
+              name: 'dial_level',
+              label: 'Dial level',
+              value: c.dial_level,
+              min: 0.1,
+              max: 10,
+              step: 0.1,
+              hint: 'ViciDial-style multiplier. Per tick the pacer originates floor(active_agents × dial_level) calls. 1.0 = power dial 1:1; 1.5 = predictive 1.5x; 2.0 = aggressive predictive.',
+            },
+            {
+              type: 'number',
               name: 'base_ratio',
               label: 'Base ratio',
               value: c.base_ratio,
               min: 0.5,
               max: 10,
               step: 0.1,
-              hint: 'Calls placed per available agent. 1.0 = one call per agent (progressive). Higher = predictive (overdial). 0.5–10.',
+              hint: 'Legacy field. Calls placed per available agent. 1.0 = progressive. Most setups should use dial_level above instead.',
             },
             {
               type: 'number',
@@ -189,30 +199,36 @@ export default async function CampaignDetail({
               step: 0.1,
               hint: 'Maximum % of calls allowed to drop because no agent was free. Predictive pacers throttle when this ceiling is hit. US TCPA compliance is typically ≤3%.',
             },
-            {
-              type: 'number',
-              name: 'dial_level',
-              label: 'Dial level',
-              value: c.dial_level,
-              min: 0.1,
-              max: 10,
-              step: 0.1,
-              hint: 'ViciDial-style multiplier. Per tick the pacer originates floor(active_agents × dial_level) calls. 1.0 = power dial 1:1; 1.5 = predictive 1.5x; 2.0 = aggressive predictive. Combined later with remote-agent line counts.',
-            },
+          ]}
+          helpText="Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart."
+        />
+
+        <InlineCardForm
+          title="Hopper"
+          endpoint={`/api/campaigns/${c.id}`}
+          fields={[
             {
               type: 'number',
               name: 'hopper_level',
-              label: 'Hopper level',
+              label: 'Target depth',
               value: c.hopper_level,
               min: 1,
               max: 10000,
               step: 1,
-              hint: 'How many leads to keep pre-loaded into the campaign hopper. The pacer pops from the hopper each call; refills automatically when it drops below half. Higher = larger pre-fetch buffer; lower = leads picked just-in-time.',
+              hint: 'Number of leads to keep pre-loaded into the campaign hopper. The pacer pops from the hopper each call and refills automatically when it drops below half. Higher = larger pre-fetch buffer; lower = leads picked just-in-time.',
             },
+          ]}
+          helpText={`Currently holding ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} leads. Refills automatically when depth drops below half target.`}
+        />
+
+        <InlineCardForm
+          title="On answer behaviour"
+          endpoint={`/api/campaigns/${c.id}`}
+          fields={[
             {
               type: 'select',
               name: 'amd_action',
-              label: 'On answer',
+              label: 'When the lead answers',
               value: c.amd_action,
               options: [
                 {
@@ -235,7 +251,7 @@ export default async function CampaignDetail({
               hint: 'Detect mode runs amd_v2 at answer; humans bridge to an agent, machines play the voicemail file (if uploaded) and hang up. Voice-blast = always playback. Drop = always hang up.',
             },
           ]}
-          helpText={`Hopper currently holds ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} target leads. Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart.`}
+          helpText="Upload the voicemail .wav in the next card if you pick detect or voicemail."
         />
 
         <VoicemailPanel

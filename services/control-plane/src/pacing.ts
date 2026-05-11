@@ -6,6 +6,8 @@ import {
   getAvailableAgentsForCampaign,
   getCampaignFromDb,
   getCarrierFromDb,
+  getNodeFromDb,
+  getPhoneByExtension,
   getPrimaryPhoneForUser,
   getRoutePlanFromDb,
   hopperSize,
@@ -13,6 +15,7 @@ import {
   listCampaignsFromDb,
   listDialIntentsForCampaign,
   markLeadDialed,
+  parseNodeRoles,
   popHopperLead,
   refillHopper,
   type CampaignRecord,
@@ -478,6 +481,10 @@ export async function paceCampaignOnce(
       bridgeApp = `&bridge(${computedBridgeTarget})`;
     }
     try {
+      // Iter 69 — connect to the ESL host that runs the directory
+      // for the picked bridge target. Single-box deploys (everything
+      // is_self) stay on 127.0.0.1, no behaviour change.
+      const eslHost = pickEslHostForBridgeTarget(computedBridgeTarget);
       const jobUuid = await bgapiOriginate({
         gateway,
         destination: dialDestination,
@@ -487,6 +494,7 @@ export async function paceCampaignOnce(
         extraChannelVars:
           amdChannelVars.length > 0 ? amdChannelVars : undefined,
         app: bridgeApp,
+        host: eslHost,
       });
       originateOutcome = { ok: true, job_uuid: jobUuid };
       kind = 'originated';
@@ -728,6 +736,44 @@ const ESL_DEFAULTS = {
   password: 'ClueCon',
   timeoutMs: 4000,
 };
+
+/**
+ * Iter 69 — pick the right ESL endpoint for a bridge target. When
+ * the bridge target is `user/<ext>` and the agent's phone is bound
+ * to a non-self telephony node, originate via that node's ESL so
+ * the call lands locally on the box that hosts the SIP directory.
+ * Self-host (or no binding) stays on 127.0.0.1.
+ *
+ * For remote ESL the node has to:
+ *  - run mod_event_socket bound on a reachable interface (default
+ *    only listens on 127.0.0.1) and
+ *  - share the ClueCon password (or admin-overridden) with this
+ *    control-plane.
+ * Single-box deploys never hit the remote branch so existing
+ * installs continue to work unchanged.
+ */
+function eslHostForUserExtension(extension: string): string {
+  // Find the phone by extension, then its bound telephony node.
+  // Self-host (or no binding) stays on 127.0.0.1.
+  const phone = getPhoneByExtension(extension);
+  if (!phone || !phone.telephony_node_id) return '127.0.0.1';
+  const node = getNodeFromDb(phone.telephony_node_id);
+  if (!node) return '127.0.0.1';
+  if (!parseNodeRoles(node).includes('telephony')) return '127.0.0.1';
+  if (node.is_self === 1) return '127.0.0.1';
+  return node.host;
+}
+
+function pickEslHostForBridgeTarget(bridgeTarget: string): string {
+  // user/<ext>  → phone lookup
+  // sofia/internal/<...> → first telephony node (remote agents
+  //   don't carry an explicit telephony binding yet; iter-62
+  //   adds that for phones, not remote agents).
+  const userMatch = /^user\/([0-9a-zA-Z._*#@-]+)$/.exec(bridgeTarget);
+  if (userMatch) return eslHostForUserExtension(userMatch[1]!);
+  // Default: stay on the local box.
+  return '127.0.0.1';
+}
 
 function bgapiOriginate(opts: BgapiOptions): Promise<string> {
   const cfg = { ...ESL_DEFAULTS, ...opts };
