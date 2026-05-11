@@ -132,8 +132,9 @@ export {
   countDialIntentsForUser,
   latestUndisposedIntentForUser,
   getDialIntentById,
+  listActiveCalls,
 } from './db';
-export type { AgentIntentRecord } from './db';
+export type { AgentIntentRecord, ActiveCallRecord } from './db';
 
 // Lead disposition (iter 18)
 export {

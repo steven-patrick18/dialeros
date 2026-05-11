@@ -1701,6 +1701,33 @@ export function listDialIntentsForUser(
 }
 
 /**
+ * Iter 65 — supervisor floor view. Returns every dial_intent that
+ * is currently mid-call: answered_at set + hangup_at NULL. Joined
+ * with campaign + user names so the supervisor table doesn't need
+ * an N+1 lookup. Sorted by call duration descending so the longest
+ * call surfaces first (typical "what's that long call about?"
+ * triage).
+ */
+export interface ActiveCallRecord extends DialIntentRecord {
+  campaign_name: string;
+  user_username: string | null;
+}
+export function listActiveCalls(): ActiveCallRecord[] {
+  return db()
+    .prepare(
+      `SELECT i.*, c.name AS campaign_name, u.username AS user_username
+         FROM dial_intents i
+         JOIN campaigns c ON c.id = i.campaign_id
+         LEFT JOIN users u ON u.id = i.assigned_user_id
+        WHERE i.answered_at IS NOT NULL
+          AND i.hangup_at IS NULL
+          AND i.call_uuid IS NOT NULL
+        ORDER BY i.answered_at ASC`,
+    )
+    .all() as unknown as ActiveCallRecord[];
+}
+
+/**
  * Iter 55 — single row by id. Used by the recording stream endpoint
  * to verify ownership / existence before piping the .wav out.
  */
