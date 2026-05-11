@@ -382,6 +382,7 @@ export {
   listIntentsForCampaign,
   totalIntentsFor,
   rotateDialPlanCursor,
+  isUserRegistered,
 } from './pacing';
 export type { PacingTickResult, DialIntentRecord } from './pacing';
 

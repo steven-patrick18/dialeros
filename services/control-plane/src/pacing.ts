@@ -1206,3 +1206,126 @@ function parseHeaders(block: string): Record<string, string> {
 function escapeChannelValue(v: string): string {
   return v.replace(/[,{}'\n\r]/g, '_');
 }
+
+/** Iter 88 — synchronous ESL `api` call returning the body string.
+ * Used by isUserRegistered() and similar single-shot diagnostics
+ * that don't need the bgapi-job-uuid round-trip. Connects, authes,
+ * runs `api <cmd>`, reads the body, closes. Times out at 1500ms by
+ * default so the campaign page render isn't hostage to a slow FS. */
+function eslApi(
+  cmd: string,
+  opts: { host?: string; port?: number; password?: string; timeoutMs?: number } = {},
+): Promise<string> {
+  const cfg = {
+    host: opts.host ?? ESL_DEFAULTS.host,
+    port: opts.port ?? ESL_DEFAULTS.port,
+    password: opts.password ?? ESL_DEFAULTS.password,
+    timeoutMs: opts.timeoutMs ?? 1500,
+  };
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: cfg.host, port: cfg.port });
+    socket.setEncoding('utf8');
+    socket.setTimeout(cfg.timeoutMs);
+    let buffer = '';
+    let phase: 'auth-req' | 'auth-reply' | 'api-headers' | 'api-body' =
+      'auth-req';
+    let bodyLen = 0;
+    const fail = (msg: string) => {
+      try {
+        socket.destroy();
+      } catch {
+        /* ignore */
+      }
+      reject(new Error(msg));
+    };
+    socket.on('error', (e) => fail(e.message));
+    socket.on('timeout', () => fail(`esl api timeout: ${cmd}`));
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      while (true) {
+        if (phase === 'api-body') {
+          if (buffer.length < bodyLen) return;
+          const body = buffer.slice(0, bodyLen);
+          try {
+            socket.end();
+            socket.destroy();
+          } catch {
+            /* ignore */
+          }
+          resolve(body);
+          return;
+        }
+        const sep = buffer.indexOf('\n\n');
+        if (sep === -1) return;
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const headers = parseHeaders(block);
+        if (phase === 'auth-req') {
+          if (headers['content-type'] !== 'auth/request') {
+            return fail(`expected auth/request, got ${headers['content-type']}`);
+          }
+          phase = 'auth-reply';
+          socket.write(`auth ${cfg.password}\n\n`);
+          continue;
+        }
+        if (phase === 'auth-reply') {
+          if (!headers['reply-text']?.startsWith('+OK')) {
+            return fail(headers['reply-text'] ?? 'auth failed');
+          }
+          phase = 'api-headers';
+          socket.write(`api ${cmd}\n\n`);
+          continue;
+        }
+        if (phase === 'api-headers') {
+          // FS responds with Content-Type: api/response\nContent-Length: N\n\n<body>
+          if (headers['content-type'] !== 'api/response') {
+            return fail(
+              `expected api/response, got ${headers['content-type']}`,
+            );
+          }
+          bodyLen = Number(headers['content-length'] ?? '0');
+          if (bodyLen === 0) {
+            try {
+              socket.end();
+              socket.destroy();
+            } catch {
+              /* ignore */
+            }
+            resolve('');
+            return;
+          }
+          phase = 'api-body';
+          continue;
+        }
+      }
+    });
+  });
+}
+
+/** Iter 88 — is this user/extension currently registered with the
+ * given sofia profile? Uses `sofia_contact <profile>/<user>@<host>`
+ * which returns `error/user_not_registered` when not registered,
+ * or a contact URI like `sofia/internal/sip:abc@…` when it is.
+ * Defaults to the `internal` profile because that's where browser
+ * softphones + remote-agent endpoints live. */
+export async function isUserRegistered(
+  user: string,
+  host: string,
+  profile = 'internal',
+  eslHost?: string,
+): Promise<boolean> {
+  try {
+    const body = await eslApi(`sofia_contact ${profile}/${user}@${host}`, {
+      host: eslHost ?? '127.0.0.1',
+    });
+    const trimmed = body.trim();
+    if (!trimmed) return false;
+    return !trimmed.toLowerCase().startsWith('error');
+  } catch {
+    // FS unreachable / timeout — treat as "unknown" → false. Caller
+    // surfaces a yellow "unable to verify" state if it wants finer
+    // semantics; right now a registered/not-registered binary is
+    // enough for the warning banner.
+    return false;
+  }
+}

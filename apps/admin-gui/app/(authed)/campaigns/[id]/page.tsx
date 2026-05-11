@@ -12,6 +12,7 @@ import {
   getUser,
   hopperSize,
   isCampaignWithinCallWindow,
+  isUserRegistered,
   leadCountFor,
   listInGroups,
   listLeadLists,
@@ -73,6 +74,33 @@ export default async function CampaignDetail({
     0,
   );
   const remoteInFlight = remoteLinesTotal - remoteCapacity;
+
+  // Iter 88 — for bridge / detect amd_actions the call only succeeds
+  // if SOMETHING is registered at the bridge target. Probe each
+  // attached remote agent's SIP user@host against FS's
+  // sofia_contact — surfaces "USER_NOT_REGISTERED" as a banner so
+  // the operator doesn't waste hours wondering why "bridge" mode
+  // fires originates but nothing answers.
+  const unregisteredRemotes: Array<{
+    name: string;
+    sip_uri: string;
+  }> = [];
+  if (c.amd_action === 'bridge' || c.amd_action === 'detect') {
+    await Promise.all(
+      remoteSlots.map(async ({ agent }) => {
+        const m = agent.sip_uri.match(/^sip:([^@]+)@(.+)$/i);
+        if (!m) return;
+        const [, user, host] = m;
+        const registered = await isUserRegistered(user!, host!);
+        if (!registered) {
+          unregisteredRemotes.push({
+            name: agent.name,
+            sip_uri: agent.sip_uri,
+          });
+        }
+      }),
+    );
+  }
   const insideWindow = isCampaignWithinCallWindow(c);
   const hopperDepth = hopperSize(id);
   const inGroupIds = getCampaignInGroups(id);
@@ -115,6 +143,7 @@ export default async function CampaignDetail({
           remoteCapacity={remoteCapacity}
           remoteLinesTotal={remoteLinesTotal}
           remoteInFlight={remoteInFlight}
+          unregisteredRemotes={unregisteredRemotes}
           insideWindow={insideWindow}
         />
       )}
@@ -155,6 +184,7 @@ function BasicTab({
   remoteCapacity,
   remoteLinesTotal,
   remoteInFlight,
+  unregisteredRemotes,
   insideWindow,
 }: {
   c: ReturnType<typeof getCampaign> & {};
@@ -167,6 +197,7 @@ function BasicTab({
   remoteCapacity: number;
   remoteLinesTotal: number;
   remoteInFlight: number;
+  unregisteredRemotes: Array<{ name: string; sip_uri: string }>;
   insideWindow: boolean;
 }) {
   return (
@@ -339,6 +370,47 @@ function BasicTab({
           ACTIVE starts the pacer (one dial intent every ~3s, round-robin
           across active attached agents). PAUSED / ARCHIVED stops it.
         </p>
+        {/* Iter 88 — bridge / detect modes will silently fail when
+            the remote agent's SIP user isn't actually registered
+            with FS. Surface that so the operator doesn't waste
+            hours wondering why answered calls drop instead of
+            ringing through to an agent. Polled live via
+            sofia_contact on every page render.
+         */}
+        {(c.amd_action === 'bridge' || c.amd_action === 'detect') &&
+          unregisteredRemotes.length > 0 && (
+            <p className="bg-error/10 text-error border border-error/50 rounded mt-3 px-3 py-2 text-xs">
+              On-answer mode is{' '}
+              <span className="font-mono">{c.amd_action}</span> but the
+              following remote agent target
+              {unregisteredRemotes.length === 1 ? '' : 's'} {' '}
+              {unregisteredRemotes.length === 1 ? 'is' : 'are'} NOT
+              registered with FreeSWITCH:
+              <ul className="mt-1 ml-4 list-disc">
+                {unregisteredRemotes.map((r) => (
+                  <li key={r.sip_uri}>
+                    <span className="font-mono">{r.name}</span>{' '}
+                    <span className="text-fg-muted">
+                      ({r.sip_uri})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              When a call answers, FS will execute{' '}
+              <span className="font-mono">&amp;bridge(…)</span>,
+              FS will respond <span className="font-mono">USER_NOT_REGISTERED</span>,
+              and the call hangs up — leads answer, hear silence, and
+              drop. Fix by signing a softphone/hardphone into that
+              extension, OR by repointing the remote agent at{' '}
+              <Link
+                href="/remote-agents"
+                className="underline hover:text-fg"
+              >
+                Remote Agents
+              </Link>{' '}
+              to a registered endpoint.
+            </p>
+          )}
         {/* Iter 82 — three distinct cases for active campaigns:
               A) truly nothing attached → red warn
               B) capacity exists & free → green math card
