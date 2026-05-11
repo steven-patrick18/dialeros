@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  cidUsageForGroup,
   countCidsInGroup,
   getCidGroup,
-  listCidsInGroup,
   listRoutePlansUsingCidGroup,
 } from '@dialeros/control-plane';
 import { InlineCardForm } from '@/components/inline-card-form';
@@ -22,9 +22,13 @@ export default async function CidGroupDetail({
   const group = getCidGroup(id);
   if (!group) notFound();
 
-  const numbers = listCidsInGroup(group.id);
+  // Iter 87 — usage stats per CID (count + last-used). Single query
+  // backed by an index on (cid_used) — fine even for thousands of
+  // numbers per group.
+  const numbers = cidUsageForGroup(group.id);
   const count = countCidsInGroup(group.id);
   const usedBy = listRoutePlansUsingCidGroup(group.id);
+  const totalDials = numbers.reduce((s, n) => s + n.used_count, 0);
 
   return (
     <div>
@@ -105,23 +109,44 @@ export default async function CidGroupDetail({
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
         <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
           Numbers ({numbers.length})
+          {totalDials > 0 && (
+            <span className="text-fg-subtle normal-case tracking-normal ml-2">
+              · {totalDials.toLocaleString()} total dial
+              {totalDials === 1 ? '' : 's'} placed using this group
+            </span>
+          )}
         </h2>
         {numbers.length === 0 ? (
-          <p className="text-fg-subtle text-sm">
-            None yet. Add some above.
-          </p>
+          <p className="text-fg-subtle text-sm">None yet. Add some above.</p>
         ) : (
-          <ul className="divide-y divide-border/60 border-y border-border/60">
-            {numbers.map((n) => (
-              <CidRow
-                key={n.id}
-                groupId={group.id}
-                numberId={n.id}
-                number={n.number}
-                addedAt={n.created_at}
-              />
-            ))}
-          </ul>
+          /* Iter 87 — sorted by used_count DESC so the most-burned
+             CIDs surface at the top. used_count = how many real
+             (non-simulated) dial_intents.cid_used matched this
+             number across the whole system. */
+          <table className="w-full text-sm">
+            <thead className="text-left text-fg-subtle border-b border-border">
+              <tr>
+                <th className="py-2 font-medium">Number</th>
+                <th className="font-medium text-right">Used</th>
+                <th className="font-medium">Last used</th>
+                <th className="font-medium hidden sm:table-cell">Added</th>
+                <th className="font-medium text-right w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {numbers.map((n) => (
+                <CidRow
+                  key={n.number_id}
+                  groupId={group.id}
+                  numberId={n.number_id}
+                  number={n.number}
+                  addedAt={n.added_at}
+                  usedCount={n.used_count}
+                  lastUsedAt={n.last_used_at}
+                />
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

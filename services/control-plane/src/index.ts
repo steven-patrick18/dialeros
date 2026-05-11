@@ -256,10 +256,12 @@ export {
   reapStaleDialIntents,
   campaignThroughput,
   carrierLiveSnapshot,
+  cidUsageForGroup,
 } from './db';
 export type {
   CampaignThroughputSnapshot,
   CarrierLiveRow,
+  CidUsageRow,
 } from './db';
 export type { RoutePlanCarrierRecord } from './db';
 

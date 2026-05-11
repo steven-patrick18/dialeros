@@ -8,11 +8,16 @@ export function CidRow({
   numberId,
   number,
   addedAt,
+  usedCount,
+  lastUsedAt,
 }: {
   groupId: string;
   numberId: string;
   number: string;
   addedAt: string;
+  /** Iter 87 — usage stats per CID. */
+  usedCount: number;
+  lastUsedAt: string | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -36,20 +41,36 @@ export function CidRow({
   }
 
   return (
-    <li className="py-2 flex items-center gap-3 text-sm">
-      <span className="font-mono tabular-nums flex-1 truncate">{number}</span>
-      <span className="text-xs text-fg-subtle hidden sm:block">
+    <tr className="border-b border-border/40">
+      <td className="py-2 font-mono tabular-nums">{number}</td>
+      <td className="text-right tabular-nums">
+        <span
+          className={
+            usedCount > 0 ? 'text-success' : 'text-fg-subtle'
+          }
+        >
+          {usedCount.toLocaleString()}
+        </span>
+      </td>
+      <td className="text-fg-subtle text-xs">
+        {lastUsedAt
+          ? new Date(lastUsedAt).toLocaleString()
+          : '—'}
+      </td>
+      <td className="text-fg-subtle text-xs hidden sm:table-cell">
         {new Date(addedAt).toLocaleDateString()}
-      </span>
-      <button
-        type="button"
-        onClick={remove}
-        disabled={busy}
-        className="text-xs px-2 py-1 rounded border border-border text-fg-muted hover:text-error hover:border-error/50 disabled:opacity-40"
-      >
-        {busy ? '…' : 'Remove'}
-      </button>
-      {err && <span className="text-xs text-error">{err}</span>}
-    </li>
+      </td>
+      <td className="text-right">
+        <button
+          type="button"
+          onClick={remove}
+          disabled={busy}
+          className="text-xs px-2 py-1 rounded border border-border text-fg-muted hover:text-error hover:border-error/50 disabled:opacity-40"
+        >
+          {busy ? '…' : 'Remove'}
+        </button>
+        {err && <div className="text-[10px] text-error mt-1">{err}</div>}
+      </td>
+    </tr>
   );
 }

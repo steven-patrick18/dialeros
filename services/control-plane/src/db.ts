@@ -2126,6 +2126,45 @@ export function campaignThroughput(
   };
 }
 
+/** Iter 87 — usage stats for every CID in a group. Joins
+ * cid_group_numbers ↔ dial_intents.cid_used and counts each. Last
+ * usage timestamp comes from MAX(di.ts). CIDs never used yet
+ * appear with count = 0 and last_used = null so the operator sees
+ * the full pool, not just the active subset. Excludes simulated
+ * rows — those didn't really place a call. */
+export interface CidUsageRow {
+  number_id: string;
+  number: string;
+  added_at: string;
+  used_count: number;
+  last_used_at: string | null;
+}
+
+export function cidUsageForGroup(groupId: string): CidUsageRow[] {
+  return db()
+    .prepare(
+      `SELECT
+         n.id AS number_id,
+         n.number,
+         n.created_at AS added_at,
+         COALESCE(u.used_count, 0) AS used_count,
+         u.last_used_at
+       FROM cid_group_numbers n
+       LEFT JOIN (
+         SELECT cid_used AS num,
+                COUNT(*) AS used_count,
+                MAX(ts)  AS last_used_at
+           FROM dial_intents
+          WHERE kind != 'simulated'
+            AND cid_used IS NOT NULL
+          GROUP BY cid_used
+       ) u ON u.num = n.number
+       WHERE n.group_id = ?
+       ORDER BY used_count DESC, n.created_at ASC, n.number ASC`,
+    )
+    .all(groupId) as unknown as CidUsageRow[];
+}
+
 /** Iter 85 — per-carrier live snapshot for the /realtime carrier
  * section. For every enabled carrier returns:
  *   dialing      — in flight, no answer yet (answered_at NULL,
