@@ -975,6 +975,71 @@ export function listAuditEvents(limit = 200): AuditEventRecord[] {
     .all(limit) as unknown as AuditEventRecord[];
 }
 
+/** Iter 76 — filtered audit query.
+ * - actionPrefix: 'campaign.' matches every campaign.* event.
+ * - actorUserId: restrict to one actor.
+ * - targetType: restrict to one resource kind.
+ * - beforeTs / afterTs: pagination cursor (ISO timestamps from the row's
+ *   `ts`). Note: ts has millisecond precision so 2 rows in the same ms
+ *   could in theory tie; the (ts DESC, id DESC) tiebreak below keeps
+ *   ordering deterministic.
+ * Returns at most `limit` rows in descending time order. */
+export function listAuditEventsFiltered(opts: {
+  limit?: number;
+  actionPrefix?: string | null;
+  actorUserId?: string | null;
+  targetType?: string | null;
+  beforeTs?: string | null;
+  afterTs?: string | null;
+}): AuditEventRecord[] {
+  const where: string[] = [];
+  const values: unknown[] = [];
+  if (opts.actionPrefix) {
+    where.push(`action LIKE ?`);
+    values.push(opts.actionPrefix.endsWith('%')
+      ? opts.actionPrefix
+      : `${opts.actionPrefix}%`);
+  }
+  if (opts.actorUserId) {
+    where.push(`actor_user_id = ?`);
+    values.push(opts.actorUserId);
+  }
+  if (opts.targetType) {
+    where.push(`target_type = ?`);
+    values.push(opts.targetType);
+  }
+  if (opts.beforeTs) {
+    where.push(`ts < ?`);
+    values.push(opts.beforeTs);
+  }
+  if (opts.afterTs) {
+    where.push(`ts > ?`);
+    values.push(opts.afterTs);
+  }
+  const sql =
+    `SELECT * FROM audit_events` +
+    (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+    ` ORDER BY ts DESC, id DESC LIMIT ?`;
+  values.push(opts.limit ?? 50);
+  return db()
+    .prepare(sql)
+    .all(...(values as never[])) as unknown as AuditEventRecord[];
+}
+
+/** Iter 76 — list distinct target_types from audit_events for filter
+ * dropdowns. Cheap query because of the existing
+ * idx_audit_target(target_type, target_id) index. */
+export function listAuditTargetTypes(): string[] {
+  const rows = db()
+    .prepare(
+      `SELECT DISTINCT target_type FROM audit_events
+        WHERE target_type IS NOT NULL
+        ORDER BY target_type ASC`,
+    )
+    .all() as Array<{ target_type: string }>;
+  return rows.map((r) => r.target_type);
+}
+
 // =====================================================================
 // reports — aggregate queries for the /reports dashboard (iter 15)
 // =====================================================================

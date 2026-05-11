@@ -113,8 +113,13 @@ export type {
 } from './user-mgmt';
 
 // Audit
-export { appendAudit, queryAudit } from './audit';
-export type { AuditAppendInput } from './audit';
+export {
+  appendAudit,
+  queryAudit,
+  queryAuditFiltered,
+  queryAuditTargetTypes,
+} from './audit';
+export type { AuditAppendInput, AuditQueryFilter } from './audit';
 
 // Reports / aggregate queries (iter 15)
 export {

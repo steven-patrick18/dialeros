@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import {
   insertAuditEvent,
   listAuditEvents,
+  listAuditEventsFiltered,
+  listAuditTargetTypes,
   type AuditEventRecord,
 } from './db';
 
@@ -28,6 +30,27 @@ export function appendAudit(input: AuditAppendInput): void {
 
 export function queryAudit(limit = 200): AuditEventRecord[] {
   return listAuditEvents(limit);
+}
+
+/** Iter 76 — filtered + cursor-paginated audit query for the
+ * /audit page. */
+export interface AuditQueryFilter {
+  limit?: number;
+  actionPrefix?: string | null;
+  actorUserId?: string | null;
+  targetType?: string | null;
+  beforeTs?: string | null;
+  afterTs?: string | null;
+}
+
+export function queryAuditFiltered(
+  filter: AuditQueryFilter,
+): AuditEventRecord[] {
+  return listAuditEventsFiltered(filter);
+}
+
+export function queryAuditTargetTypes(): string[] {
+  return listAuditTargetTypes();
 }
 
 export type { AuditEventRecord };
