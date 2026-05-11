@@ -260,11 +260,15 @@ export {
   campaignThroughput,
   carrierLiveSnapshot,
   cidUsageForGroup,
+  floorThroughputSnapshot,
+  topCampaignsToday,
 } from './db';
 export type {
   CampaignThroughputSnapshot,
   CarrierLiveRow,
   CidUsageRow,
+  FloorThroughputSnapshot,
+  CampaignTodayRow,
 } from './db';
 export type { RoutePlanCarrierRecord } from './db';
 

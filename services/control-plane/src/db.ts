@@ -2373,6 +2373,121 @@ export function cidUsageForGroup(groupId: string): CidUsageRow[] {
     .all(groupId) as unknown as CidUsageRow[];
 }
 
+/** Iter 96 — floor-wide pulse for the / landing dashboard. Single
+ * query rolls up real (non-simulated) dial_intent counts across
+ * every campaign:
+ *   dialing       in flight, not yet answered
+ *   connected     answered + still up
+ *   last_1m       originates fired in the last 60s
+ *   last_10m      last 10 minutes
+ *   last_60m      last hour
+ *   today         since local-day-midnight, just `>= today-00:00 UTC`
+ *                 for now (good-enough until we add a per-tenant
+ *                 timezone)
+ *   completed_today  NORMAL_CLEARING with answer in the today window
+ *                    (talked-to leads)
+ *   failed_today     hung up today, NOT answered or not NORMAL_CLEARING
+ *                    (busy + no-answer + bad-number + rejected combined)
+ */
+export interface FloorThroughputSnapshot {
+  dialing: number;
+  connected: number;
+  last_1m: number;
+  last_10m: number;
+  last_60m: number;
+  today: number;
+  completed_today: number;
+  failed_today: number;
+}
+
+export function floorThroughputSnapshot(): FloorThroughputSnapshot {
+  const row = db()
+    .prepare(
+      `SELECT
+         COALESCE(SUM(CASE
+           WHEN hangup_at IS NULL AND answered_at IS NULL AND kind != 'simulated'
+           THEN 1 ELSE 0 END), 0) AS dialing,
+         COALESCE(SUM(CASE
+           WHEN hangup_at IS NULL AND answered_at IS NOT NULL AND kind != 'simulated'
+           THEN 1 ELSE 0 END), 0) AS connected,
+         COALESCE(SUM(CASE
+           WHEN kind != 'simulated'
+            AND strftime('%s', ts) > strftime('%s','now','-60 seconds')
+           THEN 1 ELSE 0 END), 0) AS last_1m,
+         COALESCE(SUM(CASE
+           WHEN kind != 'simulated'
+            AND strftime('%s', ts) > strftime('%s','now','-600 seconds')
+           THEN 1 ELSE 0 END), 0) AS last_10m,
+         COALESCE(SUM(CASE
+           WHEN kind != 'simulated'
+            AND strftime('%s', ts) > strftime('%s','now','-3600 seconds')
+           THEN 1 ELSE 0 END), 0) AS last_60m,
+         COALESCE(SUM(CASE
+           WHEN kind != 'simulated'
+            AND date(ts) = date('now')
+           THEN 1 ELSE 0 END), 0) AS today,
+         COALESCE(SUM(CASE
+           WHEN kind != 'simulated'
+            AND date(hangup_at) = date('now')
+            AND hangup_cause = 'NORMAL_CLEARING'
+            AND answered_at IS NOT NULL
+           THEN 1 ELSE 0 END), 0) AS completed_today,
+         COALESCE(SUM(CASE
+           WHEN kind != 'simulated'
+            AND date(hangup_at) = date('now')
+            AND (answered_at IS NULL OR hangup_cause != 'NORMAL_CLEARING')
+           THEN 1 ELSE 0 END), 0) AS failed_today
+       FROM dial_intents`,
+    )
+    .get() as Record<keyof FloorThroughputSnapshot, number | null>;
+  return {
+    dialing: Number(row.dialing ?? 0),
+    connected: Number(row.connected ?? 0),
+    last_1m: Number(row.last_1m ?? 0),
+    last_10m: Number(row.last_10m ?? 0),
+    last_60m: Number(row.last_60m ?? 0),
+    today: Number(row.today ?? 0),
+    completed_today: Number(row.completed_today ?? 0),
+    failed_today: Number(row.failed_today ?? 0),
+  };
+}
+
+/** Iter 96 — top active campaigns by today's originate count. For
+ * the dashboard's "where the action is" table. Returns name +
+ * type + today / last 1m counts, sorted desc. */
+export interface CampaignTodayRow {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  today: number;
+  last_1m: number;
+}
+
+export function topCampaignsToday(
+  limit = 5,
+): CampaignTodayRow[] {
+  return db()
+    .prepare(
+      `SELECT
+         c.id, c.name, c.type, c.status,
+         COALESCE(SUM(CASE
+           WHEN di.kind != 'simulated' AND date(di.ts) = date('now')
+           THEN 1 ELSE 0 END), 0) AS today,
+         COALESCE(SUM(CASE
+           WHEN di.kind != 'simulated'
+            AND strftime('%s', di.ts) > strftime('%s','now','-60 seconds')
+           THEN 1 ELSE 0 END), 0) AS last_1m
+       FROM campaigns c
+       LEFT JOIN dial_intents di ON di.campaign_id = c.id
+       GROUP BY c.id, c.name, c.type, c.status
+       HAVING today > 0 OR c.status = 'active'
+       ORDER BY today DESC, c.status = 'active' DESC, c.name ASC
+       LIMIT ?`,
+    )
+    .all(limit) as unknown as CampaignTodayRow[];
+}
+
 /** Iter 85 — per-carrier live snapshot for the /realtime carrier
  * section. For every enabled carrier returns:
  *   dialing      — in flight, no answer yet (answered_at NULL,

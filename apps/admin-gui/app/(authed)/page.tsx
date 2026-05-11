@@ -1,98 +1,82 @@
-﻿import { redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import {
-  leadCountFor,
+  floorThroughputSnapshot,
   listCampaigns,
   listCarriers,
-  listLeadLists,
   listNodesFromDb,
   listRoutePlans,
+  liveAgentSnapshot,
+  topCampaignsToday,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
+import { DashboardBoard } from './dashboard-board';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
   const me = await getCurrentUser();
   if (me?.role === 'agent') {
-    // Agents land on their own console — the cluster dashboard is admin-only.
+    // Agents land on their own console — the cluster dashboard is
+    // admin / supervisor only.
     redirect('/agent');
   }
+  const floor = floorThroughputSnapshot();
+  const campaignsToday = topCampaignsToday(8);
+  const agents = liveAgentSnapshot();
+  const agentsAvailable = agents.filter(
+    (a) => a.status === 'AVAILABLE' && a.call_intent_id === null,
+  ).length;
+  const agentsInCall = agents.filter(
+    (a) => a.call_intent_id !== null,
+  ).length;
+  const agentsPaused = agents.filter(
+    (a) => a.status === 'PAUSED' && a.call_intent_id === null,
+  ).length;
+  const dispoToday = agents.reduce(
+    (a, x) => a + x.dispositions_today,
+    0,
+  );
   const nodes = listNodesFromDb();
   const carriers = listCarriers();
   const routePlans = listRoutePlans();
-  const leadLists = listLeadLists();
   const campaigns = listCampaigns();
-  const ready = nodes.filter((n) => n.status === 'READY').length;
-  const carriersEnabled = carriers.filter((c) => c.enabled === 1).length;
-  const plansEnabled = routePlans.filter((p) => p.enabled === 1).length;
-  const totalLeads = leadLists.reduce((acc, l) => acc + leadCountFor(l.id), 0);
-  const activeCampaigns = campaigns.filter((c) => c.status === 'active').length;
+
+  // Iter 96 — JSON roundtrip strips node:sqlite's null-prototype
+  // rows (same fix iter 85 applied on /realtime). Without it
+  // React 19 RSC refuses to serialize to the client component.
+  const initial = JSON.parse(
+    JSON.stringify({
+      generated_at: new Date().toISOString(),
+      floor,
+      campaigns_today: campaignsToday,
+      agents: {
+        total: agents.length,
+        available: agentsAvailable,
+        in_call: agentsInCall,
+        paused: agentsPaused,
+        dispo_today: dispoToday,
+      },
+      health: {
+        nodes_total: nodes.length,
+        nodes_ready: nodes.filter((n) => n.status === 'READY').length,
+        carriers_total: carriers.length,
+        carriers_enabled: carriers.filter((c) => c.enabled === 1).length,
+        route_plans_total: routePlans.length,
+        route_plans_enabled: routePlans.filter((p) => p.enabled === 1).length,
+        campaigns_total: campaigns.length,
+        campaigns_active: campaigns.filter((c) => c.status === 'active').length,
+      },
+    }),
+  );
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold mb-2">Dashboard</h1>
+      <h1 className="text-2xl font-semibold mb-1">Dashboard</h1>
       <p className="text-fg-muted text-sm mb-6">
-        Welcome to DialerOS. Cluster status appears here as you add nodes,
-        carriers, route plans, and lead lists.
+        Floor pulse — live calls, today&apos;s outcomes, top campaigns,
+        and cluster health. Refreshes every 10 seconds.
       </p>
-
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-4xl">
-        <Stat
-          label="Nodes ready"
-          value={`${ready} / ${nodes.length}`}
-          accent={ready > 0 ? 'text-success' : 'text-fg'}
-        />
-        <Stat
-          label="Carriers enabled"
-          value={`${carriersEnabled} / ${carriers.length}`}
-          accent={carriersEnabled > 0 ? 'text-success' : 'text-fg'}
-        />
-        <Stat
-          label="Route plans"
-          value={`${plansEnabled} / ${routePlans.length}`}
-          accent={plansEnabled > 0 ? 'text-success' : 'text-fg'}
-        />
-        <Stat
-          label="Lead lists"
-          value={`${leadLists.length}`}
-          accent={leadLists.length > 0 ? 'text-success' : 'text-fg'}
-        />
-        <Stat
-          label="Total leads"
-          value={totalLeads.toLocaleString()}
-          accent={totalLeads > 0 ? 'text-success' : 'text-fg'}
-        />
-        <Stat
-          label="Campaigns active"
-          value={`${activeCampaigns} / ${campaigns.length}`}
-          accent={activeCampaigns > 0 ? 'text-success' : 'text-fg'}
-        />
-      </div>
-
-      <div className="mt-8 max-w-3xl">
-        <p className="text-xs text-fg-subtle">
-          Phase 0 complete (provisioning, auth, audit). Phase 1 in progress â€”
-          carrier management is the entry point. Live SIP routing arrives
-          alongside the FreeSWITCH integration.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  accent = 'text-fg',
-}: {
-  label: string;
-  value: number | string;
-  accent?: string;
-}) {
-  return (
-    <div className="border border-border rounded p-4">
-      <div className="text-xs text-fg-subtle uppercase">{label}</div>
-      <div className={`text-2xl mt-1 ${accent}`}>{value}</div>
+      <DashboardBoard initial={initial} />
     </div>
   );
 }
