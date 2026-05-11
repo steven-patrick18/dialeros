@@ -20,6 +20,7 @@ import {
 import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
 import { PacingPanel } from './pacing-panel';
+import { VoicemailPanel } from './voicemail-panel';
 import { AttachmentPicker } from '@/components/attachment-picker';
 import { InlineCardForm } from '@/components/inline-card-form';
 
@@ -208,8 +209,35 @@ export default async function CampaignDetail({
               step: 1,
               hint: 'How many leads to keep pre-loaded into the campaign hopper. The pacer pops from the hopper each call; refills automatically when it drops below half. Higher = larger pre-fetch buffer; lower = leads picked just-in-time.',
             },
+            {
+              type: 'select',
+              name: 'amd_action',
+              label: 'On answer',
+              value: c.amd_action,
+              options: [
+                {
+                  value: 'bridge',
+                  label: 'bridge — connect the lead to an agent (default)',
+                },
+                {
+                  value: 'voicemail',
+                  label: 'voicemail — play the uploaded .wav and hang up (voice-blast)',
+                },
+                {
+                  value: 'drop',
+                  label: 'drop — hang up at answer (connectivity probing only)',
+                },
+              ],
+              hint: 'Voice-blast mode requires a voicemail file to be uploaded below. Drop mode is mostly for QA — no audio, no agent.',
+            },
           ]}
           helpText={`Hopper currently holds ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} target leads. Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart.`}
+        />
+
+        <VoicemailPanel
+          campaignId={c.id}
+          amdAction={c.amd_action}
+          voicemailPath={c.voicemail_path}
         />
 
         <InlineCardForm

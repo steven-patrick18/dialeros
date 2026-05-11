@@ -239,6 +239,15 @@ export const CampaignUpdateInputSchema = z
     // Iter 49 — hopper + dial level.
     hopper_level: z.number().int().min(1).max(10000).optional(),
     dial_level: z.number().min(0.1).max(10).optional(),
+    // Iter 66 — answering-machine handling. `voicemail_path` is
+    // managed via the campaign-detail upload form, not this PATCH;
+    // it's listed here so the inline-edit pass-through is harmless.
+    amd_action: z.enum(['bridge', 'drop', 'voicemail']).optional(),
+    voicemail_path: z
+      .string()
+      .nullable()
+      .optional()
+      .or(z.literal('').transform(() => null)),
   })
   .refine(
     (d) => {
@@ -287,6 +296,10 @@ export function updateCampaign(
   }
   if (input.hopper_level !== undefined) updates.hopper_level = input.hopper_level;
   if (input.dial_level !== undefined) updates.dial_level = input.dial_level;
+  if (input.amd_action !== undefined) updates.amd_action = input.amd_action;
+  if (input.voicemail_path !== undefined) {
+    updates.voicemail_path = input.voicemail_path ?? null;
+  }
   return updateCampaignFields(id, updates);
 }
 

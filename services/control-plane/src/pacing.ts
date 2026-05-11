@@ -430,8 +430,23 @@ export async function paceCampaignOnce(
     // Iter 40 — prefer the agent's primary phone extension if they
     // own one; fall back to the iter-35 hash for users without
     // phones so the migration is non-destructive.
+    //
+    // Iter 66 — campaign.amd_action overrides the bridge target:
+    //   drop      — &hangup. Used for connectivity probing / forced
+    //               dropping rather than engaging an agent.
+    //   voicemail — &playback(<voicemail_path>). Voice-blast mode:
+    //               play the campaigns uploaded .wav at answer and
+    //               hang up; no agent involvement.
+    //   bridge (default) — the existing user/<ext> or remote bridge.
     let bridgeApp: string;
-    if (assigned) {
+    if (campaign.amd_action === 'drop') {
+      bridgeApp = '&hangup';
+    } else if (
+      campaign.amd_action === 'voicemail' &&
+      campaign.voicemail_path
+    ) {
+      bridgeApp = `&playback(${campaign.voicemail_path})`;
+    } else if (assigned) {
       const primary = getPrimaryPhoneForUser(assigned.id);
       const agentExtension =
         primary?.extension ?? extensionForUser(assigned.id);

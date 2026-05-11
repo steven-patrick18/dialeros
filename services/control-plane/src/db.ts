@@ -397,6 +397,15 @@ function db(): DatabaseSync {
     // to the configured recordings dir if you want to host on
     // remote storage later). NULL means this intent wasn't recorded.
     "ALTER TABLE dial_intents ADD COLUMN recording_path TEXT",
+    // Iter 66: per-campaign AMD / voicemail-drop behaviour.
+    //   bridge    — default; original behavior, always bridge to agent.
+    //   drop      — hang up at answer (probing / opt-out flows).
+    //   voicemail — play the campaigns uploaded voicemail file and
+    //               hang up. Voice-blast mode. The path is the absolute
+    //               wav on the FS box (set by the campaign-detail
+    //               upload form).
+    "ALTER TABLE campaigns ADD COLUMN amd_action TEXT NOT NULL DEFAULT 'bridge'",
+    "ALTER TABLE campaigns ADD COLUMN voicemail_path TEXT",
     // Iter 58: remote-agent bridging. When the pacer bridges to a
     // remote agent (SIP URI) instead of a local user/<ext>, this
     // column holds the remote_agents.id so we can roll up in-flight
@@ -2142,6 +2151,8 @@ export interface CampaignRecord {
   dial_mode: string;
   hopper_level: number;
   dial_level: number;
+  amd_action: string;
+  voicemail_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2409,6 +2420,8 @@ export function updateCampaignFields(
     dial_mode: string;
     hopper_level: number;
     dial_level: number;
+    amd_action: string;
+    voicemail_path: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];
