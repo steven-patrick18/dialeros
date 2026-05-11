@@ -20,6 +20,14 @@ interface DialIntent {
   duration_ms: number | null;
 }
 
+interface ThroughputSnapshot {
+  active_now: number;
+  last_1m: number;
+  last_10m: number;
+  last_60m: number;
+  total: number;
+}
+
 export function PacingPanel({
   campaignId,
   isActive,
@@ -30,12 +38,23 @@ export function PacingPanel({
   initialTotal: number;
 }) {
   // Iter 78 — keyed by intent.id so an update for the same row
-  // replaces the old state instead of duplicating it (was a Map
-  // semantically; we use an array + de-dup on push so render order
-  // stays stable).
+  // replaces the old state instead of duplicating it.
   const [intents, setIntents] = useState<DialIntent[]>([]);
   const [connected, setConnected] = useState(false);
-  const [total, setTotal] = useState(initialTotal);
+  // Iter 84 — instead of a single ambiguous "total dial intents"
+  // (which lifetime-monotonically counted up and made the panel
+  // look like the pacer was firing huge volumes when actually the
+  // cap was working), the header now shows a 5-number snapshot:
+  // active-now / 1m / 10m / 60m / lifetime. Polled every 5s from a
+  // tiny throughput endpoint backed by indexed (campaign_id, ts)
+  // queries.
+  const [snap, setSnap] = useState<ThroughputSnapshot>({
+    active_now: 0,
+    last_1m: 0,
+    last_10m: 0,
+    last_60m: 0,
+    total: initialTotal,
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledRef = useRef(false);
 
@@ -50,11 +69,8 @@ export function PacingPanel({
           setIntents((prev) => {
             const idx = prev.findIndex((p) => p.id === incoming.id);
             if (idx === -1) {
-              // New row — bump the total counter.
-              setTotal((t) => t + 1);
               return [...prev, incoming].slice(-200);
             }
-            // Existing row — replace in place (state transition).
             const next = prev.slice();
             next[idx] = incoming;
             return next;
@@ -66,6 +82,32 @@ export function PacingPanel({
     };
     es.onerror = () => setConnected(false);
     return () => es.close();
+  }, [campaignId]);
+
+  // Iter 84 — poll throughput snapshot every 5s. Cheap query, gives
+  // a clear "calls per minute / 10 / 60" view that doesn't conflate
+  // lifetime count with current activity.
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchSnap() {
+      try {
+        const res = await fetch(
+          `/api/campaigns/${campaignId}/throughput`,
+          { cache: 'no-store' },
+        );
+        if (!res.ok) return;
+        const j = (await res.json()) as ThroughputSnapshot;
+        if (!cancelled) setSnap(j);
+      } catch {
+        /* ignore */
+      }
+    }
+    fetchSnap();
+    const handle = setInterval(fetchSnap, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
   }, [campaignId]);
 
   useEffect(() => {
@@ -83,7 +125,7 @@ export function PacingPanel({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <span className="text-xs uppercase text-fg-subtle">Pacer</span>
           {isActive ? (
@@ -99,9 +141,38 @@ export function PacingPanel({
             <span className="text-xs text-fg-subtle">(reconnecting…)</span>
           )}
         </div>
-        <span className="text-xs text-fg-subtle tabular-nums">
-          {total.toLocaleString()} dial intents total
-        </span>
+        <div className="flex items-center gap-4 text-xs">
+          <StatChip
+            label="Active now"
+            value={snap.active_now}
+            tone={snap.active_now > 0 ? 'live' : 'muted'}
+            hint="Real (non-simulated) dial-intents with no hangup yet — i.e. calls currently in flight on the trunk."
+          />
+          <StatChip
+            label="Last 1m"
+            value={snap.last_1m}
+            tone="muted"
+            hint="Originates fired in the last 60 seconds."
+          />
+          <StatChip
+            label="Last 10m"
+            value={snap.last_10m}
+            tone="muted"
+            hint="Originates fired in the last 10 minutes."
+          />
+          <StatChip
+            label="Last 60m"
+            value={snap.last_60m}
+            tone="muted"
+            hint="Originates fired in the last hour."
+          />
+          <StatChip
+            label="Lifetime"
+            value={snap.total}
+            tone="muted"
+            hint="Total dial intents ever recorded for this campaign."
+          />
+        </div>
       </div>
 
       <div
@@ -121,6 +192,36 @@ export function PacingPanel({
         {isActive && <div className="text-fg-subtle animate-pulse">▌</div>}
       </div>
     </div>
+  );
+}
+
+function StatChip({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: number;
+  tone: 'live' | 'muted';
+  hint: string;
+}) {
+  return (
+    <span
+      title={hint}
+      className="inline-flex flex-col items-end leading-tight cursor-help"
+    >
+      <span className="text-[10px] uppercase tracking-wide text-fg-subtle">
+        {label}
+      </span>
+      <span
+        className={`tabular-nums font-mono ${
+          tone === 'live' ? 'text-success' : 'text-fg'
+        }`}
+      >
+        {value.toLocaleString()}
+      </span>
+    </span>
   );
 }
 

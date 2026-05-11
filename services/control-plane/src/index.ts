@@ -254,7 +254,9 @@ export {
   inFlightForCarrier,
   countRoutePlansPerCarrier,
   reapStaleDialIntents,
+  campaignThroughput,
 } from './db';
+export type { CampaignThroughputSnapshot } from './db';
 export type { RoutePlanCarrierRecord } from './db';
 
 // CID groups (iter 72)

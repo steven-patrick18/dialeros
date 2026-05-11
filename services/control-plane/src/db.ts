@@ -2077,6 +2077,55 @@ export function insertDialIntent(rec: {
  * (fs-events populates hangup_at when the call ends). Used by the
  * pacer to skip remote agents that already have `lines` calls live.
  */
+/** Iter 84 — throughput + concurrency snapshot for a single
+ * campaign, used in the Real-Time panel header. All counts exclude
+ * simulated rows (they're DB-only and don't represent real load).
+ *   active_now  — real calls currently in flight (hangup_at NULL)
+ *   last_1m     — originates in the last 60 seconds
+ *   last_10m    — originates in the last 600 seconds
+ *   last_60m    — originates in the last 3600 seconds
+ *   total       — lifetime cumulative
+ * The "originated in window" counts use ts (insert time) so a
+ * recently-inserted but still-in-flight row contributes to both
+ * `active_now` and the windowed rates. */
+export interface CampaignThroughputSnapshot {
+  active_now: number;
+  last_1m: number;
+  last_10m: number;
+  last_60m: number;
+  total: number;
+}
+
+export function campaignThroughput(
+  campaignId: string,
+): CampaignThroughputSnapshot {
+  const row = db()
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN hangup_at IS NULL AND kind != 'simulated' THEN 1 ELSE 0 END) AS active_now,
+         SUM(CASE WHEN kind != 'simulated' AND strftime('%s', ts) > strftime('%s','now','-60 seconds') THEN 1 ELSE 0 END) AS last_1m,
+         SUM(CASE WHEN kind != 'simulated' AND strftime('%s', ts) > strftime('%s','now','-600 seconds') THEN 1 ELSE 0 END) AS last_10m,
+         SUM(CASE WHEN kind != 'simulated' AND strftime('%s', ts) > strftime('%s','now','-3600 seconds') THEN 1 ELSE 0 END) AS last_60m,
+         COUNT(*) AS total
+       FROM dial_intents
+       WHERE campaign_id = ?`,
+    )
+    .get(campaignId) as {
+    active_now: number | null;
+    last_1m: number | null;
+    last_10m: number | null;
+    last_60m: number | null;
+    total: number | null;
+  };
+  return {
+    active_now: Number(row.active_now ?? 0),
+    last_1m: Number(row.last_1m ?? 0),
+    last_10m: Number(row.last_10m ?? 0),
+    last_60m: Number(row.last_60m ?? 0),
+    total: Number(row.total ?? 0),
+  };
+}
+
 export function inFlightForRemoteAgent(remoteAgentId: string): number {
   // Iter 77 — see inFlightForCarrier: only real calls occupy a SIP
   // line on the remote endpoint. Simulated rows would otherwise
