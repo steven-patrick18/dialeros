@@ -3002,18 +3002,43 @@ export function listCampaignsUsingLeadList(
 export function listRoutePlansUsingCarrier(
   carrierId: string,
 ): RoutePlanRecord[] {
-  // SQLite has no array search; do a LIKE on the JSON column for failovers,
-  // plus a direct match on primary. Ambiguous matches (e.g. carrier id is a
-  // substring of another id) aren't possible because UUIDs are unique strings.
-  const pattern = `%"${carrierId}"%`;
+  // Iter 74 — switched from a LIKE on the legacy
+  // failover_carrier_ids_json column to a join against
+  // route_plan_carriers, which is now the source of truth. Still
+  // returns each plan only once even when the same carrier appears
+  // at multiple priorities (which the UNIQUE constraint prevents,
+  // but DISTINCT here is defence-in-depth).
   return db()
     .prepare(
-      `SELECT * FROM route_plans
-       WHERE primary_carrier_id = ?
-          OR failover_carrier_ids_json LIKE ?
-       ORDER BY created_at DESC`,
+      `SELECT DISTINCT rp.*
+         FROM route_plans rp
+         JOIN route_plan_carriers rpc ON rpc.route_plan_id = rp.id
+        WHERE rpc.carrier_id = ?
+        ORDER BY rp.created_at DESC`,
     )
-    .all(carrierId, pattern) as unknown as RoutePlanRecord[];
+    .all(carrierId) as unknown as RoutePlanRecord[];
+}
+
+/** Iter 75 — for each carrier in the input list, return the count of
+ * route plans that currently attach it (via the route_plan_carriers
+ * join). Used on the carriers list page to show "used by N plans"
+ * per row. Returns a Map keyed by carrier_id. */
+export function countRoutePlansPerCarrier(
+  carrierIds: string[],
+): Map<string, number> {
+  if (carrierIds.length === 0) return new Map();
+  const placeholders = carrierIds.map(() => '?').join(',');
+  const rows = db()
+    .prepare(
+      `SELECT carrier_id, COUNT(DISTINCT route_plan_id) AS n
+         FROM route_plan_carriers
+        WHERE carrier_id IN (${placeholders})
+        GROUP BY carrier_id`,
+    )
+    .all(...carrierIds) as Array<{ carrier_id: string; n: number }>;
+  const out = new Map<string, number>();
+  for (const r of rows) out.set(r.carrier_id, Number(r.n));
+  return out;
 }
 
 // =====================================================================

@@ -1,10 +1,20 @@
 ﻿import Link from 'next/link';
-import { listCarriers } from '@dialeros/control-plane';
+import {
+  countRoutePlansPerCarrier,
+  inFlightForCarrier,
+  listCarriers,
+} from '@dialeros/control-plane';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CarriersList() {
   const carriers = listCarriers();
+  // Iter 75 — bulk-count attached route plans + per-carrier in-flight
+  // so the list surfaces "where used" and "how busy" at a glance.
+  const usedByCount = countRoutePlansPerCarrier(carriers.map((c) => c.id));
+  const inFlight = new Map(
+    carriers.map((c) => [c.id, inFlightForCarrier(c.id)]),
+  );
 
   return (
     <div>
@@ -40,37 +50,57 @@ export default async function CarriersList() {
               <th className="font-medium">Host</th>
               <th className="font-medium">Transport</th>
               <th className="font-medium">Auth</th>
-              <th className="font-medium">Channels</th>
+              <th className="font-medium text-right">Channels</th>
+              <th className="font-medium text-right">In flight</th>
+              <th className="font-medium text-right">Plans</th>
               <th className="font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
-            {carriers.map((c) => (
-              <tr key={c.id} className="border-b border-border/50">
-                <td className="py-3">
-                  <Link href={`/carriers/${c.id}`} className="hover:underline">
-                    {c.name}
-                  </Link>
-                </td>
-                <td className="font-mono text-fg-muted">
-                  {c.host}:{c.port}
-                </td>
-                <td className="text-fg-muted">{c.transport}</td>
-                <td className="text-fg-muted">{c.auth_mode}</td>
-                <td className="text-fg-muted tabular-nums">{c.max_channels}</td>
-                <td>
-                  {c.enabled ? (
-                    <span className="bg-success/15 text-success border border-success/50 px-2 py-0.5 rounded text-xs">
-                      ENABLED
+            {carriers.map((c) => {
+              const live = inFlight.get(c.id) ?? 0;
+              const plans = usedByCount.get(c.id) ?? 0;
+              return (
+                <tr key={c.id} className="border-b border-border/50">
+                  <td className="py-3">
+                    <Link href={`/carriers/${c.id}`} className="hover:underline">
+                      {c.name}
+                    </Link>
+                  </td>
+                  <td className="font-mono text-fg-muted">
+                    {c.host}:{c.port}
+                  </td>
+                  <td className="text-fg-muted">{c.transport}</td>
+                  <td className="text-fg-muted">{c.auth_mode}</td>
+                  <td className="text-fg-muted tabular-nums text-right">
+                    {c.max_channels}
+                  </td>
+                  <td className="tabular-nums text-right">
+                    <span
+                      className={
+                        live > 0 ? 'text-success' : 'text-fg-subtle'
+                      }
+                    >
+                      {live}
                     </span>
-                  ) : (
-                    <span className="bg-card-hover/40 text-fg-muted border border-border px-2 py-0.5 rounded text-xs">
-                      DISABLED
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="tabular-nums text-right text-fg-muted">
+                    {plans}
+                  </td>
+                  <td>
+                    {c.enabled ? (
+                      <span className="bg-success/15 text-success border border-success/50 px-2 py-0.5 rounded text-xs">
+                        ENABLED
+                      </span>
+                    ) : (
+                      <span className="bg-card-hover/40 text-fg-muted border border-border px-2 py-0.5 rounded text-xs">
+                        DISABLED
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

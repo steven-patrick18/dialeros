@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation';
 import {
   getCarrier,
   getRoutePlansForCarrier,
+  inFlightForCarrier,
+  listCarriersForRoutePlan,
   parseCodecs,
   parseDialPlanRules,
   parseDialPrefixes,
@@ -27,6 +29,20 @@ export default async function CarrierDetail({
   const dialPrefixes = parseDialPrefixes(carrier);
   const dialPlanRules = parseDialPlanRules(carrier);
   const usedBy = getRoutePlansForCarrier(id);
+  // Iter 75 — per-plan priority + ports for this carrier (from the
+  // join table). Total in-flight across the dialer for the port-cap
+  // gauge.
+  const usedByDetails = usedBy.map((p) => {
+    const row = listCarriersForRoutePlan(p.id).find(
+      (r) => r.carrier_id === id,
+    );
+    return {
+      plan: p,
+      priority: row?.priority ?? null,
+      ports: row?.ports ?? null,
+    };
+  });
+  const inFlight = inFlightForCarrier(id);
 
   return (
     <div>
@@ -253,21 +269,25 @@ export default async function CarrierDetail({
         <div className="mt-6 border border-border rounded p-4 max-w-4xl">
           <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
             Used by route plans ({usedBy.length})
+            <span className="text-fg-subtle normal-case tracking-normal ml-2">
+              · {inFlight} in-flight now across the dialer
+            </span>
           </h2>
           <ul className="space-y-1 text-sm">
-            {usedBy.map((p) => (
-              <li key={p.id}>
+            {usedByDetails.map(({ plan, priority, ports }) => (
+              <li key={plan.id} className="flex items-center gap-3">
                 <Link
-                  href={`/route-plans/${p.id}`}
+                  href={`/route-plans/${plan.id}`}
                   className="hover:underline"
                 >
-                  {p.name}
+                  {plan.name}
                 </Link>
-                <span className="text-fg-subtle ml-2 text-xs">
-                  {p.primary_carrier_id === carrier.id
-                    ? '(primary)'
-                    : '(failover)'}
-                </span>
+                {priority !== null && ports !== null && (
+                  <span className="text-fg-subtle text-xs font-mono">
+                    priority {priority} · {ports} port
+                    {ports === 1 ? '' : 's'}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

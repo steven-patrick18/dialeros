@@ -1,9 +1,8 @@
-﻿import Link from 'next/link';
+import Link from 'next/link';
 import {
-  getCarrier,
   listCarriers,
+  listCarriersForRoutePlan,
   listRoutePlans,
-  parseFailoverIds,
 } from '@dialeros/control-plane';
 
 export const dynamic = 'force-dynamic';
@@ -13,6 +12,13 @@ export default async function RoutePlansList() {
   const carriers = listCarriers();
   const carrierName = new Map(carriers.map((c) => [c.id, c.name]));
   const hasCarriers = carriers.length > 0;
+
+  // Iter 75 — show every attached carrier with its priority, not just
+  // primary + failovers. Same priority across rows = round-robin
+  // within that tier, which the pacer respects.
+  const planCarriers = new Map(
+    plans.map((p) => [p.id, listCarriersForRoutePlan(p.id)]),
+  );
 
   return (
     <div>
@@ -29,9 +35,10 @@ export default async function RoutePlansList() {
       </div>
 
       <p className="text-fg-subtle text-sm mb-6 max-w-2xl">
-        A route plan bundles a primary carrier, optional failovers, caller-ID
-        strategy, and number transformations. Campaigns reference route plans
-        by name when dialing.
+        A route plan bundles one or more carriers (with priority + port
+        allocation per carrier), a caller-ID strategy, and number
+        transformations. Campaigns reference route plans by name when
+        dialing.
       </p>
 
       {!hasCarriers ? (
@@ -58,15 +65,14 @@ export default async function RoutePlansList() {
           <thead className="text-left text-fg-subtle border-b border-border">
             <tr>
               <th className="py-2 font-medium">Name</th>
-              <th className="font-medium">Primary carrier</th>
-              <th className="font-medium">Failovers</th>
+              <th className="font-medium">Carriers (priority · ports)</th>
               <th className="font-medium">CID</th>
               <th className="font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
             {plans.map((p) => {
-              const failovers = parseFailoverIds(p);
+              const rows = planCarriers.get(p.id) ?? [];
               return (
                 <tr key={p.id} className="border-b border-border/50">
                   <td className="py-3">
@@ -77,17 +83,26 @@ export default async function RoutePlansList() {
                       {p.name}
                     </Link>
                   </td>
-                  <td className="text-fg-muted">
-                    {carrierName.get(p.primary_carrier_id) ?? (
-                      <span className="text-error">missing</span>
+                  <td className="text-fg-muted text-xs">
+                    {rows.length === 0 ? (
+                      <span className="text-error">none attached</span>
+                    ) : (
+                      rows.map((r, idx) => {
+                        const name = carrierName.get(r.carrier_id) ?? '?';
+                        return (
+                          <span key={r.id}>
+                            {idx > 0 && (
+                              <span className="text-fg-subtle"> · </span>
+                            )}
+                            <span className="text-fg">{name}</span>
+                            <span className="text-fg-subtle">
+                              {' '}
+                              (p{r.priority}/{r.ports})
+                            </span>
+                          </span>
+                        );
+                      })
                     )}
-                  </td>
-                  <td className="text-fg-muted">
-                    {failovers.length === 0
-                      ? 'â€”'
-                      : failovers
-                          .map((id) => carrierName.get(id) ?? '?')
-                          .join(', ')}
                   </td>
                   <td className="text-fg-muted">{p.cid_strategy}</td>
                   <td>
