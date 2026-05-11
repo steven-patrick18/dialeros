@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import {
+  closeSimulatedDialIntent,
   countDialIntentsForCampaign,
   getAvailableAgentsForCampaign,
   getCampaignFromDb,
@@ -21,6 +22,7 @@ import {
   markLeadDialed,
   parseNodeRoles,
   popHopperLead,
+  reapStaleDialIntents,
   refillHopper,
   type CampaignRecord,
   type CarrierRecord,
@@ -687,6 +689,11 @@ export async function paceCampaignOnce(
     markLeadDialed(lead.lead_id, 'DIALING');
   } else {
     markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
+    // Iter 77 — simulated rows have no FS event flow to ever close
+    // them, so without this they'd hang as "in-flight" forever and
+    // saturate remote-agent line counts / carrier port caps. Close
+    // immediately by stamping hangup_at = ts.
+    closeSimulatedDialIntent(intent.id);
   }
 
   container().bus.emit(`intent:${campaignId}`, intent);
@@ -810,6 +817,12 @@ export function resumeActivePacers(): { started: number } {
   // same boot path. Idempotent + delayed-start so crash loops don't
   // hammer the filesystem.
   ensureRecordingRetentionSweep();
+  // Iter 77 — boot-time + periodic sweep for stale dial_intents.
+  // Without this, a live call whose FS event listener missed the
+  // CHANNEL_DESTROY can pin a remote-agent line / carrier port
+  // forever. One-shot reap at boot clears anything left behind by
+  // the previous process; setInterval keeps things tidy at runtime.
+  ensureIntentReaper();
   // Iter 61 — make sure the local box is registered as a node
   // (web + database + telephony) before anything else asks the
   // node table for a telephony host.
@@ -832,6 +845,42 @@ export function resumeActivePacers(): { started: number } {
     }
   }
   return { started };
+}
+
+/** Iter 77 — start the periodic stale-intent reaper if it isn't
+ * already running. One-shot at startup + every 60s thereafter. Safe
+ * to call repeatedly; the timer is stored on globalThis so hot
+ * reloads don't double-schedule. */
+function ensureIntentReaper(): void {
+  // Boot pass — sweep whatever the previous process left hung.
+  try {
+    const n = reapStaleDialIntents(300);
+    if (n > 0) {
+      // eslint-disable-next-line no-console
+      console.info(`[boot] reaped ${n} stale live dial intent(s)`);
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[boot] intent reaper failed', e);
+  }
+  const g = globalThis as typeof globalThis & {
+    __dialeros_intent_reaper?: NodeJS.Timeout;
+  };
+  if (g.__dialeros_intent_reaper) return;
+  g.__dialeros_intent_reaper = setInterval(() => {
+    try {
+      const n = reapStaleDialIntents(300);
+      if (n > 0) {
+        // eslint-disable-next-line no-console
+        console.info(`[reaper] reaped ${n} stale live dial intent(s)`);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[reaper] failed', e);
+    }
+  }, 60_000);
+  // Don't hold the process open on the timer (lets unit tests exit).
+  g.__dialeros_intent_reaper.unref?.();
 }
 
 export function listIntentsForCampaign(

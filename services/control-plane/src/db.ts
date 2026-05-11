@@ -1426,10 +1426,16 @@ export function replaceRoutePlanCarriers(
 /** In-flight (un-hung-up) call count for a carrier across ALL route
  * plans. Used by the pacer's port-cap gate. */
 export function inFlightForCarrier(carrierId: string): number {
+  // Iter 77 — only live calls occupy a real trunk port. Simulated
+  // ticks write dial_intent rows for visibility but never go to FS,
+  // so they have no FS event flow to ever set hangup_at. Counting
+  // them would permanently inflate the port-cap gauge.
   const row = db()
     .prepare(
       `SELECT COUNT(*) AS n FROM dial_intents
-        WHERE carrier_id = ? AND hangup_at IS NULL`,
+        WHERE carrier_id = ?
+          AND hangup_at IS NULL
+          AND kind = 'live'`,
     )
     .get(carrierId) as { n: number };
   return Number(row.n);
@@ -1970,14 +1976,65 @@ export function insertDialIntent(rec: {
  * pacer to skip remote agents that already have `lines` calls live.
  */
 export function inFlightForRemoteAgent(remoteAgentId: string): number {
+  // Iter 77 — see inFlightForCarrier: only live calls occupy a real
+  // SIP line on the remote endpoint. Simulated rows would otherwise
+  // permanently saturate capacity because there's no FS event flow
+  // to ever close them.
   const row = db()
     .prepare(
       `SELECT COUNT(*) AS n
          FROM dial_intents
-        WHERE remote_agent_id = ? AND hangup_at IS NULL`,
+        WHERE remote_agent_id = ?
+          AND hangup_at IS NULL
+          AND kind = 'live'`,
     )
     .get(remoteAgentId) as { n: number };
   return row.n;
+}
+
+/** Iter 77 — close a dial_intent by id, stamping hangup_at = ts so
+ * the row doesn't sit "in-flight" forever. Used for simulated rows
+ * which have no FS event flow to update them naturally. */
+export function closeSimulatedDialIntent(intentId: number): void {
+  db()
+    .prepare(
+      `UPDATE dial_intents
+          SET hangup_at = ts
+        WHERE id = ? AND hangup_at IS NULL AND kind = 'simulated'`,
+    )
+    .run(intentId);
+}
+
+/** Iter 77 — mark live dial_intents that never received a hangup
+ * event as hung. The FS event listener normally updates hangup_at
+ * when CHANNEL_DESTROY arrives, but if the listener is restarted
+ * mid-call, the carrier never delivers BYE, or the call_uuid never
+ * came back — those rows can sit "in-flight" forever and pin port
+ * caps / remote-agent line capacity. Returns the count of rows
+ * reaped.
+ *
+ * Threshold defaults to 300s (5 min) which covers normal call
+ * length with a generous safety margin. The annotation lands in
+ * originate_error so an admin can grep audit / dial_intents to see
+ * what was reaped. */
+export function reapStaleDialIntents(maxAgeSeconds = 300): number {
+  const result = db()
+    .prepare(
+      `UPDATE dial_intents
+          SET hangup_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+              originate_error = COALESCE(
+                originate_error,
+                ?
+              )
+        WHERE hangup_at IS NULL
+          AND kind = 'live'
+          AND strftime('%s', 'now') - strftime('%s', ts) > ?`,
+    )
+    .run(
+      `reaped: no hangup event within ${maxAgeSeconds}s`,
+      maxAgeSeconds,
+    );
+  return Number(result.changes);
 }
 
 /**

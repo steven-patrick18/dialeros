@@ -250,7 +250,11 @@ export {
   setRoutePlanCarriers,
 } from './route-plan';
 export type { PlanCarrierRow } from './route-plan';
-export { inFlightForCarrier, countRoutePlansPerCarrier } from './db';
+export {
+  inFlightForCarrier,
+  countRoutePlansPerCarrier,
+  reapStaleDialIntents,
+} from './db';
 export type { RoutePlanCarrierRecord } from './db';
 
 // CID groups (iter 72)
