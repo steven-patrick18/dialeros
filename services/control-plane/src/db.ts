@@ -498,6 +498,12 @@ function db(): DatabaseSync {
     // carrier. NULL on old rows + simulated calls.
     "ALTER TABLE dial_intents ADD COLUMN carrier_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_dial_intents_carrier ON dial_intents(carrier_id, hangup_at)",
+    // Iter 90: each Remote Agent can be backed by a real User + Phone
+    // identity. The User can sign in via browser / hard phone / SIP
+    // device and become a regular bridge target. NULL until the
+    // operator provisions one from the Remote Agent detail page.
+    "ALTER TABLE remote_agents ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE SET NULL",
+    "CREATE INDEX IF NOT EXISTS idx_remote_agents_user ON remote_agents(user_id)",
   ];
   for (const sql of migrations) {
     try {
@@ -3887,6 +3893,10 @@ export interface RemoteAgentRecord {
   campaign_id: string | null;
   lines: number;
   enabled: number;
+  /** Iter 90 — auto-provisioned user that backs this remote agent.
+   * The user has a primary Phone matching the remote agent's
+   * extension, and can register from a hard phone / softphone. */
+  user_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -3941,6 +3951,9 @@ export function updateRemoteAgentFields(
     campaign_id: string | null;
     lines: number;
     enabled: boolean;
+    /** Iter 90 — link to the auto-provisioned User backing this
+     * remote agent. */
+    user_id: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

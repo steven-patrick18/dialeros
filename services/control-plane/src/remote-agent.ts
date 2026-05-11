@@ -1,10 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   deleteRemoteAgentFromDb,
   getCampaignFromDb,
   getNodeFromDb,
+  getPrimaryPhoneForUser,
   getRemoteAgentFromDb,
+  getUserById,
+  getUserByUsername,
   inFlightForRemoteAgent,
   insertRemoteAgent,
   listRemoteAgentsFromDb,
@@ -12,6 +15,8 @@ import {
   updateRemoteAgentFields,
   type RemoteAgentRecord,
 } from './db';
+import { createUser } from './user-mgmt';
+import { createPhone, updatePhone } from './phone';
 
 // Iter 57 — external SIP endpoints (hard phones at remote offices,
 // shared trunks to a partner contact centre, etc.) that participate
@@ -205,6 +210,170 @@ export function listRemoteAgentsWithCapacity(
     out.push({ agent: r, available });
   }
   return out;
+}
+
+/** Iter 90 — turn a remote agent's name into a username that passes
+ * CreateUserInputSchema (lowercase, [a-z0-9_-]+, len 3..64).
+ * "Remote_Agent01" → "remote_agent01". A `remote-` prefix is added
+ * if the result collides with an existing username, then `-2`,
+ * `-3` … to disambiguate. Length is clamped to 64. */
+function sanitizeUsername(name: string): string {
+  let base = name.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  if (base.length < 3) base = `remote-${base}`;
+  if (base.length > 64) base = base.slice(0, 64);
+  let candidate = base;
+  let suffix = 2;
+  while (getUserByUsername(candidate)) {
+    const tail = `-${suffix++}`;
+    candidate = base.slice(0, 64 - tail.length) + tail;
+    if (suffix > 999) throw new Error('cannot find a free username');
+  }
+  return candidate;
+}
+
+export interface ProvisionUserResult {
+  user_id: string;
+  username: string;
+  phone_id: string;
+  extension: string;
+  /** Plaintext SIP password. Returned ONCE — the caller surfaces it
+   * to the operator so the hard phone / softphone can be
+   * configured. Not retrievable afterwards (the phones table stores
+   * it but the API doesn't read it back to keep blast radius
+   * small). */
+  sip_password: string;
+  /** Plaintext browser-login password — generated, returned once.
+   * Stored only as a hash in users.password_hash. The operator
+   * either hands it to the agent or resets it later from /users. */
+  login_password: string;
+}
+
+/** Iter 90 — back a Remote Agent with a real User + Phone so the
+ * external hard-phone / partner SIP endpoint has a first-class
+ * identity in the system. Once provisioned:
+ *   - The User shows up in /users like any other agent.
+ *   - The Phone is registered with FS at the remote agent's
+ *     extension; the hard phone uses the returned SIP password to
+ *     register.
+ *   - Bridges to user/<extension> land on the registered hard
+ *     phone (or browser softphone if the user signs in via the web
+ *     console too).
+ *   - remote_agents.user_id holds the link so the UI can show
+ *     "this Remote Agent is backed by <username>". */
+export function provisionUserForRemoteAgent(
+  remoteAgentId: string,
+): ProvisionUserResult | { error: string } {
+  const agent = getRemoteAgentFromDb(remoteAgentId);
+  if (!agent) return { error: 'remote agent not found' };
+  if (agent.user_id) {
+    return {
+      error: 'remote agent already has a backing user — unlink first',
+    };
+  }
+  if (!agent.extension) {
+    return {
+      error:
+        'remote agent has no extension set — edit it first so the phone has a SIP extension',
+    };
+  }
+  const username = sanitizeUsername(agent.name);
+  const sipPassword = randomBytes(9).toString('base64url');
+  const loginPassword = randomBytes(9).toString('base64url');
+
+  // createUser auto-provisions a primary phone at the next free
+  // 10xx slot. We override it below to match the remote agent's
+  // extension so the SIP endpoint registers at the right place.
+  let userResult: { id: string };
+  try {
+    userResult = createUser({
+      username,
+      password: loginPassword,
+      role: 'agent',
+      display_name: agent.name,
+      skill_tier: 'new',
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { error: `failed to create user: ${msg}` };
+  }
+
+  // The auto-phone may already be at the correct extension if the
+  // remote agent's extension happens to be 3-6 digits matching the
+  // sanitized username; otherwise the auto-phone is at next-free
+  // 10xx. Either way we patch it to the remote agent's extension
+  // and set the SIP password.
+  const auto = getPrimaryPhoneForUser(userResult.id);
+  let phoneId: string;
+  if (auto && auto.extension !== agent.extension) {
+    const upd = updatePhone(auto.id, {
+      extension: agent.extension,
+      password: sipPassword,
+    });
+    if ('error' in upd) {
+      return { error: `failed to set phone extension: ${upd.error}` };
+    }
+    phoneId = auto.id;
+  } else if (auto) {
+    // Same extension already; just reset the password to the
+    // generated one so we can return it to the operator.
+    const upd = updatePhone(auto.id, { password: sipPassword });
+    if ('error' in upd) {
+      return { error: `failed to reset phone password: ${upd.error}` };
+    }
+    phoneId = auto.id;
+  } else {
+    // Auto-provision failed (e.g. 10xx slots exhausted) — create a
+    // phone directly at the agent's extension.
+    const create = createPhone(userResult.id, {
+      extension: agent.extension,
+      password: sipPassword,
+      protocol: 'sip',
+      is_primary: true,
+      telephony_node_id: agent.telephony_node_id ?? null,
+    });
+    if ('error' in create) {
+      return { error: `failed to create phone: ${create.error}` };
+    }
+    phoneId = create.id;
+  }
+
+  updateRemoteAgentFields(agent.id, { user_id: userResult.id });
+
+  return {
+    user_id: userResult.id,
+    username,
+    phone_id: phoneId,
+    extension: agent.extension,
+    sip_password: sipPassword,
+    login_password: loginPassword,
+  };
+}
+
+/** Iter 90 — break the link without deleting either side. The User
+ * + Phone keep existing (operator can clean them up in /users if
+ * desired). */
+export function unlinkRemoteAgentUser(remoteAgentId: string): boolean {
+  const agent = getRemoteAgentFromDb(remoteAgentId);
+  if (!agent || !agent.user_id) return false;
+  return updateRemoteAgentFields(agent.id, { user_id: null });
+}
+
+/** Iter 90 — fetch the backing user record (if any) so the UI can
+ * show "linked to <username>". */
+export function getRemoteAgentUser(remoteAgentId: string) {
+  const agent = getRemoteAgentFromDb(remoteAgentId);
+  if (!agent || !agent.user_id) return null;
+  const user = getUserById(agent.user_id);
+  if (!user) return null;
+  const phone = getPrimaryPhoneForUser(user.id);
+  return {
+    user_id: user.id,
+    username: user.username,
+    display_name: user.display_name,
+    is_active: user.is_active === 1,
+    phone_id: phone?.id ?? null,
+    extension: phone?.extension ?? null,
+  };
 }
 
 export type { RemoteAgentRecord };

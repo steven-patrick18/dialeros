@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
   getRemoteAgent,
+  getRemoteAgentUser,
   listCampaigns,
   listNodesFromDb,
   parseNodeRoles,
@@ -9,6 +10,7 @@ import {
 import { getCurrentUser } from '@/lib/session';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteRemoteAgentButton } from './delete-button';
+import { BackingUserPanel } from './backing-user';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,6 +124,17 @@ export default async function RemoteAgentDetail({
               hint: 'Disabled remote agents stay in inventory but contribute zero lines to the pacer.',
             },
           ]}
+        />
+      </div>
+
+      {/* Iter 90 — auto-provisioned User + Phone backing this remote
+          agent. Either "no link → provision" or "linked → show
+          username + extension + unlink". */}
+      <div className="max-w-2xl mb-6">
+        <BackingUserPanel
+          remoteAgentId={r.id}
+          extension={r.extension}
+          existing={getRemoteAgentUser(r.id)}
         />
       </div>
 
