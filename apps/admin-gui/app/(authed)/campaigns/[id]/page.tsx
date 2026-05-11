@@ -242,6 +242,12 @@ function BasicTab({
           )}
         </Card>
 
+        {/* Iter 86 — Basic Pacing card is now ViciDial-style minimal:
+            just dial_mode + dial_level. Advanced fields
+            (base_ratio + max_abandon_pct) live on the Detail tab
+            so the day-one operator sees only the two knobs that
+            actually matter.
+         */}
         <InlineCardForm
           title="Pacing"
           endpoint={`/api/campaigns/${c.id}`}
@@ -262,7 +268,7 @@ function BasicTab({
                   label: 'live — bgapi originate via FreeSWITCH',
                 },
               ],
-              hint: "simulated inserts a dial-intent row only — useful for QA, training, traffic shape testing. live calls FreeSWITCH bgapi originate against the route plan's primary-carrier gateway. Default is simulated so an active campaign never accidentally places real calls.",
+              hint: 'simulated = writes a dial-intent row but never goes to FS. live = real bgapi originate via the route plan.',
             },
             {
               type: 'number',
@@ -272,30 +278,10 @@ function BasicTab({
               min: 0.1,
               max: 10,
               step: 0.1,
-              hint: 'ViciDial-style multiplier. Per tick the pacer originates floor(active_agents × dial_level) calls. 1.0 = power dial 1:1; 1.5 = predictive 1.5x; 2.0 = aggressive predictive.',
-            },
-            {
-              type: 'number',
-              name: 'base_ratio',
-              label: 'Base ratio',
-              value: c.base_ratio,
-              min: 0.5,
-              max: 10,
-              step: 0.1,
-              hint: 'Legacy field. Calls placed per available agent. 1.0 = progressive. Most setups should use dial_level above instead.',
-            },
-            {
-              type: 'number',
-              name: 'max_abandon_pct',
-              label: 'Max abandon %',
-              value: c.max_abandon_pct,
-              min: 0,
-              max: 100,
-              step: 0.1,
-              hint: 'Maximum % of calls allowed to drop because no agent was free. Predictive pacers throttle when this ceiling is hit. US TCPA compliance is typically ≤3%.',
+              hint: 'ViciDial-style multiplier. Per tick the pacer fires floor((local_agents + remote_lines) × dial_level) calls. 1.0 = power dial 1:1. 2.0 = fire 2× the pool so calls keep flowing even with carrier rejects / no-answers.',
             },
           ]}
-          helpText="Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart."
+          helpText="Live edits hot-reload into the pacer on the next tick. Advanced fields (base_ratio, max_abandon_%) are on the Detail tab."
         />
 
         <div>
@@ -370,49 +356,36 @@ function BasicTab({
               delivering calls.
             </p>
           )}
+        {/* Iter 86 — per-tick math is now ViciDial-style:
+              target = floor(total_remote_lines × dial_level)
+            i.e. dial_level is an over-dial multiplier on the
+            configured capacity, not on what's available right
+            now. With lines=5 and dial_level=2 you get 10 originates
+            per tick regardless of how many are already in-flight;
+            the carrier port cap throttles at the trunk level.
+         */}
         {c.status === 'active' &&
           activeAgents.length === 0 &&
-          remoteLinesTotal > 0 &&
-          remoteCapacity > 0 && (
+          remoteLinesTotal > 0 && (
             <p className="bg-card-hover/40 text-fg-muted border border-border rounded mt-3 px-3 py-2 text-xs">
               {remoteInFlight} / {remoteLinesTotal} remote line
-              {remoteLinesTotal === 1 ? '' : 's'} in flight ·{' '}
-              {remoteCapacity} available. Per-tick target:{' '}
+              {remoteLinesTotal === 1 ? '' : 's'} in flight. Per-tick
+              target:{' '}
               <span className="font-mono">
-                floor({remoteCapacity} × {c.dial_level}) ={' '}
+                floor({remoteLinesTotal} × {c.dial_level}) ={' '}
                 {Math.max(
                   1,
-                  Math.floor(remoteCapacity * (c.dial_level || 1)),
+                  Math.floor(remoteLinesTotal * (c.dial_level || 1)),
                 )}
               </span>{' '}
               call
               {Math.max(
                 1,
-                Math.floor(remoteCapacity * (c.dial_level || 1)),
+                Math.floor(remoteLinesTotal * (c.dial_level || 1)),
               ) === 1
                 ? ''
                 : 's'}{' '}
               this tick.
-            </p>
-          )}
-        {c.status === 'active' &&
-          activeAgents.length === 0 &&
-          remoteLinesTotal > 0 &&
-          remoteCapacity === 0 && (
-            <p className="bg-warn/10 text-warn border border-warn/40 rounded mt-3 px-3 py-2 text-xs">
-              Remote agent at capacity — {remoteInFlight} call
-              {remoteInFlight === 1 ? '' : 's'} in flight against{' '}
-              {remoteLinesTotal} configured line
-              {remoteLinesTotal === 1 ? '' : 's'}. Pacer is waiting for
-              in-flight to drain before dialing the next call. Increase
-              the agent&apos;s line count in{' '}
-              <Link
-                href="/remote-agents"
-                className="underline hover:text-fg"
-              >
-                Remote Agents
-              </Link>{' '}
-              if you want more concurrency.
             </p>
           )}
         {c.status === 'active' && !insideWindow && (
@@ -443,6 +416,40 @@ function DetailTab({
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mb-6">
+        {/* Iter 86 — Advanced pacing knobs moved off the Basic tab so
+            that page has just the two dials operators touch daily
+            (dial_mode + dial_level). These are still editable and
+            live-reload the pacer, just out of the way.
+         */}
+        <InlineCardForm
+          title="Advanced pacing"
+          endpoint={`/api/campaigns/${c.id}`}
+          layout="rows"
+          fields={[
+            {
+              type: 'number',
+              name: 'base_ratio',
+              label: 'Base ratio',
+              value: c.base_ratio,
+              min: 0.5,
+              max: 10,
+              step: 0.1,
+              hint: 'Legacy. Calls placed per available agent. Most setups should use Dial level (Basic tab) instead.',
+            },
+            {
+              type: 'number',
+              name: 'max_abandon_pct',
+              label: 'Max abandon %',
+              value: c.max_abandon_pct,
+              min: 0,
+              max: 100,
+              step: 0.1,
+              hint: 'Maximum % of calls allowed to drop because no agent was free. US TCPA compliance is typically ≤3%.',
+            },
+          ]}
+          helpText="Day-to-day dialing rarely needs these. Set once and forget."
+        />
+
         <InlineCardForm
           title="On answer behaviour"
           endpoint={`/api/campaigns/${c.id}`}
@@ -625,7 +632,10 @@ function RealtimeTab({
   remoteLinesTotal: number;
   remoteInFlight: number;
 }) {
-  const poolSize = activeAgents + remoteCapacity;
+  // Iter 86 — math is now over-dial against CONFIGURED capacity.
+  // remoteCapacity (= available) shown separately for live load
+  // visibility, not used in the target formula.
+  const poolSize = activeAgents + remoteLinesTotal;
   const target =
     poolSize > 0
       ? Math.max(1, Math.floor(poolSize * (c.dial_level || 1)))
@@ -643,12 +653,11 @@ function RealtimeTab({
         />
         <p className="text-xs text-fg-subtle mt-3">
           Pool: {activeAgents} local agent
-          {activeAgents === 1 ? '' : 's'} ·{' '}
-          {remoteInFlight}/{remoteLinesTotal} remote line
-          {remoteLinesTotal === 1 ? '' : 's'} in flight ({remoteCapacity}{' '}
-          available) ={' '}
-          <span className="font-mono">{poolSize}</span> available slot
-          {poolSize === 1 ? '' : 's'}. Per-tick target:{' '}
+          {activeAgents === 1 ? '' : 's'} + {remoteLinesTotal} remote
+          line{remoteLinesTotal === 1 ? '' : 's'} (configured) ={' '}
+          <span className="font-mono">{poolSize}</span> slot
+          {poolSize === 1 ? '' : 's'}. Currently {remoteInFlight} in
+          flight · {remoteCapacity} idle. Per-tick target:{' '}
           <span className="font-mono">
             floor({poolSize} × {c.dial_level}) = {target}
           </span>{' '}

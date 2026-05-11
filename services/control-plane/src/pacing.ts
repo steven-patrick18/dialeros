@@ -381,10 +381,16 @@ function buildBridgePool(
   localAgents: Array<{ id: string; username: string }>,
   remote: Array<{ agent: RemoteAgentRecord; available: number }>,
 ): BridgeTarget[] {
+  // Iter 86 — pool sizes by CONFIGURED lines, not currently-available
+  // ones. ViciDial-style over-dialing fires more originates than the
+  // remote agent can answer simultaneously; the bridge attempt on the
+  // FS side handles the saturated case as an abandoned call.
+  // Originating only against `available` made dial_level > 1 a no-op
+  // because the pool kept hitting zero.
   const pool: BridgeTarget[] = [];
   for (const a of localAgents) pool.push({ kind: 'local', agent: a });
-  for (const { agent, available } of remote) {
-    for (let i = 0; i < available; i++) {
+  for (const { agent } of remote) {
+    for (let i = 0; i < agent.lines; i++) {
       pool.push({ kind: 'remote', agent });
     }
   }
@@ -445,8 +451,18 @@ export async function paceCampaignOnce(
   // below from both pools combined.
   const agents = getAvailableAgentsForCampaign(campaignId);
   const remoteSlots = listRemoteAgentsWithCapacity(campaignId);
-  const remoteCapacity = remoteSlots.reduce((s, r) => s + r.available, 0);
-  if (agents.length === 0 && remoteCapacity === 0) {
+  // Iter 86 — bail only when nothing is CONFIGURED (no local agents
+  // logged in AND no remote-agent lines configured). Previously the
+  // bail used `available` capacity, which meant over-dialed calls
+  // (dial_level > 1) would short-circuit as soon as all current
+  // lines were busy — defeating the point of dial_level > 1.
+  // Over-dial is intentional: extras get abandoned in FS when the
+  // bridge target is saturated, matching ViciDial behavior.
+  const remoteLinesTotal = remoteSlots.reduce(
+    (s, r) => s + r.agent.lines,
+    0,
+  );
+  if (agents.length === 0 && remoteLinesTotal === 0) {
     return { outcome: 'no_agents' };
   }
 
@@ -784,12 +800,23 @@ export function startPacer(campaignId: string): boolean {
     try {
       const c = getCampaignFromDb(campaignId);
       if (!c) return;
+      // Iter 86 — ViciDial-style pacing math:
+      //   target = floor((active_local_agents + total_remote_lines) × dial_level)
+      // Note: total_remote_lines is the CONFIGURED capacity, not
+      // what's currently available. dial_level > 1 is meant to
+      // OVER-DIAL — fire more originates than seats so that the
+      // ones that get rejected / no-answer don't starve the pool.
+      // The per-(plan, carrier) port cap (iter 74) still throttles
+      // at the trunk level so we never push more than the carrier
+      // can handle. ViciDial's max_abandon% kicks in as a separate
+      // safety on the carrier-rejected fraction.
       const localAgents = getAvailableAgentsForCampaign(campaignId);
-      const remoteAvailable = listRemoteAgentsWithCapacity(campaignId).reduce(
-        (sum, r) => sum + r.available,
+      const remoteSlots = listRemoteAgentsWithCapacity(campaignId);
+      const remoteLinesTotal = remoteSlots.reduce(
+        (sum, r) => sum + r.agent.lines,
         0,
       );
-      const poolSize = localAgents.length + remoteAvailable;
+      const poolSize = localAgents.length + remoteLinesTotal;
       if (poolSize === 0) return;
       const target = Math.max(
         1,
