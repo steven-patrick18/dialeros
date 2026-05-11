@@ -15,6 +15,7 @@ import {
   leadCountFor,
   listInGroups,
   listLeadLists,
+  listRemoteAgentsWithCapacity,
   totalIntentsFor,
 } from '@dialeros/control-plane';
 import { StatusToggle } from './status-toggle';
@@ -56,6 +57,14 @@ export default async function CampaignDetail({
     0,
   );
   const activeAgents = getActiveAgentsForCampaign(id);
+  // Iter 73 — pool size for the "no agents" banner now also counts
+  // remote agents (external SIP endpoints assigned to this campaign
+  // or the shared pool) so a campaign staffed entirely by remotes
+  // doesn't show the misleading "pacer cannot dial" warning.
+  const remoteCapacity = listRemoteAgentsWithCapacity(id).reduce(
+    (s, r) => s + r.available,
+    0,
+  );
   const insideWindow = isCampaignWithinCallWindow(c);
   const hopperDepth = hopperSize(id);
   const inGroupIds = getCampaignInGroups(id);
@@ -95,6 +104,7 @@ export default async function CampaignDetail({
           isInbound={isInbound}
           hopperDepth={hopperDepth}
           activeAgents={activeAgents}
+          remoteCapacity={remoteCapacity}
           insideWindow={insideWindow}
         />
       )}
@@ -112,7 +122,11 @@ export default async function CampaignDetail({
       )}
 
       {tab === 'realtime' && (
-        <RealtimeTab c={c} activeAgents={activeAgents.length} />
+        <RealtimeTab
+          c={c}
+          activeAgents={activeAgents.length}
+          remoteCapacity={remoteCapacity}
+        />
       )}
     </div>
   );
@@ -126,6 +140,7 @@ function BasicTab({
   isInbound,
   hopperDepth,
   activeAgents,
+  remoteCapacity,
   insideWindow,
 }: {
   c: ReturnType<typeof getCampaign> & {};
@@ -135,6 +150,7 @@ function BasicTab({
   isInbound: boolean;
   hopperDepth: number;
   activeAgents: ReturnType<typeof getActiveAgentsForCampaign>;
+  remoteCapacity: number;
   insideWindow: boolean;
 }) {
   return (
@@ -321,12 +337,29 @@ function BasicTab({
           ACTIVE starts the pacer (one dial intent every ~3s, round-robin
           across active attached agents). PAUSED / ARCHIVED stops it.
         </p>
-        {c.status === 'active' && activeAgents.length === 0 && (
-          <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
-            No active agents attached — pacer is running but cannot dial.
-            Attach an active agent below to start delivering calls.
-          </p>
-        )}
+        {c.status === 'active' &&
+          activeAgents.length === 0 &&
+          remoteCapacity === 0 && (
+            <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
+              No active agents attached — pacer is running but cannot dial.
+              Attach an active agent below or assign a remote agent to start
+              delivering calls.
+            </p>
+          )}
+        {c.status === 'active' &&
+          activeAgents.length === 0 &&
+          remoteCapacity > 0 && (
+            <p className="bg-card-hover/40 text-fg-muted border border-border rounded mt-3 px-3 py-2 text-xs">
+              {remoteCapacity} remote line{remoteCapacity === 1 ? '' : 's'}{' '}
+              available — pacer will dial via remote agent
+              {remoteCapacity === 1 ? '' : 's'}. Per-tick target:{' '}
+              <span className="font-mono">
+                floor({remoteCapacity} × {c.dial_level}) ={' '}
+                {Math.max(1, Math.floor(remoteCapacity * (c.dial_level || 1)))}
+              </span>{' '}
+              call{Math.max(1, Math.floor(remoteCapacity * (c.dial_level || 1))) === 1 ? '' : 's'}.
+            </p>
+          )}
         {c.status === 'active' && !insideWindow && (
           <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
             Outside the configured call window
@@ -527,10 +560,16 @@ function ListMixTab({
 function RealtimeTab({
   c,
   activeAgents,
+  remoteCapacity,
 }: {
   c: ReturnType<typeof getCampaign> & {};
   activeAgents: number;
+  remoteCapacity: number;
 }) {
+  const poolSize = activeAgents + remoteCapacity;
+  const target = poolSize > 0
+    ? Math.max(1, Math.floor(poolSize * (c.dial_level || 1)))
+    : 0;
   return (
     <>
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
@@ -543,8 +582,14 @@ function RealtimeTab({
           initialTotal={totalIntentsFor(c.id)}
         />
         <p className="text-xs text-fg-subtle mt-3">
-          {activeAgents} active agent{activeAgents === 1 ? '' : 's'} eligible.
-          For carrier-level and floor-wide live boards, see{' '}
+          Pool: {activeAgents} local agent{activeAgents === 1 ? '' : 's'} +{' '}
+          {remoteCapacity} remote line{remoteCapacity === 1 ? '' : 's'} ={' '}
+          {poolSize}. Per-tick target:{' '}
+          <span className="font-mono">
+            floor({poolSize} × {c.dial_level}) = {target}
+          </span>{' '}
+          call{target === 1 ? '' : 's'}. For carrier-level and floor-wide
+          live boards, see{' '}
           <Link href="/realtime" className="underline hover:text-fg">
             /realtime
           </Link>

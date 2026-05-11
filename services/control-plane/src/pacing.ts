@@ -380,8 +380,20 @@ export async function paceCampaignOnce(
 
   // Iter 40 — paused agents are filtered out so the pacer doesn't
   // bridge live calls to someone who's stepped away.
+  // Iter 73 — fix: bail only when BOTH local and remote pools are
+  // empty. Previously this returned no_agents whenever there were 0
+  // logged-in browser agents, which meant a campaign staffed purely
+  // by a remote SIP endpoint (e.g. an external hard-phone bank)
+  // could never dial — even though listRemoteAgentsWithCapacity
+  // reported free lines. Now the local check is paired with a
+  // remote-line-capacity check; the actual bridge pool is built
+  // below from both pools combined.
   const agents = getAvailableAgentsForCampaign(campaignId);
-  if (agents.length === 0) return { outcome: 'no_agents' };
+  const remoteSlots = listRemoteAgentsWithCapacity(campaignId);
+  const remoteCapacity = remoteSlots.reduce((s, r) => s + r.available, 0);
+  if (agents.length === 0 && remoteCapacity === 0) {
+    return { outcome: 'no_agents' };
+  }
 
   // Iter 49 — pop from the campaign hopper. If it's empty (or below
   // half-full), refill on demand and try again. The refill query is
@@ -436,7 +448,8 @@ export async function paceCampaignOnce(
   // remote_agent_id is set, bridge goes to the raw SIP URI).
   // Iter 59 — remote agents scoped to a campaign: matching agents
   // OR the shared pool (campaign_id IS NULL).
-  const remoteSlots = listRemoteAgentsWithCapacity(campaignId);
+  // Iter 73 — remoteSlots already computed above for the pool-empty
+  // short-circuit; reuse it here.
   const bridgePool = buildBridgePool(agents, remoteSlots);
   const bridgeTarget = pickBridgeTarget(campaignId, bridgePool);
   if (!bridgeTarget) return { outcome: 'no_agents' };
