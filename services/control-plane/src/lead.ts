@@ -5,11 +5,14 @@ import {
   countLeadsInList,
   deleteLeadFromDb,
   deleteLeadListFromDb,
+  findLeadByPhone,
   getCampaignFromDb,
+  getCampaignLeadListIds,
   getLeadById,
   getLeadListFromDb,
   insertLeadList,
   insertLeadsBulk,
+  insertSingleLead,
   leadHangupCauseBreakdown,
   leadListTimezoneBreakdown,
   leadStatusBreakdown,
@@ -448,3 +451,36 @@ export function deleteLead(id: string): boolean {
 
 export type { LeadCallHistoryRow };
 export type { LeadListRecord, LeadRecord, LeadStatusBreakdown } from './db';
+
+/** Iter 93 — find a lead by phone within a campaign's attached
+ * lists, or create one in the first attached list if nothing
+ * matches. Used by the manual-dial path so the dial_intent row
+ * always has a valid lead_id — that's what makes the manual call
+ * show up on the campaign Real-time panel + the lead detail page.
+ *
+ * Returns null when the campaign has no lead lists attached (and
+ * therefore there's nowhere to drop a synthetic lead). Caller
+ * decides whether that's a hard error or a "skip the dial_intent
+ * insert and just audit" fallback. */
+export function findOrCreateLeadForManualDial(
+  phone: string,
+  campaignId: string,
+): string | null {
+  const listIds = getCampaignLeadListIds(campaignId);
+  if (listIds.length === 0) return null;
+  const existing = findLeadByPhone(phone, listIds);
+  if (existing) return existing.id;
+  // No existing lead — synthesize one in the first attached list
+  // so the dial_intent FK stays valid. Tagged with name = "Manual
+  // dial" so an operator scanning the list page sees how it got
+  // there.
+  const id = randomUUID();
+  return insertSingleLead({
+    id,
+    list_id: listIds[0]!,
+    phone,
+    name: 'Manual dial',
+    email: null,
+    status: 'NEW',
+  });
+}

@@ -198,6 +198,11 @@ export interface OriginateOptions {
   /** Iter 55 — absolute path on disk to write the .wav once the call
    * answers. Skipped when undefined. */
   recordingPath?: string;
+  /** Iter 93 — pass our correlation_id through as a channel variable
+   * so the fs-events listener can stamp answered_at/hangup_at back
+   * onto our dial_intent row. Required for manual-dial / test-call
+   * paths that want to show up in real-time + reports. */
+  correlationId?: string;
 }
 
 export async function originate(opts: OriginateOptions): Promise<string> {
@@ -220,11 +225,18 @@ export async function originate(opts: OriginateOptions): Promise<string> {
   if (opts.originateTimeout) {
     channelVars.push(`originate_timeout=${opts.originateTimeout}`);
   }
+  if (opts.correlationId) {
+    channelVars.push(
+      `dialeros_correlation_id=${escapeChannelValue(opts.correlationId)}`,
+    );
+  }
   if (opts.recordingPath) {
     // Iter 55 — record_session writes a stereo .wav (a/b legs on
     // L/R) starting on the originated leg's CHANNEL_ANSWER.
+    // Iter 93 — wrap in single quotes; unquoted space breaks the
+    // FS channel-var parser (same bug iter 79 fixed in the pacer).
     channelVars.push(
-      `execute_on_answer=record_session ${escapeChannelValue(opts.recordingPath)}`,
+      `execute_on_answer='record_session ${escapeChannelValue(opts.recordingPath)}'`,
     );
     channelVars.push('RECORD_STEREO=true');
   }

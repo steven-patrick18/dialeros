@@ -328,6 +328,7 @@ export {
   deleteLead,
   leadCallHistory,
   LeadUpdateInputSchema,
+  findOrCreateLeadForManualDial,
 } from './lead';
 export type { LeadCallHistoryRow, LeadUpdateInput } from './lead';
 export {
@@ -392,7 +393,9 @@ export {
   totalIntentsFor,
   rotateDialPlanCursor,
   isUserRegistered,
+  emitIntentUpdate,
 } from './pacing';
+export { insertDialIntent } from './db';
 export type { PacingTickResult, DialIntentRecord } from './pacing';
 
 // SIP extensions (iter 39 — shared user→extension derivation)

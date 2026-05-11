@@ -1,16 +1,20 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
   applyDialPlanRule,
   carrierAcceptsDestination,
+  emitIntentUpdate,
   extensionForUser,
   findMatchingDialPlanRule,
+  findOrCreateLeadForManualDial,
   getCarrier,
   getPrimaryPhone,
   getRoutePlan,
   getUser,
   getUserCampaignIds,
+  insertDialIntent,
   isDnc,
   listCampaigns,
   normalizePhone,
@@ -181,6 +185,19 @@ export async function POST(req: NextRequest) {
   const primary = getPrimaryPhone(me.id);
   const agentExtension = primary?.extension ?? extensionForUser(me.id);
 
+  // Iter 93 — pre-insert the dial_intent so the manual call shows
+  // up on the campaign Real-time panel and in /realtime live calls.
+  // findOrCreateLeadForManualDial: if a lead with this phone exists
+  // in one of the campaign's lists, attribute the call to that lead
+  // (so it lands on the lead detail page's call history too). Else
+  // synthesize a "Manual dial" lead in the first attached list.
+  // When the campaign has zero lists, leadId is null — we degrade
+  // gracefully by skipping the dial_intent insert (still
+  // originating + auditing) so manual calls don't break on
+  // list-less campaigns.
+  const leadId = findOrCreateLeadForManualDial(dest, campaign.id);
+  const correlationId = randomUUID();
+
   const gateway = gatewayNameFor(carrier);
   let uuid: string;
   try {
@@ -190,6 +207,10 @@ export async function POST(req: NextRequest) {
       callerIdNumber: cid ?? undefined,
       app: `&bridge(user/${agentExtension})`,
       originateTimeout: 30,
+      // Iter 93 — pass the correlation_id so the FS-event listener
+      // can stamp answered_at / hangup_at / hangup_cause back onto
+      // the same dial_intent row, exactly like pacer-driven calls.
+      correlationId,
     });
   } catch (e) {
     const err = e as { code?: string; message?: string };
@@ -216,6 +237,35 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Iter 93 — record this manual dial as a dial_intent so it lights
+  // up the Real-time + Live-calls views identically to pacer
+  // originates. kind='originated' (bgapi already accepted), the
+  // correlation_id matches what we passed to FS so hangup events
+  // settle the row, and emitIntentUpdate pushes the row through
+  // the campaign's SSE channel right away.
+  if (leadId) {
+    try {
+      const intent = insertDialIntent({
+        campaign_id: campaign.id,
+        lead_id: leadId,
+        assigned_user_id: me.id,
+        route_plan_id: route.id,
+        phone: dest,
+        transformed_phone: dialDest,
+        cid_used: cid,
+        kind: 'originated',
+        call_uuid: uuid,
+        correlation_id: correlationId,
+        carrier_id: carrier.id,
+      });
+      emitIntentUpdate(intent);
+    } catch (e) {
+      // Don't fail the dial just because we couldn't surface it —
+      // the call is already in flight. Log and move on.
+      console.error('[manual-dial] insertDialIntent failed', e);
+    }
+  }
+
   appendAudit({
     actorUserId: me.id,
     actorIp: clientIp(req),
@@ -227,6 +277,7 @@ export async function POST(req: NextRequest) {
       to: dest,
       dialed: dialDest,
       cid,
+      lead_id: leadId,
       campaign_name: campaign.name,
     },
   });

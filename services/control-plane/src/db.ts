@@ -1733,6 +1733,61 @@ export function getLeadById(id: string): LeadRecord | undefined {
     .get(id) as unknown as LeadRecord | undefined;
 }
 
+/** Iter 93 — find an existing lead by exact phone match, optionally
+ * scoped to a set of lead lists. Used by the manual-dial path to
+ * attribute the call to the right lead when one exists in the
+ * agent's campaign lists. Returns undefined when nothing matches. */
+export function findLeadByPhone(
+  phone: string,
+  listIds?: string[],
+): LeadRecord | undefined {
+  if (listIds && listIds.length === 0) return undefined;
+  if (!listIds || listIds.length === 0) {
+    return db()
+      .prepare(`SELECT * FROM leads WHERE phone = ? LIMIT 1`)
+      .get(phone) as unknown as LeadRecord | undefined;
+  }
+  const placeholders = listIds.map(() => '?').join(',');
+  return db()
+    .prepare(
+      `SELECT * FROM leads
+        WHERE phone = ? AND list_id IN (${placeholders})
+        LIMIT 1`,
+    )
+    .get(phone, ...listIds) as unknown as LeadRecord | undefined;
+}
+
+/** Iter 93 — single-row lead insert. Returns the inserted row id,
+ * or null when a duplicate (phone, list_id) silently no-ops via
+ * the UNIQUE index. Used by the manual-dial path to drop a
+ * synthetic lead into the campaign's first attached list when no
+ * existing lead matches the dialed number. */
+export function insertSingleLead(rec: {
+  id: string;
+  list_id: string;
+  phone: string;
+  name: string | null;
+  email: string | null;
+  timezone?: string | null;
+  status?: string;
+}): string | null {
+  const result = db()
+    .prepare(
+      `INSERT OR IGNORE INTO leads (id, list_id, phone, name, email, timezone, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.list_id,
+      rec.phone,
+      rec.name,
+      rec.email,
+      rec.timezone ?? null,
+      rec.status ?? 'NEW',
+    );
+  return Number(result.changes) > 0 ? rec.id : null;
+}
+
 /** Iter 92 — full call history for one lead. dial_intents joined
  * with the route plan + carrier names for display. Ordered most-
  * recent first because the operator usually wants to see the
@@ -2745,12 +2800,17 @@ export function liveAgentSnapshot(): AgentLiveRow[] {
  */
 export interface ActiveCallRecord extends DialIntentRecord {
   campaign_name: string;
+  /** Iter 93 — campaign type (outbound_predictive / inbound_queue
+   * / blended / manual_only) so the UI can render a Direction
+   * column ("OUT" / "IN" / "BLD") without a second query. */
+  campaign_type: string;
   user_username: string | null;
 }
 export function listActiveCalls(): ActiveCallRecord[] {
   return db()
     .prepare(
-      `SELECT i.*, c.name AS campaign_name, u.username AS user_username
+      `SELECT i.*, c.name AS campaign_name, c.type AS campaign_type,
+              u.username AS user_username
          FROM dial_intents i
          JOIN campaigns c ON c.id = i.campaign_id
          LEFT JOIN users u ON u.id = i.assigned_user_id

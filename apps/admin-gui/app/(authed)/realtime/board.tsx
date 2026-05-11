@@ -39,6 +39,9 @@ interface ActiveCall {
   ts: string;
   campaign_id: string;
   campaign_name: string;
+  /** Iter 93 — campaign type drives the Direction column ("OUT" /
+   * "IN" / "BLD"). */
+  campaign_type: string;
   user_username: string | null;
   phone: string;
   transformed_phone: string;
@@ -458,7 +461,8 @@ export function RealtimeBoard({ initial }: { initial: Snapshot }) {
           <table className="w-full text-sm max-w-6xl">
             <thead className="text-left text-fg-subtle border-b border-border">
               <tr>
-                <th className="py-2 font-medium">Campaign</th>
+                <th className="py-2 font-medium">Dir</th>
+                <th className="font-medium">Campaign</th>
                 <th className="font-medium">Agent</th>
                 <th className="font-medium">Number</th>
                 <th className="font-medium tabular-nums">Duration</th>
@@ -468,7 +472,10 @@ export function RealtimeBoard({ initial }: { initial: Snapshot }) {
             <tbody>
               {snap.active_calls.map((c) => (
                 <tr key={c.id} className="border-b border-border/40">
-                  <td className="py-2 text-accent">{c.campaign_name}</td>
+                  <td className="py-2">
+                    <DirectionBadge type={c.campaign_type} />
+                  </td>
+                  <td className="text-accent">{c.campaign_name}</td>
                   <td className="text-fg-muted font-mono text-xs">
                     {c.user_username ?? (
                       <span className="text-fg-subtle">(remote)</span>
@@ -556,6 +563,48 @@ function StatusBadge({ value }: { value: string }) {
   return (
     <span className={`${cls} border px-2 py-0.5 rounded text-[10px] uppercase tracking-wide`}>
       {value.replace('_', ' ')}
+    </span>
+  );
+}
+
+/** Iter 93 — show the call's direction at a glance based on the
+ * campaign type. Outbound predictive / blended → OUT (green-ish
+ * accent), inbound_queue → IN (info-blue), manual_only → MAN
+ * (neutral). Fallback shows the raw type so unknown types stay
+ * grep-able. */
+function DirectionBadge({ type }: { type: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    outbound_predictive: {
+      label: 'OUT',
+      cls: 'bg-accent/15 text-accent border-accent/50',
+    },
+    outbound_progressive: {
+      label: 'OUT',
+      cls: 'bg-accent/15 text-accent border-accent/50',
+    },
+    blended: {
+      label: 'BLD',
+      cls: 'bg-info/15 text-info border-info/50',
+    },
+    inbound_queue: {
+      label: 'IN',
+      cls: 'bg-info/15 text-info border-info/50',
+    },
+    manual_only: {
+      label: 'MAN',
+      cls: 'bg-card-hover/40 text-fg-muted border-border',
+    },
+  };
+  const entry = map[type] ?? {
+    label: type.slice(0, 3).toUpperCase(),
+    cls: 'bg-card-hover/40 text-fg-muted border-border',
+  };
+  return (
+    <span
+      className={`${entry.cls} border px-2 py-0.5 rounded text-[10px] uppercase tracking-wide font-mono`}
+      title={type}
+    >
+      {entry.label}
     </span>
   );
 }
