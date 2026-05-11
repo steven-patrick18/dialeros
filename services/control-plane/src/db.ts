@@ -1992,6 +1992,29 @@ export function inFlightForRemoteAgent(remoteAgentId: string): number {
   return row.n;
 }
 
+/** Iter 79 — update a dial_intent row with the result of its bgapi
+ * originate. Called by the pacer after the originate returns so we
+ * don't have to re-run insert with extra columns. The row was
+ * pre-inserted with correlation_id so the FS event listener could
+ * already match it; this stamps call_uuid / originate_error / kind
+ * after the fact. */
+export function applyDialIntentOriginate(args: {
+  id: number;
+  call_uuid: string | null;
+  originate_error: string | null;
+  kind: string;
+}): void {
+  db()
+    .prepare(
+      `UPDATE dial_intents
+          SET call_uuid = ?,
+              originate_error = ?,
+              kind = ?
+        WHERE id = ?`,
+    )
+    .run(args.call_uuid, args.originate_error, args.kind, args.id);
+}
+
 /** Iter 77 — close a dial_intent by id, stamping hangup_at = ts so
  * the row doesn't sit "in-flight" forever. Used for simulated rows
  * which have no FS event flow to update them naturally. */

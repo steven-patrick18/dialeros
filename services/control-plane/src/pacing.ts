@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import net from 'node:net';
 import {
+  applyDialIntentOriginate,
   closeSimulatedDialIntent,
   countDialIntentsForCampaign,
   getAvailableAgentsForCampaign,
@@ -545,6 +546,22 @@ export async function paceCampaignOnce(
   // Iter 74 — the carrier actually picked by pickCarrierForPlan, so
   // the dial_intent row can be attributed for in-flight counts.
   let pickedCarrierId: string | null = null;
+  // Iter 79 — pre-generate the correlation_id on the live path so we
+  // can INSERT the dial_intent BEFORE calling bgapi. Without this, FS
+  // rejects the call faster than the await resolves, the
+  // CHANNEL_HANGUP_COMPLETE arrives at our listener while the row
+  // doesn't exist yet, the UPDATE matches 0, and the hangup info is
+  // silently lost — the row ends up stuck at DIALING forever.
+  let bgapiParams: {
+    gateway: string;
+    dialDestination: string;
+    computedBridgeTarget: string;
+    bridgeApp: string;
+    amdChannelVars: string[];
+  } | null = null;
+  if (campaign.dial_mode === 'live') {
+    correlationId = randomUUID();
+  }
   if (campaign.dial_mode === 'live') {
     // Iter 74 — multi-carrier routing. pickCarrierForPlan walks the
     // priority tiers, applies the dial-prefix gate AND a per-(plan,
@@ -570,7 +587,6 @@ export async function paceCampaignOnce(
       const cursor = nextDialPlanCursor(carrier.id, matched.ruleIndex);
       dialDestination = applyDialPlanRule(matched.rule, transformed, cursor);
     }
-    correlationId = randomUUID();
     const gateway = `dialeros-${carrier.id}`;
     // Iter 55 — recording path. Flat layout keyed by correlation_id
     // so we never have to mkdir from inside FS; the path is set on
@@ -633,32 +649,21 @@ export async function paceCampaignOnce(
     } else {
       bridgeApp = `&bridge(${computedBridgeTarget})`;
     }
-    try {
-      // Iter 69 — connect to the ESL host that runs the directory
-      // for the picked bridge target. Single-box deploys (everything
-      // is_self) stay on 127.0.0.1, no behaviour change.
-      const eslHost = pickEslHostForBridgeTarget(computedBridgeTarget);
-      const jobUuid = await bgapiOriginate({
-        gateway,
-        destination: dialDestination,
-        callerIdNumber: cid ?? undefined,
-        correlationId,
-        recordingPath: recordingPath ?? undefined,
-        extraChannelVars:
-          amdChannelVars.length > 0 ? amdChannelVars : undefined,
-        app: bridgeApp,
-        host: eslHost,
-      });
-      originateOutcome = { ok: true, job_uuid: jobUuid };
-      kind = 'originated';
-    } catch (e) {
-      const err = e as { message?: string };
-      originateOutcome = {
-        ok: false,
-        error: err.message ?? 'originate failed',
-      };
-      kind = 'originate_failed';
-    }
+    // Iter 79 — INSERT the dial_intent row BEFORE issuing bgapi.
+    // FreeSWITCH rejects bad routes faster than the bgapi await
+    // resolves, and the CHANNEL_HANGUP_COMPLETE event hits the
+    // listener while the row doesn't exist yet — leaving rows
+    // stuck at DIALING forever. Pre-inserting with the
+    // correlation_id closes the race; the originate result is
+    // patched onto the same row right after the await.
+    bgapiParams = {
+      gateway,
+      dialDestination,
+      computedBridgeTarget,
+      bridgeApp,
+      amdChannelVars,
+    };
+    kind = 'originating';
   }
 
   const intent = insertDialIntent({
@@ -670,15 +675,68 @@ export async function paceCampaignOnce(
     transformed_phone: transformed,
     cid_used: cid,
     kind,
-    call_uuid: originateOutcome?.ok ? originateOutcome.job_uuid : null,
-    originate_error:
-      originateOutcome && !originateOutcome.ok ? originateOutcome.error : null,
+    call_uuid: null,
+    originate_error: null,
     correlation_id: correlationId,
-    recording_path:
-      originateOutcome?.ok && recordingPath ? recordingPath : null,
+    recording_path: recordingPath,
     remote_agent_id: remoteAgent?.id ?? null,
     carrier_id: pickedCarrierId,
   });
+
+  // Iter 79 — now do the actual bgapi. The row is already in the DB
+  // with the correlation_id, so the FS-event listener can match
+  // immediately. applyDialIntentOriginate patches the same row with
+  // call_uuid / originate_error / final kind once bgapi returns.
+  if (
+    campaign.dial_mode === 'live' &&
+    pickedCarrierId &&
+    correlationId &&
+    bgapiParams
+  ) {
+    try {
+      const eslHost = pickEslHostForBridgeTarget(
+        bgapiParams.computedBridgeTarget,
+      );
+      const jobUuid = await bgapiOriginate({
+        gateway: bgapiParams.gateway,
+        destination: bgapiParams.dialDestination,
+        callerIdNumber: cid ?? undefined,
+        correlationId,
+        recordingPath: recordingPath ?? undefined,
+        extraChannelVars:
+          bgapiParams.amdChannelVars.length > 0
+            ? bgapiParams.amdChannelVars
+            : undefined,
+        app: bgapiParams.bridgeApp,
+        host: eslHost,
+      });
+      originateOutcome = { ok: true, job_uuid: jobUuid };
+      applyDialIntentOriginate({
+        id: intent.id,
+        call_uuid: jobUuid,
+        originate_error: null,
+        kind: 'originated',
+      });
+      intent.kind = 'originated';
+      intent.call_uuid = jobUuid;
+    } catch (e) {
+      const err = e as { message?: string };
+      const msg = err.message ?? 'originate failed';
+      originateOutcome = { ok: false, error: msg };
+      applyDialIntentOriginate({
+        id: intent.id,
+        call_uuid: null,
+        originate_error: msg,
+        kind: 'originate_failed',
+      });
+      intent.kind = 'originate_failed';
+      intent.originate_error = msg;
+    }
+    // Iter 78 — surface the post-bgapi state to the live SSE feed.
+    // Without this the panel keeps the originating placeholder until
+    // a hangup event lands.
+    emitIntentUpdate(intent);
+  }
 
   // Iter 34 — live calls go to DIALING (in-flight). The fs-events
   // listener overwrites this with the actual outcome derived from
@@ -1010,8 +1068,15 @@ function bgapiOriginate(opts: BgapiOptions): Promise<string> {
     // execute_on_answer fires on the originated leg's CHANNEL_ANSWER).
     // FS writes a/b legs to L/R channels so QA can hear each side
     // separately on playback.
+    // Iter 79 — wrap the value in single quotes. Without quoting, the
+    // space between `record_session` and the path breaks FS's
+    // channel-var parser ("Parse Error!" in switch_ivr_originate.c),
+    // the originate is silently rejected before a channel is created,
+    // and no CHANNEL_HANGUP_COMPLETE ever fires — so the listener
+    // never matches and rows stay stuck at DIALING forever. FS
+    // accepts `key='value with spaces'` inside the {…} block.
     channelVars.push(
-      `execute_on_answer=record_session ${escapeChannelValue(opts.recordingPath)}`,
+      `execute_on_answer='record_session ${escapeChannelValue(opts.recordingPath)}'`,
     );
     channelVars.push('RECORD_STEREO=true');
   }
