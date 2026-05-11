@@ -1,20 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
+  countLeadsFiltered,
   countLeadsInList,
   deleteLeadListFromDb,
   getCampaignFromDb,
   getLeadListFromDb,
   insertLeadList,
   insertLeadsBulk,
+  leadHangupCauseBreakdown,
   leadListTimezoneBreakdown,
   leadStatusBreakdown,
   listLeadListsForCampaign,
   listLeadListsFromDb,
+  listLeadsFiltered,
   listLeadsInList,
   moveLeadListToCampaign,
   setCampaignLeadLists,
   updateLeadListFields,
+  type LeadFilterOpts,
   type LeadListRecord,
   type LeadRecord,
   type LeadStatusBreakdown,
@@ -184,6 +188,43 @@ export function pageLeads(
 ): LeadRecord[] {
   const offset = Math.max(0, (page - 1) * pageSize);
   return listLeadsInList(listId, pageSize, offset);
+}
+
+/** Iter 80 — paginated, status- and search-filterable view of a
+ * list's leads. Backs the drill-down on the lead list page where
+ * clicking a status count opens just those rows, plus the search
+ * box for finding a single lead by phone / name / email substring. */
+export function pageLeadsFiltered(
+  listId: string,
+  opts: {
+    status?: string | null;
+    search?: string | null;
+    page?: number;
+    pageSize?: number;
+  },
+): { rows: LeadRecord[]; total: number } {
+  const pageSize = opts.pageSize ?? 50;
+  const page = Math.max(1, opts.page ?? 1);
+  const offset = (page - 1) * pageSize;
+  const filter: LeadFilterOpts = {
+    status: opts.status ?? null,
+    search: opts.search ?? null,
+    limit: pageSize,
+    offset,
+  };
+  return {
+    rows: listLeadsFiltered(listId, filter),
+    total: countLeadsFiltered(listId, filter),
+  };
+}
+
+/** Iter 80 — last hangup-cause per lead in this list, grouped &
+ * counted. Used for the SIP-style breakdown panel on the lead list
+ * page. */
+export function leadCauseBreakdown(
+  listId: string,
+): Array<{ cause: string; count: number }> {
+  return leadHangupCauseBreakdown(listId);
 }
 
 // =====================================================================

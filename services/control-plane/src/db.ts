@@ -1714,6 +1714,101 @@ export function listLeadsInList(
     .all(listId, limit, offset) as unknown as LeadRecord[];
 }
 
+export interface LeadFilterOpts {
+  status?: string | null;
+  search?: string | null; // matches phone OR name OR email substring
+  limit?: number;
+  offset?: number;
+}
+
+function buildLeadFilterWhere(
+  listId: string,
+  opts: LeadFilterOpts,
+): { sql: string; values: unknown[] } {
+  const where: string[] = ['list_id = ?'];
+  const values: unknown[] = [listId];
+  if (opts.status) {
+    where.push('status = ?');
+    values.push(opts.status);
+  }
+  if (opts.search && opts.search.trim()) {
+    const pat = `%${opts.search.trim()}%`;
+    where.push('(phone LIKE ? OR name LIKE ? OR email LIKE ?)');
+    values.push(pat, pat, pat);
+  }
+  return { sql: where.join(' AND '), values };
+}
+
+/** Iter 80 — paginated + filterable leads view backing the
+ * drill-down on the lead list page. Index on (list_id, status)
+ * (already exists for the leadStatusBreakdown query) keeps the
+ * status filter fast; search uses LIKE so it scales linearly with
+ * list size, fine for lists up to ~100K. */
+export function listLeadsFiltered(
+  listId: string,
+  opts: LeadFilterOpts,
+): LeadRecord[] {
+  const { sql: where, values } = buildLeadFilterWhere(listId, opts);
+  const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
+  return db()
+    .prepare(
+      `SELECT * FROM leads
+        WHERE ${where}
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?`,
+    )
+    .all(...(values as never[]), limit, offset) as unknown as LeadRecord[];
+}
+
+export function countLeadsFiltered(
+  listId: string,
+  opts: LeadFilterOpts,
+): number {
+  const { sql: where, values } = buildLeadFilterWhere(listId, opts);
+  const row = db()
+    .prepare(`SELECT COUNT(*) AS n FROM leads WHERE ${where}`)
+    .get(...(values as never[])) as { n: number };
+  return Number(row.n);
+}
+
+/** Iter 80 — hangup-cause distribution for leads in this list.
+ * Joins dial_intents → leads and counts each lead by its MOST RECENT
+ * dial_intent's hangup_cause. Excludes simulated rows and rows that
+ * haven't hung up yet. Null causes (in-flight) reported as 'IN_FLIGHT'
+ * separately so the operator sees "still ringing" calls. */
+export function leadHangupCauseBreakdown(
+  listId: string,
+): Array<{ cause: string; count: number }> {
+  return db()
+    .prepare(
+      `WITH latest AS (
+         SELECT di.lead_id,
+                di.hangup_cause,
+                di.hangup_at,
+                di.kind,
+                ROW_NUMBER() OVER (
+                  PARTITION BY di.lead_id ORDER BY di.id DESC
+                ) AS rn
+           FROM dial_intents di
+           JOIN leads l ON l.id = di.lead_id
+          WHERE l.list_id = ?
+            AND di.kind != 'simulated'
+       )
+       SELECT
+         CASE
+           WHEN hangup_cause IS NOT NULL THEN hangup_cause
+           ELSE 'IN_FLIGHT'
+         END AS cause,
+         COUNT(*) AS count
+       FROM latest
+       WHERE rn = 1
+       GROUP BY cause
+       ORDER BY count DESC`,
+    )
+    .all(listId) as unknown as Array<{ cause: string; count: number }>;
+}
+
 /**
  * Bulk-insert leads. Uses INSERT OR IGNORE on UNIQUE (list_id, phone)
  * so duplicates within a list are silently dropped.
