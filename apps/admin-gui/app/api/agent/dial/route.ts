@@ -11,6 +11,7 @@ import {
   getRoutePlan,
   getUser,
   getUserCampaignIds,
+  isDnc,
   listCampaigns,
   normalizePhone,
   parseCidPool,
@@ -68,6 +69,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: 'Destination phone format is invalid.' },
       { status: 400 },
+    );
+  }
+  // Iter 64 — DNC gate. Refuse manual dials to DNC numbers up front
+  // with a clear 409 so the agent sees why it was blocked.
+  if (isDnc(dest)) {
+    return NextResponse.json(
+      {
+        error:
+          'Destination is on the Do Not Call list. Remove it from the DNC list before dialing.',
+      },
+      { status: 409 },
     );
   }
 

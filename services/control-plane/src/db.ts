@@ -310,6 +310,13 @@ function db(): DatabaseSync {
       reason TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS dnc_phones (
+      phone TEXT PRIMARY KEY,
+      reason TEXT,
+      added_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
@@ -2826,6 +2833,67 @@ export function getAvailableAgentsForCampaign(
   if (paused.length === 0) return rows;
   const pausedSet = new Set(paused.map((p) => p.user_id));
   return rows.filter((r) => !pausedSet.has(r.id));
+}
+
+// =====================================================================
+// dnc_phones (iter 64) — Do Not Call list
+// =====================================================================
+//
+// Numbers we are never allowed to dial regardless of campaign / list.
+// Pacer + manual dial + test-call all check `isDncPhone` against the
+// normalized phone before originate. Compliance-driven, append-only
+// in practice (the UI can remove rows but there's no soft-delete).
+
+export interface DncPhoneRecord {
+  phone: string;
+  reason: string | null;
+  added_by_user_id: string | null;
+  added_at: string;
+}
+
+export function insertDncPhone(rec: {
+  phone: string;
+  reason?: string | null;
+  added_by_user_id?: string | null;
+}): void {
+  db()
+    .prepare(
+      `INSERT OR REPLACE INTO dnc_phones (phone, reason, added_by_user_id)
+       VALUES (?, ?, ?)`,
+    )
+    .run(rec.phone, rec.reason ?? null, rec.added_by_user_id ?? null);
+}
+
+export function deleteDncPhone(phone: string): boolean {
+  const result = db()
+    .prepare(`DELETE FROM dnc_phones WHERE phone = ?`)
+    .run(phone);
+  return Number(result.changes) > 0;
+}
+
+export function isDncPhone(phone: string): boolean {
+  const row = db()
+    .prepare(`SELECT 1 FROM dnc_phones WHERE phone = ?`)
+    .get(phone);
+  return !!row;
+}
+
+export function listDncPhonesFromDb(
+  limit = 500,
+  offset = 0,
+): DncPhoneRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM dnc_phones ORDER BY added_at DESC LIMIT ? OFFSET ?`,
+    )
+    .all(limit, offset) as unknown as DncPhoneRecord[];
+}
+
+export function countDncPhones(): number {
+  const row = db()
+    .prepare(`SELECT COUNT(*) AS n FROM dnc_phones`)
+    .get() as { n: number };
+  return row.n;
 }
 
 // =====================================================================

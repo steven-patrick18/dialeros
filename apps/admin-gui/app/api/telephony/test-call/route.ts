@@ -7,6 +7,7 @@ import {
   extensionForUser,
   findMatchingDialPlanRule,
   getCarrier,
+  isDnc,
   normalizePhone,
   rotateDialPlanCursor,
 } from '@dialeros/control-plane';
@@ -101,6 +102,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: 'Destination phone format is invalid.' },
       { status: 400 },
+    );
+  }
+  // Iter 64 — DNC gate. Block test calls to DNC numbers; the
+  // compliance ledger should record nothing got dialed regardless
+  // of how the originate was triggered.
+  if (isDnc(dest)) {
+    return NextResponse.json(
+      {
+        error:
+          'Destination is on the Do Not Call list. Remove it from the DNC list before testing.',
+      },
+      { status: 409 },
     );
   }
   // Iter 44 — carrier-level dial-prefix gate. Surface the rejection

@@ -355,6 +355,18 @@ export type { AgentStatusValue, AgentStatusRecord } from './agent-status';
 // Pacer-helper that filters out paused agents (iter 40)
 export { getAvailableAgentsForCampaign } from './db';
 
+// DNC list (iter 64)
+export {
+  DncInputSchema,
+  addDnc,
+  bulkAddDnc,
+  removeDnc,
+  isDnc,
+  listDnc,
+  countDnc,
+} from './dnc';
+export type { DncInput, DncPhoneRecord } from './dnc';
+
 // Hopper (iter 49 — pre-load queue per campaign)
 export {
   hopperSize,

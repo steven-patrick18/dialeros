@@ -25,6 +25,7 @@ import {
   carrierAcceptsDestination,
   findMatchingDialPlanRule,
 } from './carrier';
+import { isDnc } from './dnc';
 import { ensureFsEventListener } from './fs-events';
 import {
   backfillUserPhones,
@@ -33,6 +34,7 @@ import {
 import { ensureRecordingRetentionSweep } from './recording-retention';
 import { listRemoteAgentsWithCapacity } from './remote-agent';
 import { extensionForUser } from './sip-extensions';
+import { hourInTimezone, inferLeadTimezone } from './timezones';
 
 // Iter 11 — pacing engine v1 (simulation).
 //
@@ -159,6 +161,8 @@ export interface PacingTickResult {
     | 'no_carrier'
     | 'no_matching_prefix'
     | 'outside_window'
+    | 'outside_lead_tz_window'
+    | 'dnc'
     | 'inbound_no_pacer'
     | 'campaign_missing'
     | 'campaign_inactive';
@@ -304,6 +308,41 @@ export async function paceCampaignOnce(
     refillHopper(campaignId, campaign.hopper_level, COOLDOWN_SECONDS);
   }
   if (!lead) return { outcome: 'no_lead' };
+
+  // Iter 64 — DNC + per-lead TZ compliance. Check BEFORE the bridge
+  // pool is consulted so we don't waste a slot on a call that can't
+  // legally happen. Lead's local hour is inferred from its phone;
+  // unknown TZs fall back to the dialer-local window already
+  // enforced by isWithinCallWindow above.
+  if (isDnc(lead.phone)) {
+    markLeadDialed(lead.lead_id, 'DNC');
+    return { outcome: 'dnc' };
+  }
+  if (campaign.call_window_start && campaign.call_window_end) {
+    const tz = inferLeadTimezone(lead.phone);
+    if (tz) {
+      const h = hourInTimezone(tz);
+      const [sh] = campaign.call_window_start.split(':').map(Number) as [
+        number,
+        number,
+      ];
+      const [eh] = campaign.call_window_end.split(':').map(Number) as [
+        number,
+        number,
+      ];
+      const inWindow =
+        sh <= eh ? h >= sh && h < eh : h >= sh || h < eh;
+      if (!inWindow) {
+        // Skip this lead for now — it'll come back into the hopper
+        // on the next refill cycle, by which time the TZ window
+        // may have opened. CALLBACK_SCHEDULED would be wrong
+        // (it's not callback-due), so we just bounce to
+        // CALLED_NO_ANSWER which honours the cooldown.
+        markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
+        return { outcome: 'outside_lead_tz_window' };
+      }
+    }
+  }
 
   // Iter 58 — pick from the combined local+remote bridge pool. Local
   // slots have a backing user (assigned_user_id, user/<ext> bridge);

@@ -29,6 +29,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/agent', label: 'Agent console' },
       { href: '/reports', label: 'Reports' },
       { href: '/audit', label: 'Audit Log' },
+      { href: '/dnc', label: 'Do Not Call' },
     ],
   },
   {
