@@ -470,7 +470,14 @@ export default async function LeadListDetail({
               <tbody>
                 {leads.map((lead) => (
                   <tr key={lead.id} className="border-b border-border/50">
-                    <td className="py-2 font-mono text-fg">{lead.phone}</td>
+                    <td className="py-2 font-mono text-fg">
+                      <Link
+                        href={`/leads/lead/${lead.id}`}
+                        className="hover:underline"
+                      >
+                        {lead.phone}
+                      </Link>
+                    </td>
                     <td className="text-fg-muted">{lead.name ?? '—'}</td>
                     <td className="text-fg-muted">{lead.email ?? '—'}</td>
                     <td>

@@ -3,21 +3,26 @@ import { z } from 'zod';
 import {
   countLeadsFiltered,
   countLeadsInList,
+  deleteLeadFromDb,
   deleteLeadListFromDb,
   getCampaignFromDb,
+  getLeadById,
   getLeadListFromDb,
   insertLeadList,
   insertLeadsBulk,
   leadHangupCauseBreakdown,
   leadListTimezoneBreakdown,
   leadStatusBreakdown,
+  listCallHistoryForLead,
   listLeadListsForCampaign,
   listLeadListsFromDb,
   listLeadsFiltered,
   listLeadsInList,
   moveLeadListToCampaign,
   setCampaignLeadLists,
+  updateLeadFields,
   updateLeadListFields,
+  type LeadCallHistoryRow,
   type LeadFilterOpts,
   type LeadListRecord,
   type LeadRecord,
@@ -375,4 +380,71 @@ export function ingestCsv(listId: string, csv: string): CsvIngestResult {
   return result;
 }
 
+/** Iter 92 — single-lead fetch for the detail page. */
+export function getLead(id: string): LeadRecord | undefined {
+  return getLeadById(id);
+}
+
+/** Iter 92 — paginated call history for one lead. */
+export function leadCallHistory(
+  leadId: string,
+  limit = 50,
+): LeadCallHistoryRow[] {
+  return listCallHistoryForLead(leadId, limit);
+}
+
+const LeadUpdateInputSchema = z.object({
+  name: z
+    .string()
+    .max(120)
+    .optional()
+    .or(z.literal('').transform(() => null)),
+  email: z
+    .string()
+    .max(120)
+    .optional()
+    .or(z.literal('').transform(() => null)),
+  status: z
+    .enum([
+      'NEW',
+      'CALLED_NO_ANSWER',
+      'BUSY',
+      'CALLBACK_SCHEDULED',
+      'CONVERTED',
+      'DNC',
+      'DNC_TEMP',
+      'BAD_NUMBER',
+      'DIALING',
+    ])
+    .optional(),
+  callback_at: z.string().optional().or(z.literal('').transform(() => null)),
+  timezone: z
+    .string()
+    .max(64)
+    .optional()
+    .or(z.literal('').transform(() => null)),
+});
+export type LeadUpdateInput = z.infer<typeof LeadUpdateInputSchema>;
+export { LeadUpdateInputSchema };
+
+/** Iter 92 — partial update on a lead. Phone intentionally NOT
+ * editable: it's a load-bearing key for DNC matching, call
+ * history correlation, and timezone inference. Operators delete +
+ * recreate to "edit" a phone. */
+export function updateLead(
+  id: string,
+  input: LeadUpdateInput,
+): { changed: boolean } | { error: string } {
+  const existing = getLeadById(id);
+  if (!existing) return { error: 'not found' };
+  return { changed: updateLeadFields(id, input) };
+}
+
+/** Iter 92 — hard-delete one lead. dial_intents cascade-deletes
+ * via the schema FK. */
+export function deleteLead(id: string): boolean {
+  return deleteLeadFromDb(id);
+}
+
+export type { LeadCallHistoryRow };
 export type { LeadListRecord, LeadRecord, LeadStatusBreakdown } from './db';

@@ -1725,6 +1725,100 @@ export function leadStatusBreakdown(listId: string): LeadStatusBreakdown[] {
     .all(listId) as unknown as LeadStatusBreakdown[];
 }
 
+/** Iter 92 — single-lead lookups + edits for the per-lead detail
+ * page. Returns the same row shape as listLeadsInList. */
+export function getLeadById(id: string): LeadRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM leads WHERE id = ?`)
+    .get(id) as unknown as LeadRecord | undefined;
+}
+
+/** Iter 92 — full call history for one lead. dial_intents joined
+ * with the route plan + carrier names for display. Ordered most-
+ * recent first because the operator usually wants to see the
+ * latest attempts at the top. Excludes simulated rows. */
+export interface LeadCallHistoryRow {
+  id: number;
+  ts: string;
+  campaign_id: string;
+  campaign_name: string;
+  route_plan_id: string;
+  route_plan_name: string | null;
+  carrier_id: string | null;
+  carrier_name: string | null;
+  cid_used: string | null;
+  kind: string;
+  answered_at: string | null;
+  hangup_at: string | null;
+  hangup_cause: string | null;
+  duration_ms: number | null;
+  originate_error: string | null;
+  recording_path: string | null;
+}
+
+export function listCallHistoryForLead(
+  leadId: string,
+  limit = 50,
+): LeadCallHistoryRow[] {
+  return db()
+    .prepare(
+      `SELECT
+         di.id, di.ts,
+         di.campaign_id, c.name AS campaign_name,
+         di.route_plan_id, rp.name AS route_plan_name,
+         di.carrier_id, ca.name AS carrier_name,
+         di.cid_used, di.kind,
+         di.answered_at, di.hangup_at, di.hangup_cause,
+         di.duration_ms, di.originate_error, di.recording_path
+       FROM dial_intents di
+       JOIN campaigns c ON c.id = di.campaign_id
+       LEFT JOIN route_plans rp ON rp.id = di.route_plan_id
+       LEFT JOIN carriers ca ON ca.id = di.carrier_id
+       WHERE di.lead_id = ?
+         AND di.kind != 'simulated'
+       ORDER BY di.id DESC
+       LIMIT ?`,
+    )
+    .all(leadId, limit) as unknown as LeadCallHistoryRow[];
+}
+
+/** Iter 92 — partial update on a lead row. Only the operator-
+ * editable fields are mutable; phone is intentionally locked
+ * (changing it would invalidate the inferred timezone + DNC
+ * matching + call history correlation). */
+export function updateLeadFields(
+  id: string,
+  updates: Partial<{
+    name: string | null;
+    email: string | null;
+    status: string;
+    callback_at: string | null;
+    timezone: string | null;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === undefined) continue;
+    fields.push(`${k} = ?`);
+    values.push(v);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE leads SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+/** Iter 92 — hard-delete one lead. The CASCADE on dial_intents
+ * (set up in the schema) will sweep the call history too. */
+export function deleteLeadFromDb(id: string): boolean {
+  const result = db().prepare(`DELETE FROM leads WHERE id = ?`).run(id);
+  return Number(result.changes) > 0;
+}
+
 /** Iter 91 — return leads whose `timezone` column is still NULL,
  * so a startup pass can fill it in via inferLeadTimezone(phone).
  * The pacer module owns the actual backfill loop because db.ts

@@ -323,7 +323,13 @@ export {
   leadListsForCampaign,
   setLeadListsForCampaign,
   normalizePhone,
+  getLead,
+  updateLead,
+  deleteLead,
+  leadCallHistory,
+  LeadUpdateInputSchema,
 } from './lead';
+export type { LeadCallHistoryRow, LeadUpdateInput } from './lead';
 export {
   inferLeadTimezone,
   hourInTimezone,
