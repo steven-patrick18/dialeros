@@ -511,6 +511,13 @@ function db(): DatabaseSync {
     // phone shape doesn't map to a known TZ.
     "ALTER TABLE leads ADD COLUMN timezone TEXT",
     "CREATE INDEX IF NOT EXISTS idx_leads_timezone ON leads(timezone)",
+    // Iter 94: per-campaign whitelist of lead statuses the pacer is
+    // allowed to dial. Default preserves the previous hardcoded
+    // behavior (NEW + CALLED_NO_ANSWER + BUSY) so existing
+    // campaigns keep dialing the same set. Operator can tighten
+    // (e.g. NEW only) or loosen (add BAD_NUMBER for re-validation
+    // sweeps) per-campaign from the UI.
+    "ALTER TABLE campaigns ADD COLUMN dialable_statuses TEXT NOT NULL DEFAULT '[\"NEW\",\"CALLED_NO_ANSWER\",\"BUSY\"]'",
   ];
   for (const sql of migrations) {
     try {
@@ -3240,6 +3247,11 @@ export interface CampaignRecord {
   amd_action: string;
   voicemail_path: string | null;
   list_order: string;
+  /** Iter 94 — JSON array of lead statuses the pacer is allowed
+   * to dial. Whitelist; anything not in here gets ignored on hopper
+   * refill. Default
+   * `["NEW","CALLED_NO_ANSWER","BUSY"]`. */
+  dialable_statuses: string;
   created_at: string;
   updated_at: string;
 }
@@ -3510,6 +3522,7 @@ export function updateCampaignFields(
     amd_action: string;
     voicemail_path: string | null;
     list_order: string;
+    dialable_statuses: string;
   }>,
 ): boolean {
   const fields: string[] = [];
@@ -3766,12 +3779,29 @@ export function refillHopper(
   const remaining = slots - added;
   if (remaining <= 0) return added;
 
-  // Pass 2: NEW / CALLED_NO_ANSWER / BUSY — order depends on the
-  // campaign's list_order strategy. Untouched leads
-  // (last_called_at IS NULL) always come before previously-tried
-  // ones in any strategy.
+  // Pass 2: leads whose status is in the campaign's
+  // dialable_statuses whitelist (iter 94). Default keeps the old
+  // hardcoded set; operator can tighten/loosen per campaign.
+  // Untouched leads (last_called_at IS NULL) always come before
+  // previously-tried ones in any strategy.
   const campaign = getCampaignFromDb(campaignId);
   const strategy = campaign?.list_order ?? 'RANDOM';
+  // Parse dialable_statuses JSON. Defensive against malformed data:
+  // fall back to the historical hardcoded set so a bad config never
+  // turns the campaign off silently.
+  let allowedStatuses: string[] = ['NEW', 'CALLED_NO_ANSWER', 'BUSY'];
+  if (campaign?.dialable_statuses) {
+    try {
+      const parsed = JSON.parse(campaign.dialable_statuses);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        allowedStatuses = parsed.filter(
+          (s): s is string => typeof s === 'string',
+        );
+      }
+    } catch {
+      /* keep fallback */
+    }
+  }
   // Iter 91 — TZ-aware strategies layer a "lead's TZ is currently
   // in the dialable window" filter on top of the order. Order
   // semantics mirror the non-TZ variants: random / oldest /
@@ -3799,6 +3829,7 @@ export function refillHopper(
     return added;
   }
 
+  const statusPlaceholders = allowedStatuses.map(() => '?').join(',');
   const dResult = d
     .prepare(
       `INSERT OR IGNORE INTO lead_hopper (campaign_id, lead_id)
@@ -3806,7 +3837,7 @@ export function refillHopper(
          FROM leads l
          JOIN lead_lists ll ON ll.id = l.list_id
         WHERE ll.campaign_id = ?
-          AND l.status IN ('NEW', 'CALLED_NO_ANSWER', 'BUSY')
+          AND l.status IN (${statusPlaceholders})
           AND (l.last_called_at IS NULL OR l.last_called_at < ?)
           ${tzClause}
           AND NOT EXISTS (
@@ -3819,6 +3850,7 @@ export function refillHopper(
     .run(
       campaignId,
       campaignId,
+      ...(allowedStatuses as never[]),
       cooldownCutoff,
       ...(tzValues as never[]),
       campaignId,
@@ -3827,6 +3859,45 @@ export function refillHopper(
   added += Number(dResult.changes);
 
   return added;
+}
+
+/** Iter 94 — parse the campaign's dialable_statuses JSON into a
+ * string[]. Returns the historical default when malformed/empty
+ * so callers always have a usable list. */
+export function parseDialableStatuses(c: CampaignRecord): string[] {
+  if (!c.dialable_statuses) return ['NEW', 'CALLED_NO_ANSWER', 'BUSY'];
+  try {
+    const parsed = JSON.parse(c.dialable_statuses);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.filter((s): s is string => typeof s === 'string');
+    }
+  } catch {
+    /* fall through */
+  }
+  return ['NEW', 'CALLED_NO_ANSWER', 'BUSY'];
+}
+
+/** Iter 94 — bulk reset selected leads back to NEW (and clear
+ * last_called_at so the cooldown gate doesn't keep them out).
+ * Scope is always a list + a status filter (e.g. "reset every
+ * CALLED_NO_ANSWER in list X back to NEW") so operators can't
+ * accidentally nuke leads outside the list they're looking at.
+ * Returns the number of rows actually changed. */
+export function bulkResetLeadsInList(
+  listId: string,
+  fromStatus: string,
+): number {
+  const result = db()
+    .prepare(
+      `UPDATE leads
+          SET status = 'NEW',
+              last_called_at = NULL,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE list_id = ?
+          AND status = ?`,
+    )
+    .run(listId, fromStatus);
+  return Number(result.changes);
 }
 
 /** Iter 91 — distinct non-null timezones across all leads of a

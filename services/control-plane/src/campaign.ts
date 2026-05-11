@@ -272,6 +272,26 @@ export const CampaignUpdateInputSchema = z
         'TZ_DOWN_TIME',
       ])
       .optional(),
+    // Iter 94 — per-campaign whitelist of lead statuses the pacer
+    // is allowed to dial. Empty = nothing dials (operator can
+    // pause-by-whitelist). Validates each entry against the lead
+    // status enum so a typo can't silently turn off dialing.
+    dialable_statuses: z
+      .array(
+        z.enum([
+          'NEW',
+          'CALLED_NO_ANSWER',
+          'BUSY',
+          'CALLBACK_SCHEDULED',
+          'CONVERTED',
+          'DNC',
+          'DNC_TEMP',
+          'BAD_NUMBER',
+          'DIALING',
+        ]),
+      )
+      .min(1, 'Pick at least one dialable status.')
+      .optional(),
   })
   .refine(
     (d) => {
@@ -325,6 +345,9 @@ export function updateCampaign(
     updates.voicemail_path = input.voicemail_path ?? null;
   }
   if (input.list_order !== undefined) updates.list_order = input.list_order;
+  if (input.dialable_statuses !== undefined) {
+    updates.dialable_statuses = JSON.stringify(input.dialable_statuses);
+  }
   return updateCampaignFields(id, updates);
 }
 

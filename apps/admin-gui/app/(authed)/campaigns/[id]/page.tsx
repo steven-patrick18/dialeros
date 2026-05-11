@@ -17,6 +17,7 @@ import {
   listInGroups,
   listLeadLists,
   listRemoteAgentsWithCapacity,
+  parseDialableStatuses,
   totalIntentsFor,
 } from '@dialeros/control-plane';
 import { StatusToggle } from './status-toggle';
@@ -103,6 +104,9 @@ export default async function CampaignDetail({
   }
   const insideWindow = isCampaignWithinCallWindow(c);
   const hopperDepth = hopperSize(id);
+  // Iter 94 — whitelist of lead statuses the pacer will dial.
+  // Surfaces in the Advanced pacing card on the Detail tab.
+  const dialableStatuses = parseDialableStatuses(c);
   const inGroupIds = getCampaignInGroups(id);
   const inGroups = inGroupIds.map((gid) => getInGroup(gid)).filter(Boolean);
   const isInbound = c.type === 'inbound_queue';
@@ -148,7 +152,13 @@ export default async function CampaignDetail({
         />
       )}
 
-      {tab === 'detail' && <DetailTab c={c} activeAgents={activeAgents} />}
+      {tab === 'detail' && (
+        <DetailTab
+          c={c}
+          activeAgents={activeAgents}
+          dialableStatuses={dialableStatuses}
+        />
+      )}
 
       {tab === 'list-mix' && (
         <ListMixTab
@@ -521,9 +531,11 @@ function BasicTab({
 function DetailTab({
   c,
   activeAgents,
+  dialableStatuses,
 }: {
   c: ReturnType<typeof getCampaign> & {};
   activeAgents: ReturnType<typeof getActiveAgentsForCampaign>;
+  dialableStatuses: string[];
 }) {
   return (
     <>
@@ -558,8 +570,40 @@ function DetailTab({
               step: 0.1,
               hint: 'Maximum % of calls allowed to drop because no agent was free. US TCPA compliance is typically ≤3%.',
             },
+            {
+              type: 'checkboxes',
+              name: 'dialable_statuses',
+              label: 'Dialable statuses',
+              value: dialableStatuses,
+              options: [
+                { value: 'NEW', label: 'NEW (fresh leads, never called)' },
+                {
+                  value: 'CALLED_NO_ANSWER',
+                  label: 'CALLED_NO_ANSWER (retry no-answers)',
+                },
+                { value: 'BUSY', label: 'BUSY (retry busy signals)' },
+                {
+                  value: 'CALLBACK_SCHEDULED',
+                  label:
+                    'CALLBACK_SCHEDULED (kept on for safety — Pass 1 always handles these)',
+                },
+                {
+                  value: 'BAD_NUMBER',
+                  label: 'BAD_NUMBER (re-validation sweeps)',
+                },
+                {
+                  value: 'CONVERTED',
+                  label: 'CONVERTED (re-engage already-closed leads)',
+                },
+                {
+                  value: 'DNC_TEMP',
+                  label: 'DNC_TEMP (temporary block expired)',
+                },
+              ],
+              hint: 'Pacer only dials leads in these statuses. Default NEW + CALLED_NO_ANSWER + BUSY matches ViciDial behaviour. Adding BAD_NUMBER turns this into a re-validation sweep; removing CALLED_NO_ANSWER means missed calls won’t be retried.',
+            },
           ]}
-          helpText="Day-to-day dialing rarely needs these. Set once and forget."
+          helpText="Day-to-day dialing rarely needs base_ratio / abandon%. Dialable statuses is your retry policy — tighten when you want only fresh leads."
         />
 
         <InlineCardForm

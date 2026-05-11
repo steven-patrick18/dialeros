@@ -54,6 +54,18 @@ export type InlineField =
       value: string[];
       hint?: string;
       placeholder?: string;
+    }
+  | {
+      // Iter 94 — fixed-set multi-select rendered as a column of
+      // checkboxes. Submits as a string[] on save so the API can
+      // store a clean array. Empty selection blocked by the field
+      // validator on the server.
+      type: 'checkboxes';
+      name: string;
+      label: string;
+      value: string[];
+      options: Array<{ value: string; label: string }>;
+      hint?: string;
     };
 
 /**
@@ -107,7 +119,7 @@ export function InlineCardForm({
     return false;
   }, [values, initial, fields]);
 
-  function setRaw(name: string, raw: string | boolean) {
+  function setRaw(name: string, raw: string | boolean | string[]) {
     const f = fields.find((x) => x.name === name)!;
     let v: FieldValue;
     if (f.type === 'number') {
@@ -123,6 +135,9 @@ export function InlineCardForm({
         .split(/\r?\n/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
+    } else if (f.type === 'checkboxes') {
+      // Iter 94 — renderer passes the new full array via raw.
+      v = Array.isArray(raw) ? raw : [];
     } else {
       v = raw as string;
     }
@@ -150,6 +165,8 @@ export function InlineCardForm({
         } else if (f.type === 'boolean') {
           payload[f.name] = !!cur;
         } else if (f.type === 'lines') {
+          payload[f.name] = cur as string[];
+        } else if (f.type === 'checkboxes') {
           payload[f.name] = cur as string[];
         } else if (f.type === 'select') {
           payload[f.name] = cur as string;
@@ -187,7 +204,10 @@ export function InlineCardForm({
       {layout === 'rows' ? (
         <div className="divide-y divide-border/60 border-y border-border/60">
           {fields.map((f) => {
-            const fullWidth = f.type === 'textarea' || f.type === 'lines';
+            const fullWidth =
+              f.type === 'textarea' ||
+              f.type === 'lines' ||
+              f.type === 'checkboxes';
             const labelBlock = (
               <div className="text-xs text-fg-subtle flex items-center gap-2">
                 <span>{f.label}</span>
@@ -272,7 +292,7 @@ type FieldValue = string | number | boolean | string[] | null;
 function renderInput(
   f: InlineField,
   value: FieldValue | undefined,
-  onChange: (raw: string | boolean) => void,
+  onChange: (raw: string | boolean | string[]) => void,
 ) {
   if (f.type === 'textarea') {
     return (
@@ -349,6 +369,39 @@ function renderInput(
       />
     );
   }
+  if (f.type === 'checkboxes') {
+    const v = (value as string[]) ?? [];
+    const set = new Set(v);
+    return (
+      <div className="space-y-1">
+        {f.options.map((opt) => {
+          const checked = set.has(opt.value);
+          return (
+            <label
+              key={opt.value}
+              className="flex items-center gap-2 px-2 py-1 rounded text-sm cursor-pointer hover:bg-card-hover"
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => {
+                  const next = new Set(v);
+                  if (e.target.checked) next.add(opt.value);
+                  else next.delete(opt.value);
+                  // Preserve original option order on output.
+                  const ordered = f.options
+                    .map((o) => o.value)
+                    .filter((val) => next.has(val));
+                  onChange(ordered);
+                }}
+              />
+              <span className="font-mono text-xs">{opt.label}</span>
+            </label>
+          );
+        })}
+      </div>
+    );
+  }
   if (f.type === 'password') {
     return (
       <input
@@ -390,6 +443,7 @@ function normalizeForState(f: InlineField): FieldValue {
   if (f.type === 'number') return f.value as number;
   if (f.type === 'boolean') return f.value;
   if (f.type === 'lines') return f.value;
+  if (f.type === 'checkboxes') return f.value;
   if (f.type === 'select') return f.value;
   return (f.value as string | null) ?? null;
 }

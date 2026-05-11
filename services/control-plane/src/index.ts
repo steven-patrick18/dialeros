@@ -365,6 +365,7 @@ export {
   getCampaignsForRoutePlan,
   getCampaignsForLeadList,
 } from './campaign';
+export { parseDialableStatuses, bulkResetLeadsInList } from './db';
 export {
   listCampaignsUsingInGroup,
   getInGroupsForAgent,

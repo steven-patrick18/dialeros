@@ -16,6 +16,7 @@ import { InlineCardForm } from '@/components/inline-card-form';
 import { UploadCsvForm } from './upload-form';
 import { DeleteLeadListButton } from './delete-button';
 import { MoveListPicker } from './move-picker';
+import { ResetStatusButton } from './reset-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -438,7 +439,20 @@ export default async function LeadListDetail({
                   </span>
                 )}
               </h3>
-              <div className="flex gap-2 text-xs">
+              <div className="flex gap-2 text-xs items-center">
+                {/* Iter 94 — bulk-reset action when the status
+                    filter is on. Pacer only dials statuses in the
+                    campaign's dialable_statuses set, so resetting
+                    a stuck status (e.g. CALLED_NO_ANSWER) back to
+                    NEW gets those leads back into the rotation
+                    even if NEW is the only allowed status. */}
+                {status && (
+                  <ResetStatusButton
+                    listId={id}
+                    status={status}
+                    matchedCount={filteredTotal}
+                  />
+                )}
                 {page > 1 && (
                   <Link
                     href={buildHref({ page: page - 1 })}
