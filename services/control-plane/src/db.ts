@@ -406,6 +406,13 @@ function db(): DatabaseSync {
     //               upload form).
     "ALTER TABLE campaigns ADD COLUMN amd_action TEXT NOT NULL DEFAULT 'bridge'",
     "ALTER TABLE campaigns ADD COLUMN voicemail_path TEXT",
+    // Iter 70: ViciDial-style list-order strategy. Drives how the
+    // hopper refill picks dialable leads:
+    //   RANDOM    — ORDER BY RANDOM() (default).
+    //   UP_TIME   — oldest created_at first (clear legacy backlog).
+    //   DOWN_TIME — newest created_at first (work fresh imports).
+    // Callback-due leads are always priority-1 regardless of strategy.
+    "ALTER TABLE campaigns ADD COLUMN list_order TEXT NOT NULL DEFAULT 'RANDOM'",
     // Iter 58: remote-agent bridging. When the pacer bridges to a
     // remote agent (SIP URI) instead of a local user/<ext>, this
     // column holds the remote_agents.id so we can roll up in-flight
@@ -2265,6 +2272,7 @@ export interface CampaignRecord {
   dial_level: number;
   amd_action: string;
   voicemail_path: string | null;
+  list_order: string;
   created_at: string;
   updated_at: string;
 }
@@ -2534,6 +2542,7 @@ export function updateCampaignFields(
     dial_level: number;
     amd_action: string;
     voicemail_path: string | null;
+    list_order: string;
   }>,
 ): boolean {
   const fields: string[] = [];
@@ -2701,6 +2710,16 @@ export function hopperSize(campaignId: string): number {
  * pickNextDialableLead so the hopper never pre-loads a lead the
  * cooldown would skip.
  */
+/** Iter 70 — drop every queued lead for a campaign. The pacer's
+ * next tick will rebuild the hopper from scratch using whatever
+ * list_order the campaign is set to. */
+export function clearHopper(campaignId: string): number {
+  const result = db()
+    .prepare(`DELETE FROM lead_hopper WHERE campaign_id = ?`)
+    .run(campaignId);
+  return Number(result.changes);
+}
+
 export function refillHopper(
   campaignId: string,
   target: number,
@@ -2742,7 +2761,20 @@ export function refillHopper(
   const remaining = slots - added;
   if (remaining <= 0) return added;
 
-  // Pass 2: NEW / CALLED_NO_ANSWER / BUSY
+  // Pass 2: NEW / CALLED_NO_ANSWER / BUSY — order depends on the
+  // campaign's list_order strategy (iter 70). Untouched leads
+  // (last_called_at IS NULL) always come before previously-tried
+  // ones in any strategy; that's the typical ViciDial behaviour
+  // and matches "work the new stuff first".
+  const campaign = getCampaignFromDb(campaignId);
+  const strategy = campaign?.list_order ?? 'RANDOM';
+  const orderClause =
+    strategy === 'UP_TIME'
+      ? `ORDER BY (l.last_called_at IS NULL) DESC, l.created_at ASC`
+      : strategy === 'DOWN_TIME'
+        ? `ORDER BY (l.last_called_at IS NULL) DESC, l.created_at DESC`
+        : `ORDER BY (l.last_called_at IS NULL) DESC, RANDOM()`;
+
   const dResult = d
     .prepare(
       `INSERT OR IGNORE INTO lead_hopper (campaign_id, lead_id)
@@ -2756,9 +2788,7 @@ export function refillHopper(
             SELECT 1 FROM lead_hopper h
              WHERE h.campaign_id = ? AND h.lead_id = l.id
           )
-        ORDER BY CASE WHEN l.last_called_at IS NULL THEN 0 ELSE 1 END,
-                 l.last_called_at ASC,
-                 l.created_at ASC
+        ${orderClause}
         LIMIT ?`,
     )
     .run(campaignId, campaignId, cooldownCutoff, campaignId, remaining);

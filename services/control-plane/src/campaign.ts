@@ -256,6 +256,10 @@ export const CampaignUpdateInputSchema = z
       .nullable()
       .optional()
       .or(z.literal('').transform(() => null)),
+    // Iter 70 — list-order strategy. RANDOM picks each refill at
+    // random; UP_TIME walks oldest leads first (clear backlog);
+    // DOWN_TIME walks newest first (work fresh imports).
+    list_order: z.enum(['RANDOM', 'UP_TIME', 'DOWN_TIME']).optional(),
   })
   .refine(
     (d) => {
@@ -308,6 +312,7 @@ export function updateCampaign(
   if (input.voicemail_path !== undefined) {
     updates.voicemail_path = input.voicemail_path ?? null;
   }
+  if (input.list_order !== undefined) updates.list_order = input.list_order;
   return updateCampaignFields(id, updates);
 }
 

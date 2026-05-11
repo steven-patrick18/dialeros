@@ -21,6 +21,7 @@ import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
 import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
+import { HopperResetButton } from './hopper-reset-button';
 import { AttachmentPicker } from '@/components/attachment-picker';
 import { InlineCardForm } from '@/components/inline-card-form';
 
@@ -203,23 +204,47 @@ export default async function CampaignDetail({
           helpText="Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart."
         />
 
-        <InlineCardForm
-          title="Hopper"
-          endpoint={`/api/campaigns/${c.id}`}
-          fields={[
-            {
-              type: 'number',
-              name: 'hopper_level',
-              label: 'Target depth',
-              value: c.hopper_level,
-              min: 1,
-              max: 10000,
-              step: 1,
-              hint: 'Number of leads to keep pre-loaded into the campaign hopper. The pacer pops from the hopper each call and refills automatically when it drops below half. Higher = larger pre-fetch buffer; lower = leads picked just-in-time.',
-            },
-          ]}
-          helpText={`Currently holding ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} leads. Refills automatically when depth drops below half target.`}
-        />
+        <div>
+          <InlineCardForm
+            title="Hopper"
+            endpoint={`/api/campaigns/${c.id}`}
+            fields={[
+              {
+                type: 'number',
+                name: 'hopper_level',
+                label: 'Target depth',
+                value: c.hopper_level,
+                min: 1,
+                max: 10000,
+                step: 1,
+                hint: 'Number of leads to keep pre-loaded into the campaign hopper. The pacer pops one per call and refills when depth drops below half target.',
+              },
+              {
+                type: 'select',
+                name: 'list_order',
+                label: 'List order',
+                value: c.list_order,
+                options: [
+                  {
+                    value: 'RANDOM',
+                    label: 'RANDOM — pick at random each refill (default)',
+                  },
+                  {
+                    value: 'UP_TIME',
+                    label: 'UP_TIME — oldest created leads first (clear backlog)',
+                  },
+                  {
+                    value: 'DOWN_TIME',
+                    label: 'DOWN_TIME — newest created leads first (work fresh imports)',
+                  },
+                ],
+                hint: 'How the hopper picks leads from this campaign’s lists during refill. Callback-due leads always take priority regardless of strategy.',
+              },
+            ]}
+            helpText={`Currently holding ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} leads. Refills automatically when depth drops below half target.`}
+          />
+          <HopperResetButton campaignId={c.id} currentDepth={hopperDepth} />
+        </div>
 
         <InlineCardForm
           title="On answer behaviour"

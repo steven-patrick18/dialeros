@@ -380,6 +380,7 @@ export {
   hopperSize,
   refillHopper,
   popHopperLead,
+  clearHopper,
 } from './db';
 
 // DIDs (iter 22) — standalone management
