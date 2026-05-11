@@ -26,6 +26,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
     label: 'Operations',
     items: [
       { href: '/', label: 'Dashboard' },
+      { href: '/realtime', label: 'Real-time' },
       { href: '/agent', label: 'Agent console' },
       { href: '/supervisor', label: 'Supervisor floor' },
       { href: '/reports', label: 'Reports' },

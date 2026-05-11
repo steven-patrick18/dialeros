@@ -133,8 +133,15 @@ export {
   latestUndisposedIntentForUser,
   getDialIntentById,
   listActiveCalls,
+  liveCampaignSnapshot,
+  liveAgentSnapshot,
 } from './db';
-export type { AgentIntentRecord, ActiveCallRecord } from './db';
+export type {
+  AgentIntentRecord,
+  ActiveCallRecord,
+  CampaignLiveRow,
+  AgentLiveRow,
+} from './db';
 
 // Lead disposition (iter 18)
 export {

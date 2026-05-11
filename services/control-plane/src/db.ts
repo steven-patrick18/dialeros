@@ -1710,6 +1710,118 @@ export function listDialIntentsForUser(
 }
 
 /**
+ * Iter 67 — per-campaign live snapshot. One row per non-archived
+ * campaign joined with the route plan's primary carrier and rolled
+ * up hopper / in-flight counts. The realtime view polls this.
+ */
+export interface CampaignLiveRow {
+  id: string;
+  name: string;
+  status: string;
+  dial_mode: string;
+  type: string;
+  dial_level: number;
+  hopper_level: number;
+  hopper_depth: number;
+  in_flight: number;
+  carrier_id: string | null;
+  carrier_name: string | null;
+  carrier_enabled: number | null;
+  amd_action: string;
+}
+export function liveCampaignSnapshot(): CampaignLiveRow[] {
+  return db()
+    .prepare(
+      `SELECT c.id, c.name, c.status, c.dial_mode, c.type,
+              c.dial_level, c.hopper_level, c.amd_action,
+              cr.id   AS carrier_id,
+              cr.name AS carrier_name,
+              cr.enabled AS carrier_enabled,
+              (SELECT COUNT(*) FROM lead_hopper h WHERE h.campaign_id = c.id)
+                AS hopper_depth,
+              (SELECT COUNT(*) FROM dial_intents i
+                 WHERE i.campaign_id = c.id
+                   AND i.answered_at IS NOT NULL
+                   AND i.hangup_at IS NULL
+                   AND i.call_uuid IS NOT NULL)
+                AS in_flight
+         FROM campaigns c
+         LEFT JOIN route_plans rp ON rp.id = c.route_plan_id
+         LEFT JOIN carriers cr ON cr.id = rp.primary_carrier_id
+        WHERE c.status != 'archived'
+        ORDER BY c.status DESC, c.name ASC`,
+    )
+    .all() as unknown as CampaignLiveRow[];
+}
+
+/**
+ * Iter 67 — agent live status. AVAILABLE / PAUSED is the agent_status
+ * value; IN_CALL is inferred from an undisposed dial_intent that's
+ * still mid-call (answered_at set, hangup_at NULL). Joins the latest
+ * such intent for caller-id + duration so the realtime view doesn't
+ * need an N+1 lookup.
+ */
+export interface AgentLiveRow {
+  user_id: string;
+  username: string;
+  display_name: string | null;
+  role: string;
+  is_active: number;
+  manual_dial: number;
+  status: string;
+  pause_reason: string | null;
+  call_intent_id: number | null;
+  call_phone: string | null;
+  call_answered_at: string | null;
+  dispositions_today: number;
+}
+export function liveAgentSnapshot(): AgentLiveRow[] {
+  // Pull users + their agent_status, plus the most recent live intent
+  // (answered, not hung up) assigned to them. dispositions_today via
+  // the same per-day pattern as countDispositionsTodayForUser.
+  return db()
+    .prepare(
+      `SELECT u.id  AS user_id,
+              u.username,
+              u.display_name,
+              u.role,
+              u.is_active,
+              u.manual_dial,
+              COALESCE(s.status, 'AVAILABLE') AS status,
+              s.reason AS pause_reason,
+              i.id     AS call_intent_id,
+              i.transformed_phone AS call_phone,
+              i.answered_at AS call_answered_at,
+              (
+                SELECT COUNT(*) FROM dial_intents d
+                 WHERE d.assigned_user_id = u.id
+                   AND d.dispositioned_at IS NOT NULL
+                   AND date(d.dispositioned_at) = date('now')
+              ) AS dispositions_today
+         FROM users u
+         LEFT JOIN agent_status s ON s.user_id = u.id
+         LEFT JOIN dial_intents i
+                ON i.id = (
+                  SELECT MAX(id) FROM dial_intents
+                   WHERE assigned_user_id = u.id
+                     AND answered_at IS NOT NULL
+                     AND hangup_at IS NULL
+                     AND call_uuid IS NOT NULL
+                )
+        WHERE u.is_active = 1
+          AND u.role IN ('agent', 'supervisor', 'admin')
+        ORDER BY
+          CASE COALESCE(s.status, 'AVAILABLE')
+            WHEN 'AVAILABLE' THEN 0
+            WHEN 'PAUSED'    THEN 1
+            ELSE 2
+          END,
+          u.username ASC`,
+    )
+    .all() as unknown as AgentLiveRow[];
+}
+
+/**
  * Iter 65 — supervisor floor view. Returns every dial_intent that
  * is currently mid-call: answered_at set + hangup_at NULL. Joined
  * with campaign + user names so the supervisor table doesn't need
