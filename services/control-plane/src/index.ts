@@ -229,6 +229,7 @@ export type {
 // Route plans
 export {
   CidStrategySchema,
+  PlanCarrierRowSchema,
   RoutePlanInputSchema,
   RoutePlanUpdateInputSchema,
   createRoutePlan,
@@ -240,7 +241,12 @@ export {
   parseFailoverIds,
   parseCidPool,
   parseCidGroupIds,
+  listCarriersForRoutePlan,
+  setRoutePlanCarriers,
 } from './route-plan';
+export type { PlanCarrierRow } from './route-plan';
+export { inFlightForCarrier } from './db';
+export type { RoutePlanCarrierRecord } from './db';
 
 // CID groups (iter 72)
 export {

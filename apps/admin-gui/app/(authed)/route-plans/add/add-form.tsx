@@ -2,14 +2,12 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
-
-interface CarrierOption {
-  id: string;
-  name: string;
-  host: string;
-  enabled: boolean;
-}
+import { useState } from 'react';
+import {
+  CarriersTableEditor,
+  type CarrierOption,
+  type CarrierRow,
+} from '@/components/carriers-table-editor';
 
 interface CidGroupOption {
   id: string;
@@ -39,25 +37,19 @@ export function AddRoutePlanForm({
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [primaryId, setPrimaryId] = useState(carriers[0]?.id ?? '');
-  const [failoverIds, setFailoverIds] = useState<string[]>([]);
+  // Iter 74 — single carriers list with priority + ports per row.
+  // Default seed: first available carrier at priority 1 / 30 ports.
+  const [carrierRows, setCarrierRows] = useState<CarrierRow[]>(
+    carriers[0]
+      ? [{ carrier_id: carriers[0].id, priority: 1, ports: 30 }]
+      : [],
+  );
   const [strategy, setStrategy] = useState<Strategy>('passthrough');
   const [cidPool, setCidPool] = useState('');
   const [cidGroupIds, setCidGroupIds] = useState<string[]>([]);
 
   function toggleCidGroup(id: string) {
     setCidGroupIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  }
-
-  const failoverChoices = useMemo(
-    () => carriers.filter((c) => c.id !== primaryId),
-    [carriers, primaryId],
-  );
-
-  function toggleFailover(id: string) {
-    setFailoverIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   }
@@ -77,12 +69,20 @@ export function AddRoutePlanForm({
         .filter(Boolean);
     }
 
+    if (carrierRows.length === 0) {
+      setError('Add at least one carrier.');
+      setSubmitting(false);
+      return;
+    }
+
     const body = {
       name: String(fd.get('name') ?? ''),
       description:
         String(fd.get('description') ?? '').trim() || undefined,
-      primary_carrier_id: primaryId,
-      failover_carrier_ids: failoverIds,
+      // Iter 74 — the carriers array is the new source of truth.
+      // primary_carrier_id and failover_carrier_ids are derived
+      // server-side from priorities.
+      carriers: carrierRows,
       cid_strategy: strategy,
       cid_single:
         strategy === 'single'
@@ -140,51 +140,17 @@ export function AddRoutePlanForm({
       </Section>
 
       <Section title="Carriers">
-        <Field label="Primary carrier" hint="Used by default for every dial.">
-          <select
-            value={primaryId}
-            onChange={(e) => {
-              setPrimaryId(e.target.value);
-              setFailoverIds((prev) =>
-                prev.filter((id) => id !== e.target.value),
-              );
-            }}
-            className="input"
-            required
-          >
-            {carriers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} {c.enabled ? '' : '(disabled)'}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        {failoverChoices.length > 0 && (
-          <Field
-            label="Failover carriers"
-            hint="Tried in order if primary fails. Optional."
-          >
-            <div className="space-y-1">
-              {failoverChoices.map((c) => (
-                <label
-                  key={c.id}
-                  className="flex items-center gap-2 px-3 py-2 border border-border rounded text-sm cursor-pointer hover:bg-card-hover"
-                >
-                  <input
-                    type="checkbox"
-                    checked={failoverIds.includes(c.id)}
-                    onChange={() => toggleFailover(c.id)}
-                  />
-                  <span>{c.name}</span>
-                  <span className="text-fg-subtle text-xs ml-auto font-mono">
-                    {c.host}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </Field>
-        )}
+        <p className="text-xs text-fg-subtle -mt-1 mb-2">
+          Lower priority dials first. Equal priorities round-robin within
+          their tier (e.g. <span className="font-mono">1, 1</span> = 50/50).
+          Ports caps concurrent in-flight calls per carrier.
+        </p>
+        <CarriersTableEditor
+          mode="controlled"
+          carriers={carriers}
+          initialRows={carrierRows}
+          onChange={setCarrierRows}
+        />
       </Section>
 
       <Section title="Caller ID">

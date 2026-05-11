@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 const STRATEGIES = ['passthrough', 'single', 'rotate', 'groups'] as const;
 type Strategy = (typeof STRATEGIES)[number];
@@ -39,11 +39,9 @@ interface CidGroupOption {
 
 export function EditRoutePlanForm({
   plan,
-  carriers,
   cidGroups,
 }: {
   plan: PlanState;
-  carriers: Array<{ id: string; name: string; host: string; enabled: boolean }>;
   cidGroups: CidGroupOption[];
 }) {
   const router = useRouter();
@@ -52,25 +50,11 @@ export function EditRoutePlanForm({
   const [strategy, setStrategy] = useState<Strategy>(
     plan.cid_strategy as Strategy,
   );
-  const [failoverIds, setFailoverIds] = useState<string[]>(
-    plan.failover_carrier_ids,
-  );
   const [cidPoolText, setCidPoolText] = useState(plan.cid_pool.join('\n'));
   const [cidGroupIds, setCidGroupIds] = useState<string[]>(plan.cid_group_ids);
 
   function toggleCidGroup(id: string) {
     setCidGroupIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  }
-
-  const failoverChoices = useMemo(
-    () => carriers.filter((c) => c.id !== plan.primary_carrier_id),
-    [carriers, plan.primary_carrier_id],
-  );
-
-  function toggleFailover(id: string) {
-    setFailoverIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
   }
@@ -92,7 +76,6 @@ export function EditRoutePlanForm({
     const body: Record<string, unknown> = {
       name: String(fd.get('name') ?? ''),
       description: String(fd.get('description') ?? '').trim() || undefined,
-      failover_carrier_ids: failoverIds,
       cid_strategy: strategy,
       cid_single:
         strategy === 'single'
@@ -144,31 +127,20 @@ export function EditRoutePlanForm({
         </Field>
       </Section>
 
-      {failoverChoices.length > 0 && (
-        <Section title="Failover carriers">
-          <p className="text-xs text-fg-subtle -mt-1 mb-2">
-            Tried in order if primary fails.
-          </p>
-          <div className="space-y-1">
-            {failoverChoices.map((c) => (
-              <label
-                key={c.id}
-                className="flex items-center gap-2 px-3 py-2 border border-border rounded text-sm cursor-pointer hover:bg-card-hover"
-              >
-                <input
-                  type="checkbox"
-                  checked={failoverIds.includes(c.id)}
-                  onChange={() => toggleFailover(c.id)}
-                />
-                <span>{c.name}</span>
-                <span className="text-fg-subtle text-xs ml-auto font-mono">
-                  {c.host}
-                </span>
-              </label>
-            ))}
-          </div>
-        </Section>
-      )}
+      <Section title="Carriers">
+        <p className="text-xs text-fg-subtle -mt-1 mb-2">
+          Carriers, priority, and ports live on the route plan detail page
+          now — open it after saving identity / CID / transform fields
+          here. The detail page&apos;s editor handles the full carrier set
+          (multi-carrier with priority tiers + per-carrier port caps).
+        </p>
+        <Link
+          href={`/route-plans/${plan.id}`}
+          className="text-xs underline text-accent"
+        >
+          Open carrier editor →
+        </Link>
+      </Section>
 
       <Section title="Caller ID">
         <Field label="Strategy" hint={STRATEGY_HINTS[strategy]}>

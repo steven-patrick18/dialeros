@@ -5,13 +5,15 @@ import {
   getCarrier,
   getCidGroup,
   getRoutePlan,
+  inFlightForCarrier,
   listCarriers,
+  listCarriersForRoutePlan,
   listCidGroups,
   parseCidGroupIds,
   parseCidPool,
-  parseFailoverIds,
 } from '@dialeros/control-plane';
 import { AttachmentPicker } from '@/components/attachment-picker';
+import { CarriersTableEditor } from '@/components/carriers-table-editor';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteRoutePlanButton } from './delete-button';
 
@@ -26,14 +28,27 @@ export default async function RoutePlanDetail({
   const plan = getRoutePlan(id);
   if (!plan) notFound();
 
-  const primary = getCarrier(plan.primary_carrier_id);
-  const failoverIds = parseFailoverIds(plan);
-  const failovers = failoverIds.map((fid) => getCarrier(fid));
   const cidPool = parseCidPool(plan);
   const cidGroupIds = parseCidGroupIds(plan);
   const cidGroups = cidGroupIds.map((gid) => getCidGroup(gid)).filter(Boolean);
   const allCarriers = listCarriers();
   const allCidGroups = listCidGroups();
+
+  // Iter 74 — multi-carrier set. Each row carries priority + ports
+  // independent of the legacy primary/failover columns. The detail
+  // page surfaces in-flight counts per carrier so an admin can see
+  // how close each is to its port cap.
+  const planCarrierRows = listCarriersForRoutePlan(plan.id).map((r) => {
+    const c = getCarrier(r.carrier_id);
+    return {
+      carrier_id: r.carrier_id,
+      name: c?.name ?? '(deleted)',
+      host: c?.host ?? '',
+      priority: r.priority,
+      ports: r.ports,
+      in_flight: inFlightForCarrier(r.carrier_id),
+    };
+  });
 
   const exampleNumber = '+14155551234';
   const transformed = applyTransform(
@@ -96,50 +111,39 @@ export default async function RoutePlanDetail({
         />
       </div>
 
+      <div className="border border-border rounded p-4 max-w-4xl mb-4">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+          Carriers ({planCarrierRows.length})
+        </h2>
+        <p className="text-xs text-fg-subtle mb-3">
+          Lower priority dials first. Equal priorities round-robin within
+          their tier (e.g. <span className="font-mono">1, 1</span> = 50/50).
+          Ports caps concurrent in-flight calls per carrier. Currently in
+          flight per row:{' '}
+          {planCarrierRows.length === 0
+            ? '—'
+            : planCarrierRows
+                .map((r) => `${r.name} ${r.in_flight}/${r.ports}`)
+                .join('  ·  ')}
+          .
+        </p>
+        <CarriersTableEditor
+          planId={plan.id}
+          carriers={allCarriers.map((c) => ({
+            id: c.id,
+            name: c.name,
+            host: `${c.transport}://${c.host}:${c.port}`,
+            enabled: c.enabled === 1,
+          }))}
+          initialRows={planCarrierRows.map((r) => ({
+            carrier_id: r.carrier_id,
+            priority: r.priority,
+            ports: r.ports,
+          }))}
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
-        <Card title="Primary carrier">
-          {primary ? (
-            <Link
-              href={`/carriers/${primary.id}`}
-              className="text-sm hover:underline"
-            >
-              {primary.name}
-              <span className="text-fg-subtle ml-2 font-mono text-xs">
-                {primary.host}:{primary.port}
-              </span>
-            </Link>
-          ) : (
-            <p className="text-error text-sm">
-              Primary carrier missing â€” was it deleted?
-            </p>
-          )}
-        </Card>
-
-        <div className="border border-border rounded p-4 space-y-2">
-          <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-            Failover carriers ({failovers.length})
-          </h2>
-          <p className="text-xs text-fg-subtle mb-2">
-            Tick the carriers to fall back to when the primary fails. Order
-            in the list reflects priority. The primary is excluded — it
-            can&apos;t also be a failover.
-          </p>
-          <AttachmentPicker
-            endpoint={`/api/route-plans/${plan.id}`}
-            bodyKey="failover_carrier_ids"
-            method="PUT"
-            options={allCarriers
-              .filter((cc) => cc.id !== plan.primary_carrier_id)
-              .map((cc) => ({
-                id: cc.id,
-                name: cc.name,
-                hint: `${cc.transport}://${cc.host}:${cc.port}`,
-                warn: cc.enabled === 0,
-              }))}
-            initialSelected={failoverIds}
-          />
-        </div>
-
         <InlineCardForm
           title="Caller ID"
           endpoint={`/api/route-plans/${plan.id}`}

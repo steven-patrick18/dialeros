@@ -12,8 +12,10 @@ import {
   getPrimaryPhoneForUser,
   getRoutePlanFromDb,
   hopperSize,
+  inFlightForCarrier,
   insertDialIntent,
   listCampaignsFromDb,
+  listCarriersForRoutePlanFromDb,
   listCidsInGroupFromDb,
   listDialIntentsForCampaign,
   markLeadDialed,
@@ -21,6 +23,7 @@ import {
   popHopperLead,
   refillHopper,
   type CampaignRecord,
+  type CarrierRecord,
   type DialIntentRecord,
   type RemoteAgentRecord,
 } from './db';
@@ -82,6 +85,9 @@ interface BusContainer {
   // 'sticky_by_area' (fallback), we rotate across the numbers:
   // key = group_id, value = cursor.
   cidGroupNumberCursor: Map<string, number>;
+  // Iter 74 — round-robin cursor for (route_plan_id, priority) so
+  // equal-priority carriers split traffic evenly (1,1 = 50/50).
+  carrierTierCursor: Map<string, number>;
 }
 
 declare global {
@@ -102,6 +108,7 @@ function container(): BusContainer {
       bridgeRotateState: new Map(),
       cidGroupPlanCursor: new Map(),
       cidGroupNumberCursor: new Map(),
+      carrierTierCursor: new Map(),
     };
   }
   // Older sessions might predate the newer state maps — patch
@@ -112,6 +119,7 @@ function container(): BusContainer {
   if (!c.bridgeRotateState) c.bridgeRotateState = new Map();
   if (!c.cidGroupPlanCursor) c.cidGroupPlanCursor = new Map();
   if (!c.cidGroupNumberCursor) c.cidGroupNumberCursor = new Map();
+  if (!c.carrierTierCursor) c.carrierTierCursor = new Map();
   return c;
 }
 
@@ -150,6 +158,50 @@ function applyTransform(
     result = add + result;
   }
   return result;
+}
+
+/** Iter 74 — pick a carrier for this route plan to dial through.
+ * Walks the priority tiers in ascending order; within a tier filters
+ * to (enabled + accepts destination + below port cap) and round-robins.
+ * Falls through to the next tier when nothing in this one is usable.
+ * Returns null when every tier is exhausted. */
+function pickCarrierForPlan(
+  planId: string,
+  destination: string,
+): CarrierRecord | null {
+  const rows = listCarriersForRoutePlanFromDb(planId);
+  if (rows.length === 0) return null;
+
+  // Group rows by priority tier.
+  const byPriority = new Map<number, typeof rows>();
+  for (const r of rows) {
+    const list = byPriority.get(r.priority) ?? [];
+    list.push(r);
+    byPriority.set(r.priority, list);
+  }
+  const priorities = [...byPriority.keys()].sort((a, b) => a - b);
+
+  const c = container();
+  for (const p of priorities) {
+    const tier = byPriority.get(p)!;
+    // Resolve each row to its carrier + apply the gates.
+    const candidates: Array<{ carrier: CarrierRecord; ports: number }> = [];
+    for (const row of tier) {
+      const carrier = getCarrierFromDb(row.carrier_id);
+      if (!carrier) continue;
+      if (carrier.enabled !== 1) continue;
+      if (!carrierAcceptsDestination(carrier, destination)) continue;
+      if (inFlightForCarrier(carrier.id) >= row.ports) continue;
+      candidates.push({ carrier, ports: row.ports });
+    }
+    if (candidates.length === 0) continue;
+    const cursorKey = `${planId}:${p}`;
+    const cur = c.carrierTierCursor.get(cursorKey) ?? 0;
+    const picked = candidates[cur % candidates.length]!;
+    c.carrierTierCursor.set(cursorKey, cur + 1);
+    return picked.carrier;
+  }
+  return null;
 }
 
 function pickCid(
@@ -488,22 +540,22 @@ export async function paceCampaignOnce(
   let kind = 'simulated';
   let correlationId: string | null = null;
   let recordingPath: string | null = null;
+  // Iter 74 — the carrier actually picked by pickCarrierForPlan, so
+  // the dial_intent row can be attributed for in-flight counts.
+  let pickedCarrierId: string | null = null;
   if (campaign.dial_mode === 'live') {
-    const carrier = getCarrierFromDb(plan.primary_carrier_id);
+    // Iter 74 — multi-carrier routing. pickCarrierForPlan walks the
+    // priority tiers, applies the dial-prefix gate AND a per-(plan,
+    // carrier) port-cap gate, and returns null only when every tier
+    // is exhausted. When that happens we bounce the lead to
+    // CALLED_NO_ANSWER so it cycles back through cooldown instead of
+    // being hammered on the next tick.
+    const carrier = pickCarrierForPlan(plan.id, transformed);
     if (!carrier) {
-      return { outcome: 'no_carrier' };
-    }
-    // Iter 44 — carrier-level dial-prefix gate. If the carrier has a
-    // configured prefix list and this destination doesn't match any
-    // of them, skip the originate. We DO mark the lead so it goes
-    // back into the cooldown rotation rather than getting picked
-    // again on the very next tick — bumping it out of the live
-    // candidate set would need a dedicated lead status, which is
-    // future work.
-    if (!carrierAcceptsDestination(carrier, transformed)) {
       markLeadDialed(lead.lead_id, 'CALLED_NO_ANSWER');
       return { outcome: 'no_matching_prefix' };
     }
+    pickedCarrierId = carrier.id;
     // Iter 45 — apply carrier rewrite rules. If a rule's match_prefix
     // matches, we strip it and prepend the next replacement on the
     // rotation cursor so 0805 → [310,311,312,…] traffic spreads
@@ -623,6 +675,7 @@ export async function paceCampaignOnce(
     recording_path:
       originateOutcome?.ok && recordingPath ? recordingPath : null,
     remote_agent_id: remoteAgent?.id ?? null,
+    carrier_id: pickedCarrierId,
   });
 
   // Iter 34 — live calls go to DIALING (in-flight). The fs-events

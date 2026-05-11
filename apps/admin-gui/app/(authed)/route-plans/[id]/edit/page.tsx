@@ -3,7 +3,6 @@ import {
   countCidsInGroup,
   getCarrier,
   getRoutePlan,
-  listCarriers,
   listCidGroups,
   parseCidGroupIds,
   parseCidPool,
@@ -47,12 +46,6 @@ export default async function EditRoutePlanPage({
           transform_add_prefix: plan.transform_add_prefix,
           enabled: plan.enabled === 1,
         }}
-        carriers={listCarriers().map((c) => ({
-          id: c.id,
-          name: c.name,
-          host: c.host,
-          enabled: c.enabled === 1,
-        }))}
         cidGroups={listCidGroups().map((g) => ({
           id: g.id,
           name: g.name,

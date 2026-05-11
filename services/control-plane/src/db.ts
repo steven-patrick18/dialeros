@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { NodeRecord, NodeRole, NodeStatus } from './schema';
@@ -339,6 +340,27 @@ function db(): DatabaseSync {
       UNIQUE(group_id, number)
     );
     CREATE INDEX IF NOT EXISTS idx_cid_group_numbers_group ON cid_group_numbers(group_id);
+
+    -- Iter 74: route plan ↔ carriers join table with priority + port
+    -- allocation. Replaces the legacy primary_carrier_id +
+    -- failover_carrier_ids_json model. Same priority across multiple
+    -- carriers means round-robin within that tier (so two carriers at
+    -- priority 1 = 50/50 split). ports is the per-(plan,carrier)
+    -- concurrent-call cap enforced at originate time. Legacy columns
+    -- stay populated for back-compat.
+    CREATE TABLE IF NOT EXISTS route_plan_carriers (
+      id TEXT PRIMARY KEY,
+      route_plan_id TEXT NOT NULL REFERENCES route_plans(id) ON DELETE CASCADE,
+      carrier_id TEXT NOT NULL REFERENCES carriers(id) ON DELETE CASCADE,
+      priority INTEGER NOT NULL DEFAULT 1,
+      ports INTEGER NOT NULL DEFAULT 30,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(route_plan_id, carrier_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_route_plan_carriers_plan
+      ON route_plan_carriers(route_plan_id, priority, created_at);
+    CREATE INDEX IF NOT EXISTS idx_route_plan_carriers_carrier
+      ON route_plan_carriers(carrier_id);
   `);
 
   // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
@@ -470,6 +492,12 @@ function db(): DatabaseSync {
     // per call and applies each group's own strategy. Default '[]'
     // keeps every existing plan a no-op.
     "ALTER TABLE route_plans ADD COLUMN cid_group_ids_json TEXT NOT NULL DEFAULT '[]'",
+    // Iter 74: per-call carrier attribution. Pacer writes the carrier
+    // actually picked for each originate so we can count in-flight per
+    // carrier for the port-cap gate, plus break down reports by
+    // carrier. NULL on old rows + simulated calls.
+    "ALTER TABLE dial_intents ADD COLUMN carrier_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_dial_intents_carrier ON dial_intents(carrier_id, hangup_at)",
   ];
   for (const sql of migrations) {
     try {
@@ -509,8 +537,68 @@ function db(): DatabaseSync {
       WHERE roles IS NULL`,
   );
 
+  // Iter 74 backfill — populate route_plan_carriers from the legacy
+  // primary_carrier_id + failover_carrier_ids_json wherever the plan
+  // has no rows yet. Primary lands at priority 1; failovers land at
+  // 2, 3, ... in the order the JSON array stored them. Idempotent
+  // because the NOT EXISTS guard skips plans that already have rows.
+  backfillRoutePlanCarriers(d);
+
   _db = d;
   return d;
+}
+
+function backfillRoutePlanCarriers(d: DatabaseSync): void {
+  const plans = d
+    .prepare(
+      `SELECT id, primary_carrier_id, failover_carrier_ids_json
+         FROM route_plans
+        WHERE NOT EXISTS (
+          SELECT 1 FROM route_plan_carriers rpc
+           WHERE rpc.route_plan_id = route_plans.id
+        )`,
+    )
+    .all() as Array<{
+    id: string;
+    primary_carrier_id: string;
+    failover_carrier_ids_json: string;
+  }>;
+  if (plans.length === 0) return;
+
+  const insert = d.prepare(
+    `INSERT INTO route_plan_carriers
+       (id, route_plan_id, carrier_id, priority, ports)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(route_plan_id, carrier_id) DO NOTHING`,
+  );
+  d.exec('BEGIN');
+  try {
+    for (const p of plans) {
+      // Primary at priority 1.
+      insert.run(randomUUID(), p.id, p.primary_carrier_id, 1, 30);
+      // Failovers at priority 2..N. Skip the primary if it accidentally
+      // appears in the failover array too.
+      let failovers: string[] = [];
+      try {
+        const parsed = JSON.parse(p.failover_carrier_ids_json);
+        if (Array.isArray(parsed)) {
+          failovers = parsed.filter(
+            (s): s is string =>
+              typeof s === 'string' && s !== p.primary_carrier_id,
+          );
+        }
+      } catch {
+        // ignore malformed JSON; treat as no failovers
+      }
+      failovers.forEach((cid, idx) => {
+        insert.run(randomUUID(), p.id, cid, 2 + idx, 30);
+      });
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
 }
 
 // =====================================================================
@@ -1212,6 +1300,77 @@ export function deleteRoutePlanFromDb(id: string): boolean {
 }
 
 // =====================================================================
+// route_plan_carriers (iter 74) — many-to-many carriers per plan with
+// priority + port allocation.
+// =====================================================================
+
+export interface RoutePlanCarrierRecord {
+  id: string;
+  route_plan_id: string;
+  carrier_id: string;
+  priority: number;
+  ports: number;
+  created_at: string;
+}
+
+export function listCarriersForRoutePlanFromDb(
+  planId: string,
+): RoutePlanCarrierRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM route_plan_carriers
+        WHERE route_plan_id = ?
+        ORDER BY priority ASC, created_at ASC, carrier_id ASC`,
+    )
+    .all(planId) as unknown as RoutePlanCarrierRecord[];
+}
+
+/** Full-set replace. Wipes the plan's existing rows and inserts the
+ * given carriers in a single transaction. Caller is expected to have
+ * already validated that every carrier_id exists and that the array
+ * has no duplicates. Returns the count of rows inserted. */
+export function replaceRoutePlanCarriers(
+  planId: string,
+  rows: Array<{ carrier_id: string; priority: number; ports: number }>,
+): number {
+  const d = db();
+  const del = d.prepare(
+    `DELETE FROM route_plan_carriers WHERE route_plan_id = ?`,
+  );
+  const ins = d.prepare(
+    `INSERT INTO route_plan_carriers
+       (id, route_plan_id, carrier_id, priority, ports)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  let inserted = 0;
+  d.exec('BEGIN');
+  try {
+    del.run(planId);
+    for (const r of rows) {
+      ins.run(randomUUID(), planId, r.carrier_id, r.priority, r.ports);
+      inserted++;
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return inserted;
+}
+
+/** In-flight (un-hung-up) call count for a carrier across ALL route
+ * plans. Used by the pacer's port-cap gate. */
+export function inFlightForCarrier(carrierId: string): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents
+        WHERE carrier_id = ? AND hangup_at IS NULL`,
+    )
+    .get(carrierId) as { n: number };
+  return Number(row.n);
+}
+
+// =====================================================================
 // cid groups (iter 72)
 // =====================================================================
 
@@ -1709,12 +1868,13 @@ export function insertDialIntent(rec: {
   correlation_id?: string | null;
   recording_path?: string | null;
   remote_agent_id?: string | null;
+  carrier_id?: string | null;
 }): DialIntentRecord {
   const result = db()
     .prepare(
       `INSERT INTO dial_intents
-         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id, recording_path, remote_agent_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id, recording_path, remote_agent_id, carrier_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.campaign_id,
@@ -1730,6 +1890,7 @@ export function insertDialIntent(rec: {
       rec.correlation_id ?? null,
       rec.recording_path ?? null,
       rec.remote_agent_id ?? null,
+      rec.carrier_id ?? null,
     );
   const id = Number(result.lastInsertRowid);
   return db()
@@ -2735,6 +2896,9 @@ export function updateRoutePlanFields(
   updates: Partial<{
     name: string;
     description: string | null;
+    /** Iter 74 — kept in sync with the lowest-priority row in
+     * route_plan_carriers so legacy readers stay correct. */
+    primary_carrier_id: string;
     failover_carrier_ids_json: string;
     cid_strategy: string;
     cid_single: string | null;
