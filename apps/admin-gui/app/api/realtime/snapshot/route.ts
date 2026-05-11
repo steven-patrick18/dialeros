@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import {
+  carrierLiveSnapshot,
   listActiveCalls,
   liveAgentSnapshot,
   liveCampaignSnapshot,
@@ -28,11 +29,15 @@ export async function GET() {
   const campaigns = liveCampaignSnapshot();
   const agents = liveAgentSnapshot();
   const active_calls = listActiveCalls();
+  // Iter 85 — per-carrier live snapshot (dialing / connected / 1m /
+  // 10m / 60m + completed/failed last 60m).
+  const carriers = carrierLiveSnapshot();
   return NextResponse.json({
     generated_at: new Date().toISOString(),
     remote_line_capacity: remoteLineCapacity(),
     campaigns,
     agents,
     active_calls,
+    carriers,
   });
 }

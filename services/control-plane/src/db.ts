@@ -2126,6 +2126,85 @@ export function campaignThroughput(
   };
 }
 
+/** Iter 85 — per-carrier live snapshot for the /realtime carrier
+ * section. For every enabled carrier returns:
+ *   dialing      — in flight, no answer yet (answered_at NULL,
+ *                  hangup_at NULL)
+ *   connected    — answered + still up (answered_at NOT NULL,
+ *                  hangup_at NULL)
+ *   last_1m      — originates fired in the last 60 seconds
+ *   last_10m     — last 10 minutes
+ *   last_60m     — last hour
+ *   completed_60m — calls that hung up in the last 60m with
+ *                   NORMAL_CLEARING + answered_at — i.e. talked-to
+ *                   leads in the last hour
+ *   failed_60m   — hung up in the last 60m without answer / with
+ *                   a non-normal cause — carrier rejections, busy,
+ *                   no-answer combined
+ * Excludes simulated rows everywhere — they're DB-only and don't
+ * reflect carrier load. */
+export interface CarrierLiveRow {
+  carrier_id: string;
+  carrier_name: string;
+  enabled: number;
+  dialing: number;
+  connected: number;
+  last_1m: number;
+  last_10m: number;
+  last_60m: number;
+  completed_60m: number;
+  failed_60m: number;
+}
+
+export function carrierLiveSnapshot(): CarrierLiveRow[] {
+  return db()
+    .prepare(
+      `SELECT
+         c.id AS carrier_id,
+         c.name AS carrier_name,
+         c.enabled,
+         COALESCE(SUM(CASE
+           WHEN di.hangup_at IS NULL
+            AND di.answered_at IS NULL
+            AND di.kind != 'simulated'
+           THEN 1 ELSE 0 END), 0) AS dialing,
+         COALESCE(SUM(CASE
+           WHEN di.hangup_at IS NULL
+            AND di.answered_at IS NOT NULL
+            AND di.kind != 'simulated'
+           THEN 1 ELSE 0 END), 0) AS connected,
+         COALESCE(SUM(CASE
+           WHEN di.kind != 'simulated'
+            AND strftime('%s', di.ts) > strftime('%s','now','-60 seconds')
+           THEN 1 ELSE 0 END), 0) AS last_1m,
+         COALESCE(SUM(CASE
+           WHEN di.kind != 'simulated'
+            AND strftime('%s', di.ts) > strftime('%s','now','-600 seconds')
+           THEN 1 ELSE 0 END), 0) AS last_10m,
+         COALESCE(SUM(CASE
+           WHEN di.kind != 'simulated'
+            AND strftime('%s', di.ts) > strftime('%s','now','-3600 seconds')
+           THEN 1 ELSE 0 END), 0) AS last_60m,
+         COALESCE(SUM(CASE
+           WHEN di.kind != 'simulated'
+            AND di.hangup_cause = 'NORMAL_CLEARING'
+            AND di.answered_at IS NOT NULL
+            AND strftime('%s', di.hangup_at) > strftime('%s','now','-3600 seconds')
+           THEN 1 ELSE 0 END), 0) AS completed_60m,
+         COALESCE(SUM(CASE
+           WHEN di.kind != 'simulated'
+            AND di.hangup_at IS NOT NULL
+            AND (di.answered_at IS NULL OR di.hangup_cause != 'NORMAL_CLEARING')
+            AND strftime('%s', di.hangup_at) > strftime('%s','now','-3600 seconds')
+           THEN 1 ELSE 0 END), 0) AS failed_60m
+       FROM carriers c
+       LEFT JOIN dial_intents di ON di.carrier_id = c.id
+       GROUP BY c.id, c.name, c.enabled
+       ORDER BY c.name ASC`,
+    )
+    .all() as unknown as CarrierLiveRow[];
+}
+
 export function inFlightForRemoteAgent(remoteAgentId: string): number {
   // Iter 77 — see inFlightForCarrier: only real calls occupy a SIP
   // line on the remote endpoint. Simulated rows would otherwise

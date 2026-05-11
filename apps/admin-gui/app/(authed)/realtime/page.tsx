@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import {
+  carrierLiveSnapshot,
   listActiveCalls,
   liveAgentSnapshot,
   liveCampaignSnapshot,
@@ -22,13 +23,20 @@ export default async function RealtimePage() {
       </div>
     );
   }
-  const initial = {
-    generated_at: new Date().toISOString(),
-    remote_line_capacity: remoteLineCapacity(),
-    campaigns: liveCampaignSnapshot(),
-    agents: liveAgentSnapshot(),
-    active_calls: listActiveCalls(),
-  };
+  // Iter 85 — JSON roundtrip strips the null-prototype that
+  // node:sqlite hands back on row objects. Without it, React 19 RSC
+  // refuses to serialize the snapshot to the RealtimeBoard client
+  // component and the page renders a digest error.
+  const initial = JSON.parse(
+    JSON.stringify({
+      generated_at: new Date().toISOString(),
+      remote_line_capacity: remoteLineCapacity(),
+      campaigns: liveCampaignSnapshot(),
+      agents: liveAgentSnapshot(),
+      active_calls: listActiveCalls(),
+      carriers: carrierLiveSnapshot(),
+    }),
+  );
 
   return (
     <SoftphoneProvider>

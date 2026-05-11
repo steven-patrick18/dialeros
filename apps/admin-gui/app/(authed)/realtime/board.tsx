@@ -46,12 +46,28 @@ interface ActiveCall {
   answered_at: string | null;
 }
 
+// Iter 85 — per-carrier live state + windowed throughput. Matches
+// CarrierLiveRow from db.ts.
+interface CarrierRow {
+  carrier_id: string;
+  carrier_name: string;
+  enabled: number;
+  dialing: number;
+  connected: number;
+  last_1m: number;
+  last_10m: number;
+  last_60m: number;
+  completed_60m: number;
+  failed_60m: number;
+}
+
 interface Snapshot {
   generated_at: string;
   remote_line_capacity: number;
   campaigns: CampaignRow[];
   agents: AgentRow[];
   active_calls: ActiveCall[];
+  carriers: CarrierRow[];
 }
 
 type Mode = 'monitor' | 'whisper' | 'barge';
@@ -102,12 +118,16 @@ export function RealtimeBoard({ initial }: { initial: Snapshot }) {
     });
   }
 
-  // Rolling totals across active campaigns.
-  const totalInFlight = snap.campaigns.reduce(
-    (a, c) => a + c.in_flight,
+  // Rolling totals across active campaigns / carriers.
+  const totalHopper = snap.campaigns.reduce((a, c) => a + c.hopper_depth, 0);
+  // Iter 85 — floor-wide carrier rollup: dialing / connected /
+  // 1-min throughput across every carrier.
+  const totalDialing = snap.carriers.reduce((a, c) => a + c.dialing, 0);
+  const totalConnected = snap.carriers.reduce(
+    (a, c) => a + c.connected,
     0,
   );
-  const totalHopper = snap.campaigns.reduce((a, c) => a + c.hopper_depth, 0);
+  const totalRate1m = snap.carriers.reduce((a, c) => a + c.last_1m, 0);
   const agentsAvailable = snap.agents.filter(
     (a) => a.status === 'AVAILABLE' && a.call_intent_id === null,
   ).length;
@@ -124,13 +144,40 @@ export function RealtimeBoard({ initial }: { initial: Snapshot }) {
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 max-w-6xl">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 max-w-6xl">
         <Stat label="Available" value={agentsAvailable} accent="text-success" />
         <Stat label="On call" value={agentsInCall} accent="text-accent" />
         <Stat label="Paused" value={agentsPaused} accent="text-warn" />
-        <Stat label="In-flight calls" value={totalInFlight} accent="text-accent" />
-        <Stat label="Hopper depth" value={totalHopper} hint="across all campaigns" />
-        <Stat label="Dispositions today" value={dispoToday} accent={dispoToday > 0 ? 'text-success' : 'text-fg-muted'} />
+        {/* Iter 85 — floor-wide call-state rollup pulled from the
+            per-carrier snapshot. Dialing vs Connected at a glance. */}
+        <Stat
+          label="Dialing"
+          value={totalDialing}
+          accent={totalDialing > 0 ? 'text-info' : 'text-fg-muted'}
+          hint="real originates currently ringing across all carriers"
+        />
+        <Stat
+          label="Connected"
+          value={totalConnected}
+          accent={totalConnected > 0 ? 'text-success' : 'text-fg-muted'}
+          hint="answered + still up across all carriers"
+        />
+        <Stat
+          label="Calls / 1m"
+          value={totalRate1m}
+          accent={totalRate1m > 0 ? 'text-accent' : 'text-fg-muted'}
+          hint="originates fired in the last 60 seconds across the floor"
+        />
+        <Stat
+          label="Hopper depth"
+          value={totalHopper}
+          hint="across all campaigns"
+        />
+        <Stat
+          label="Dispo today"
+          value={dispoToday}
+          accent={dispoToday > 0 ? 'text-success' : 'text-fg-muted'}
+        />
       </div>
 
       <section>
@@ -199,6 +246,104 @@ export function RealtimeBoard({ initial }: { initial: Snapshot }) {
             </tbody>
           </table>
         )}
+      </section>
+
+      {/* Iter 85 — per-carrier live state. Mirrors the campaign
+          board but pivoted on the carrier so an operator can spot
+          which trunk is hot, which is failing, and how throughput
+          tracks across 1m / 10m / 60m windows.
+       */}
+      <section>
+        <h2 className="text-sm font-medium mb-2">
+          Carriers ({snap.carriers.length})
+        </h2>
+        {snap.carriers.length === 0 ? (
+          <p className="text-fg-subtle text-sm">No carriers configured.</p>
+        ) : (
+          <table className="w-full text-sm max-w-6xl">
+            <thead className="text-left text-fg-subtle border-b border-border">
+              <tr>
+                <th className="py-2 font-medium">Carrier</th>
+                <th className="font-medium">Enabled</th>
+                <th className="font-medium tabular-nums">Dialing</th>
+                <th className="font-medium tabular-nums">Connected</th>
+                <th className="font-medium tabular-nums">Last 1m</th>
+                <th className="font-medium tabular-nums">Last 10m</th>
+                <th className="font-medium tabular-nums">Last 60m</th>
+                <th className="font-medium tabular-nums">Completed 60m</th>
+                <th className="font-medium tabular-nums">Failed 60m</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snap.carriers.map((cr) => (
+                <tr
+                  key={cr.carrier_id}
+                  className="border-b border-border/40"
+                >
+                  <td className="py-2">
+                    <Link
+                      href={`/carriers/${cr.carrier_id}`}
+                      className="hover:underline"
+                    >
+                      {cr.carrier_name}
+                    </Link>
+                  </td>
+                  <td>
+                    {cr.enabled === 1 ? (
+                      <span className="bg-success/15 text-success border border-success/50 px-2 py-0.5 rounded text-xs">
+                        ENABLED
+                      </span>
+                    ) : (
+                      <span className="bg-card-hover/40 text-fg-muted border border-border px-2 py-0.5 rounded text-xs">
+                        DISABLED
+                      </span>
+                    )}
+                  </td>
+                  <td
+                    className={`tabular-nums ${
+                      cr.dialing > 0 ? 'text-info' : 'text-fg-subtle'
+                    }`}
+                  >
+                    {cr.dialing}
+                  </td>
+                  <td
+                    className={`tabular-nums ${
+                      cr.connected > 0 ? 'text-success' : 'text-fg-subtle'
+                    }`}
+                  >
+                    {cr.connected}
+                  </td>
+                  <td className="tabular-nums text-fg">{cr.last_1m}</td>
+                  <td className="tabular-nums text-fg-muted">
+                    {cr.last_10m}
+                  </td>
+                  <td className="tabular-nums text-fg-muted">
+                    {cr.last_60m}
+                  </td>
+                  <td className="tabular-nums text-success/80">
+                    {cr.completed_60m}
+                  </td>
+                  <td
+                    className={`tabular-nums ${
+                      cr.failed_60m > 0 ? 'text-warn' : 'text-fg-subtle'
+                    }`}
+                  >
+                    {cr.failed_60m}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="text-xs text-fg-subtle mt-2 max-w-3xl">
+          Dialing = real (non-simulated) originates currently
+          ringing (no answer yet). Connected = answered + still up.
+          Last-1m / 10m / 60m = originates fired in that window.
+          Completed 60m = NORMAL_CLEARING with answer in the last
+          hour (talked-to leads). Failed 60m = everything else that
+          hung up in the last hour (rejects, busy, no-answer,
+          bad-number combined).
+        </p>
       </section>
 
       <section>
