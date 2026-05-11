@@ -71,12 +71,20 @@ export function InlineCardForm({
   endpoint,
   method = 'PUT',
   helpText,
+  layout = 'stack',
 }: {
   title: string;
   fields: InlineField[];
   endpoint: string;
   method?: 'PUT' | 'PATCH' | 'POST';
   helpText?: string;
+  /**
+   * Iter 71 — `rows` renders ViciDial-style: label-left, input-right on a
+   * single row with a "(?)" help indicator next to the label. textarea /
+   * lines fields always span full-width below the label regardless of
+   * layout because they need room to breathe.
+   */
+  layout?: 'stack' | 'rows';
 }) {
   const router = useRouter();
   const initial = useMemo(() => {
@@ -176,19 +184,54 @@ export function InlineCardForm({
       <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
         {title}
       </h2>
-      <div className="space-y-3">
-        {fields.map((f) => (
-          <div key={f.name} className="text-sm">
-            <label className="block">
-              <div className="text-xs text-fg-subtle mb-1 flex items-center gap-2">
+      {layout === 'rows' ? (
+        <div className="divide-y divide-border/60 border-y border-border/60">
+          {fields.map((f) => {
+            const fullWidth = f.type === 'textarea' || f.type === 'lines';
+            const labelBlock = (
+              <div className="text-xs text-fg-subtle flex items-center gap-2">
                 <span>{f.label}</span>
                 {f.hint && <Hint text={f.hint} />}
               </div>
-              {renderInput(f, values[f.name], (raw) => setRaw(f.name, raw))}
-            </label>
-          </div>
-        ))}
-      </div>
+            );
+            return (
+              <div key={f.name} className="py-2 text-sm">
+                {fullWidth ? (
+                  <label className="block">
+                    <div className="mb-1">{labelBlock}</div>
+                    {renderInput(f, values[f.name], (raw) =>
+                      setRaw(f.name, raw),
+                    )}
+                  </label>
+                ) : (
+                  <label className="flex items-center gap-3">
+                    <div className="w-44 shrink-0">{labelBlock}</div>
+                    <div className="flex-1 min-w-0">
+                      {renderInput(f, values[f.name], (raw) =>
+                        setRaw(f.name, raw),
+                      )}
+                    </div>
+                  </label>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {fields.map((f) => (
+            <div key={f.name} className="text-sm">
+              <label className="block">
+                <div className="text-xs text-fg-subtle mb-1 flex items-center gap-2">
+                  <span>{f.label}</span>
+                  {f.hint && <Hint text={f.hint} />}
+                </div>
+                {renderInput(f, values[f.name], (raw) => setRaw(f.name, raw))}
+              </label>
+            </div>
+          ))}
+        </div>
+      )}
       {helpText && (
         <p className="text-xs text-fg-subtle mt-3">{helpText}</p>
       )}

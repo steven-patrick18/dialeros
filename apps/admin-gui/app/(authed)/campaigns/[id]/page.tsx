@@ -22,6 +22,7 @@ import { DeleteCampaignButton } from './delete-button';
 import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
 import { HopperResetButton } from './hopper-reset-button';
+import { CampaignTabs, parseCampaignTab } from './campaign-tabs';
 import { AttachmentPicker } from '@/components/attachment-picker';
 import { InlineCardForm } from '@/components/inline-card-form';
 
@@ -35,10 +36,15 @@ const STATUS_STYLES: Record<string, string> = {
 
 export default async function CampaignDetail({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
+  const { tab: rawTab } = await searchParams;
+  const tab = parseCampaignTab(rawTab);
+
   const c = getCampaign(id);
   if (!c) notFound();
 
@@ -55,8 +61,6 @@ export default async function CampaignDetail({
   const inGroupIds = getCampaignInGroups(id);
   const inGroups = inGroupIds.map((gid) => getInGroup(gid)).filter(Boolean);
   const isInbound = c.type === 'inbound_queue';
-
-  // Iter 24 — option lists for the inline pickers.
   const allInGroups = listInGroups();
   const allLeadLists = listLeadLists();
 
@@ -80,10 +84,66 @@ export default async function CampaignDetail({
       </div>
       <p className="text-fg-subtle text-sm font-mono mb-4">{c.type}</p>
 
+      <CampaignTabs id={c.id} active={tab} />
+
+      {tab === 'basic' && (
+        <BasicTab
+          c={c}
+          routePlan={routePlan}
+          leadLists={leadLists}
+          totalLeads={totalLeads}
+          isInbound={isInbound}
+          hopperDepth={hopperDepth}
+          activeAgents={activeAgents}
+          insideWindow={insideWindow}
+        />
+      )}
+
+      {tab === 'detail' && <DetailTab c={c} activeAgents={activeAgents} />}
+
+      {tab === 'list-mix' && (
+        <ListMixTab
+          c={c}
+          leadListIds={leadListIds}
+          allLeadLists={allLeadLists}
+          inGroupIds={inGroupIds}
+          allInGroups={allInGroups}
+        />
+      )}
+
+      {tab === 'realtime' && (
+        <RealtimeTab c={c} activeAgents={activeAgents.length} />
+      )}
+    </div>
+  );
+}
+
+function BasicTab({
+  c,
+  routePlan,
+  leadLists,
+  totalLeads,
+  isInbound,
+  hopperDepth,
+  activeAgents,
+  insideWindow,
+}: {
+  c: ReturnType<typeof getCampaign> & {};
+  routePlan: ReturnType<typeof getRoutePlan>;
+  leadLists: (ReturnType<typeof getLeadList> | null | undefined)[];
+  totalLeads: number;
+  isInbound: boolean;
+  hopperDepth: number;
+  activeAgents: ReturnType<typeof getActiveAgentsForCampaign>;
+  insideWindow: boolean;
+}) {
+  return (
+    <>
       <div className="max-w-4xl mb-6">
         <InlineCardForm
           title="Description"
           endpoint={`/api/campaigns/${c.id}`}
+          layout="rows"
           fields={[
             {
               type: 'textarea',
@@ -91,7 +151,8 @@ export default async function CampaignDetail({
               label: 'Description',
               value: c.description,
               maxLength: 500,
-              placeholder: 'Optional — what this campaign dials, who it serves, etc.',
+              placeholder:
+                'Optional — what this campaign dials, who it serves, etc.',
               hint: 'Free-form notes for other admins. 500 characters max.',
             },
           ]}
@@ -117,7 +178,7 @@ export default async function CampaignDetail({
             <p className="text-fg-subtle text-sm">
               {isInbound
                 ? 'Not used — inbound campaigns are driven by in-groups.'
-                : 'none — attach below'}
+                : 'none — attach in List Mix'}
             </p>
           ) : (
             <ul className="space-y-1 text-sm">
@@ -152,6 +213,7 @@ export default async function CampaignDetail({
         <InlineCardForm
           title="Pacing"
           endpoint={`/api/campaigns/${c.id}`}
+          layout="rows"
           fields={[
             {
               type: 'select',
@@ -168,7 +230,7 @@ export default async function CampaignDetail({
                   label: 'live — bgapi originate via FreeSWITCH',
                 },
               ],
-              hint: 'simulated inserts a dial-intent row only — useful for QA, training, traffic shape testing. live calls FreeSWITCH bgapi originate against the route plan\'s primary-carrier gateway. Default is simulated so an active campaign never accidentally places real calls.',
+              hint: "simulated inserts a dial-intent row only — useful for QA, training, traffic shape testing. live calls FreeSWITCH bgapi originate against the route plan's primary-carrier gateway. Default is simulated so an active campaign never accidentally places real calls.",
             },
             {
               type: 'number',
@@ -208,6 +270,7 @@ export default async function CampaignDetail({
           <InlineCardForm
             title="Hopper"
             endpoint={`/api/campaigns/${c.id}`}
+            layout="rows"
             fields={[
               {
                 type: 'number',
@@ -231,11 +294,13 @@ export default async function CampaignDetail({
                   },
                   {
                     value: 'UP_TIME',
-                    label: 'UP_TIME — oldest created leads first (clear backlog)',
+                    label:
+                      'UP_TIME — oldest created leads first (clear backlog)',
                   },
                   {
                     value: 'DOWN_TIME',
-                    label: 'DOWN_TIME — newest created leads first (work fresh imports)',
+                    label:
+                      'DOWN_TIME — newest created leads first (work fresh imports)',
                   },
                 ],
                 hint: 'How the hopper picks leads from this campaign’s lists during refill. Callback-due leads always take priority regardless of strategy.',
@@ -245,122 +310,6 @@ export default async function CampaignDetail({
           />
           <HopperResetButton campaignId={c.id} currentDepth={hopperDepth} />
         </div>
-
-        <InlineCardForm
-          title="On answer behaviour"
-          endpoint={`/api/campaigns/${c.id}`}
-          fields={[
-            {
-              type: 'select',
-              name: 'amd_action',
-              label: 'When the lead answers',
-              value: c.amd_action,
-              options: [
-                {
-                  value: 'bridge',
-                  label: 'bridge — connect the lead to an agent (default)',
-                },
-                {
-                  value: 'detect',
-                  label: 'detect — AMD: bridge if human, voicemail/drop if machine',
-                },
-                {
-                  value: 'voicemail',
-                  label: 'voicemail — play the uploaded .wav and hang up (voice-blast)',
-                },
-                {
-                  value: 'drop',
-                  label: 'drop — hang up at answer (connectivity probing only)',
-                },
-              ],
-              hint: 'Detect mode runs amd_v2 at answer; humans bridge to an agent, machines play the voicemail file (if uploaded) and hang up. Voice-blast = always playback. Drop = always hang up.',
-            },
-          ]}
-          helpText="Upload the voicemail .wav in the next card if you pick detect or voicemail."
-        />
-
-        <VoicemailPanel
-          campaignId={c.id}
-          amdAction={c.amd_action}
-          voicemailPath={c.voicemail_path}
-        />
-
-        <InlineCardForm
-          title="Compliance"
-          endpoint={`/api/campaigns/${c.id}`}
-          fields={[
-            {
-              type: 'time',
-              name: 'call_window_start',
-              label: 'Call window start',
-              value: c.call_window_start,
-              hint: 'Earliest local time of day to dial. Leave blank to remove the restriction. Pacer skips ticks outside the window.',
-            },
-            {
-              type: 'time',
-              name: 'call_window_end',
-              label: 'Call window end',
-              value: c.call_window_end,
-              hint: 'Latest local time of day. Set later than start for same-day windows, earlier than start to wrap midnight (e.g. 23:00 → 01:00).',
-            },
-          ]}
-          helpText="Both blank = always dial. Both set = honor window. Mixed values are rejected."
-        />
-      </div>
-
-      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
-        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-          Lead lists attached ({leadLists.length})
-        </h2>
-        <p className="text-xs text-fg-subtle mb-3">
-          Tick a list to attach it. Lists already owned by another campaign
-          are marked — checking one moves it here. Save commits the full
-          set in one transaction.
-        </p>
-        <AttachmentPicker
-          endpoint={`/api/campaigns/${c.id}/lead-lists`}
-          bodyKey="lead_list_ids"
-          options={allLeadLists.map((l) => {
-            const ownerId = l.campaign_id;
-            const inThis = ownerId === c.id;
-            const owned = ownerId && !inThis;
-            return {
-              id: l.id,
-              name: l.name,
-              hint: owned
-                ? `(in another campaign — will move)`
-                : !ownerId
-                  ? '(unattached)'
-                  : undefined,
-              warn: !!owned,
-            };
-          })}
-          initialSelected={leadListIds}
-          emptyMessage="No lead lists exist yet. Create one from the Lead Lists page first."
-        />
-      </div>
-
-      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
-        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
-          In-groups attached ({inGroups.length})
-        </h2>
-        <p className="text-xs text-fg-subtle mb-3">
-          Tick the in-groups whose calls land on this campaign. Inbound /
-          blended campaigns route incoming calls from these queues to
-          attached agents. Save commits the full set.
-        </p>
-        <AttachmentPicker
-          endpoint={`/api/campaigns/${c.id}/in-groups`}
-          bodyKey="in_group_ids"
-          options={allInGroups.map((g) => ({
-            id: g.id,
-            name: g.name,
-            hint: g.type === 'transfer_only' ? '(transfer-only)' : undefined,
-            warn: g.enabled === 0,
-          }))}
-          initialSelected={inGroupIds}
-          emptyMessage="No in-groups exist yet. Create one from the In-Groups page first."
-        />
       </div>
 
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
@@ -392,15 +341,83 @@ export default async function CampaignDetail({
           </p>
         )}
       </div>
+    </>
+  );
+}
 
-      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
-        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
-          Dial intents (live)
-        </h2>
-        <PacingPanel
+function DetailTab({
+  c,
+  activeAgents,
+}: {
+  c: ReturnType<typeof getCampaign> & {};
+  activeAgents: ReturnType<typeof getActiveAgentsForCampaign>;
+}) {
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mb-6">
+        <InlineCardForm
+          title="On answer behaviour"
+          endpoint={`/api/campaigns/${c.id}`}
+          layout="rows"
+          fields={[
+            {
+              type: 'select',
+              name: 'amd_action',
+              label: 'When the lead answers',
+              value: c.amd_action,
+              options: [
+                {
+                  value: 'bridge',
+                  label: 'bridge — connect the lead to an agent (default)',
+                },
+                {
+                  value: 'detect',
+                  label:
+                    'detect — AMD: bridge if human, voicemail/drop if machine',
+                },
+                {
+                  value: 'voicemail',
+                  label:
+                    'voicemail — play the uploaded .wav and hang up (voice-blast)',
+                },
+                {
+                  value: 'drop',
+                  label: 'drop — hang up at answer (connectivity probing only)',
+                },
+              ],
+              hint: 'Detect mode runs amd_v2 at answer; humans bridge to an agent, machines play the voicemail file (if uploaded) and hang up. Voice-blast = always playback. Drop = always hang up.',
+            },
+          ]}
+          helpText="Upload the voicemail .wav in the next card if you pick detect or voicemail."
+        />
+
+        <VoicemailPanel
           campaignId={c.id}
-          isActive={c.status === 'active'}
-          initialTotal={totalIntentsFor(c.id)}
+          amdAction={c.amd_action}
+          voicemailPath={c.voicemail_path}
+        />
+
+        <InlineCardForm
+          title="Compliance"
+          endpoint={`/api/campaigns/${c.id}`}
+          layout="rows"
+          fields={[
+            {
+              type: 'time',
+              name: 'call_window_start',
+              label: 'Call window start',
+              value: c.call_window_start,
+              hint: 'Earliest local time of day to dial. Leave blank to remove the restriction. Pacer skips ticks outside the window.',
+            },
+            {
+              type: 'time',
+              name: 'call_window_end',
+              label: 'Call window end',
+              value: c.call_window_end,
+              hint: 'Latest local time of day. Set later than start for same-day windows, earlier than start to wrap midnight (e.g. 23:00 → 01:00).',
+            },
+          ]}
+          helpText="Both blank = always dial. Both set = honor window. Mixed values are rejected."
         />
       </div>
 
@@ -430,7 +447,111 @@ export default async function CampaignDetail({
           isActive={c.status === 'active'}
         />
       </div>
-    </div>
+    </>
+  );
+}
+
+function ListMixTab({
+  c,
+  leadListIds,
+  allLeadLists,
+  inGroupIds,
+  allInGroups,
+}: {
+  c: ReturnType<typeof getCampaign> & {};
+  leadListIds: string[];
+  allLeadLists: ReturnType<typeof listLeadLists>;
+  inGroupIds: string[];
+  allInGroups: ReturnType<typeof listInGroups>;
+}) {
+  return (
+    <>
+      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+          Lead lists attached ({leadListIds.length})
+        </h2>
+        <p className="text-xs text-fg-subtle mb-3">
+          Tick a list to attach it. Lists already owned by another campaign
+          are marked — checking one moves it here. Save commits the full
+          set in one transaction.
+        </p>
+        <AttachmentPicker
+          endpoint={`/api/campaigns/${c.id}/lead-lists`}
+          bodyKey="lead_list_ids"
+          options={allLeadLists.map((l) => {
+            const ownerId = l.campaign_id;
+            const inThis = ownerId === c.id;
+            const owned = ownerId && !inThis;
+            return {
+              id: l.id,
+              name: l.name,
+              hint: owned
+                ? `(in another campaign — will move)`
+                : !ownerId
+                  ? '(unattached)'
+                  : undefined,
+              warn: !!owned,
+            };
+          })}
+          initialSelected={leadListIds}
+          emptyMessage="No lead lists exist yet. Create one from the Lead Lists page first."
+        />
+      </div>
+
+      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+          In-groups attached ({inGroupIds.length})
+        </h2>
+        <p className="text-xs text-fg-subtle mb-3">
+          Tick the in-groups whose calls land on this campaign. Inbound /
+          blended campaigns route incoming calls from these queues to
+          attached agents. Save commits the full set.
+        </p>
+        <AttachmentPicker
+          endpoint={`/api/campaigns/${c.id}/in-groups`}
+          bodyKey="in_group_ids"
+          options={allInGroups.map((g) => ({
+            id: g.id,
+            name: g.name,
+            hint: g.type === 'transfer_only' ? '(transfer-only)' : undefined,
+            warn: g.enabled === 0,
+          }))}
+          initialSelected={inGroupIds}
+          emptyMessage="No in-groups exist yet. Create one from the In-Groups page first."
+        />
+      </div>
+    </>
+  );
+}
+
+function RealtimeTab({
+  c,
+  activeAgents,
+}: {
+  c: ReturnType<typeof getCampaign> & {};
+  activeAgents: number;
+}) {
+  return (
+    <>
+      <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          Dial intents (live)
+        </h2>
+        <PacingPanel
+          campaignId={c.id}
+          isActive={c.status === 'active'}
+          initialTotal={totalIntentsFor(c.id)}
+        />
+        <p className="text-xs text-fg-subtle mt-3">
+          {activeAgents} active agent{activeAgents === 1 ? '' : 's'} eligible.
+          For carrier-level and floor-wide live boards, see{' '}
+          <Link href="/realtime" className="underline hover:text-fg">
+            /realtime
+          </Link>
+          .
+        </p>
+      </div>
+    </>
   );
 }
 
