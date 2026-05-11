@@ -220,6 +220,10 @@ export default async function CampaignDetail({
                   label: 'bridge — connect the lead to an agent (default)',
                 },
                 {
+                  value: 'detect',
+                  label: 'detect — AMD: bridge if human, voicemail/drop if machine',
+                },
+                {
                   value: 'voicemail',
                   label: 'voicemail — play the uploaded .wav and hang up (voice-blast)',
                 },
@@ -228,7 +232,7 @@ export default async function CampaignDetail({
                   label: 'drop — hang up at answer (connectivity probing only)',
                 },
               ],
-              hint: 'Voice-blast mode requires a voicemail file to be uploaded below. Drop mode is mostly for QA — no audio, no agent.',
+              hint: 'Detect mode runs amd_v2 at answer; humans bridge to an agent, machines play the voicemail file (if uploaded) and hang up. Voice-blast = always playback. Drop = always hang up.',
             },
           ]}
           helpText={`Hopper currently holds ${hopperDepth.toLocaleString()} of ${c.hopper_level.toLocaleString()} target leads. Live edits hot-reload into the pacer's per-tick math on the next tick — no service restart.`}

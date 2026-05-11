@@ -1,0 +1,62 @@
+<include>
+  <!--
+    Iter 68 — AMD-conditional dispatch for outbound calls.
+
+    The pacer originates with:
+      dial app          = &execute_extension(dialeros-amd-route XML default)
+      channel vars      = {
+        dialeros_bridge_target  = user/1001  OR  sofia/internal/x@y
+        dialeros_voicemail_path = /var/lib/dialeros/voicemails/<id>.wav  (optional)
+      }
+
+    The route extension below runs amd_v2 synchronously at answer
+    time. amd_v2 sets ${amd_result} to HUMAN, MACHINE, NOTSURE, or
+    UNKNOWN. The dispatch extension then branches:
+
+      MACHINE     -> playback voicemail (if voicemail_path is set)
+                     then hangup. Drops with no audio when there's
+                     no voicemail file.
+      HUMAN /     -> bridge to the agent target. NOTSURE is treated
+      NOTSURE /     as human so we err on the side of not dropping
+      UNKNOWN       a real caller.
+
+    The pacer is responsible for setting dialeros_bridge_target.
+    dialeros_voicemail_path is optional (only used on machine).
+  -->
+
+  <extension name="dialeros-amd-route" continue="false">
+    <condition field="destination_number" expression="^dialeros-amd-route$" break="never">
+      <action application="log" data="INFO [dialeros-amd] start uuid=${uuid} cid=${dialeros_correlation_id}"/>
+      <action application="amd_v2" data="async:false"/>
+      <action application="log" data="INFO [dialeros-amd] result=${amd_result} uuid=${uuid}"/>
+      <action application="execute_extension" data="dialeros-amd-dispatch XML default"/>
+    </condition>
+    <condition>
+      <!-- fall-through when execute_extension didn't match -->
+      <action application="amd_v2" data="async:false"/>
+      <action application="execute_extension" data="dialeros-amd-dispatch XML default"/>
+    </condition>
+  </extension>
+
+  <extension name="dialeros-amd-dispatch" continue="false">
+    <condition field="${amd_result}" expression="^MACHINE$">
+      <action application="log" data="INFO [dialeros-amd] machine_path uuid=${uuid} voicemail=${dialeros_voicemail_path}"/>
+      <action application="execute_extension" data="dialeros-amd-machine XML default"/>
+    </condition>
+    <condition field="${amd_result}" expression="^(HUMAN|NOTSURE|UNKNOWN|)$">
+      <action application="log" data="INFO [dialeros-amd] human_path uuid=${uuid} target=${dialeros_bridge_target}"/>
+      <action application="bridge" data="${dialeros_bridge_target}"/>
+    </condition>
+  </extension>
+
+  <extension name="dialeros-amd-machine" continue="false">
+    <condition field="${dialeros_voicemail_path}" expression="^.+$">
+      <action application="playback" data="${dialeros_voicemail_path}"/>
+      <action application="hangup"/>
+    </condition>
+    <condition>
+      <!-- no voicemail file configured: just drop -->
+      <action application="hangup"/>
+    </condition>
+  </extension>
+</include>

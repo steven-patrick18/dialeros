@@ -431,14 +431,31 @@ export async function paceCampaignOnce(
     // own one; fall back to the iter-35 hash for users without
     // phones so the migration is non-destructive.
     //
-    // Iter 66 — campaign.amd_action overrides the bridge target:
+    // Iter 66 / 68 — campaign.amd_action overrides the bridge:
     //   drop      — &hangup. Used for connectivity probing / forced
     //               dropping rather than engaging an agent.
     //   voicemail — &playback(<voicemail_path>). Voice-blast mode:
     //               play the campaigns uploaded .wav at answer and
     //               hang up; no agent involvement.
+    //   detect    — run amd_v2 via the dialeros-amd-route dialplan
+    //               extension. HUMAN/NOTSURE -> bridge to agent;
+    //               MACHINE -> voicemail-if-present, else hangup.
+    //               Bridge target + voicemail path passed as channel
+    //               vars (see amdChannelVars below).
     //   bridge (default) — the existing user/<ext> or remote bridge.
+    let computedBridgeTarget: string;
+    if (assigned) {
+      const primary = getPrimaryPhoneForUser(assigned.id);
+      const agentExtension =
+        primary?.extension ?? extensionForUser(assigned.id);
+      computedBridgeTarget = `user/${agentExtension}`;
+    } else {
+      const target = remoteAgent!.sip_uri.replace(/^sip:/i, '');
+      computedBridgeTarget = `sofia/internal/${target}`;
+    }
+
     let bridgeApp: string;
+    const amdChannelVars: string[] = [];
     if (campaign.amd_action === 'drop') {
       bridgeApp = '&hangup';
     } else if (
@@ -446,16 +463,19 @@ export async function paceCampaignOnce(
       campaign.voicemail_path
     ) {
       bridgeApp = `&playback(${campaign.voicemail_path})`;
-    } else if (assigned) {
-      const primary = getPrimaryPhoneForUser(assigned.id);
-      const agentExtension =
-        primary?.extension ?? extensionForUser(assigned.id);
-      bridgeApp = `&bridge(user/${agentExtension})`;
+    } else if (campaign.amd_action === 'detect') {
+      // Pass bridge target + (optional) voicemail path through
+      // channel vars; the dialeros-amd-route dialplan extension
+      // reads them and dispatches per amd_v2 result.
+      amdChannelVars.push(`dialeros_bridge_target=${computedBridgeTarget}`);
+      if (campaign.voicemail_path) {
+        amdChannelVars.push(
+          `dialeros_voicemail_path=${campaign.voicemail_path}`,
+        );
+      }
+      bridgeApp = '&execute_extension(dialeros-amd-route XML default)';
     } else {
-      // Iter 58 — remote agent. Strip the sip: scheme; FS bridge
-      // syntax sofia/internal/<user@host[:port]> handles the rest.
-      const target = remoteAgent!.sip_uri.replace(/^sip:/i, '');
-      bridgeApp = `&bridge(sofia/internal/${target})`;
+      bridgeApp = `&bridge(${computedBridgeTarget})`;
     }
     try {
       const jobUuid = await bgapiOriginate({
@@ -464,6 +484,8 @@ export async function paceCampaignOnce(
         callerIdNumber: cid ?? undefined,
         correlationId,
         recordingPath: recordingPath ?? undefined,
+        extraChannelVars:
+          amdChannelVars.length > 0 ? amdChannelVars : undefined,
         app: bridgeApp,
       });
       originateOutcome = { ok: true, job_uuid: jobUuid };
@@ -688,6 +710,11 @@ interface BgapiOptions {
   /** Iter 55 — absolute path on disk where FS should write the .wav once
    * the call answers. Skipped when undefined (no recording). */
   recordingPath?: string;
+  /** Iter 68 — extra channel vars (already key=value strings) appended
+   * verbatim to the originate-time {} block. Used to pass
+   * dialeros_bridge_target / dialeros_voicemail_path into the
+   * amd-route dialplan extension. */
+  extraChannelVars?: string[];
   app: string;
   host?: string;
   port?: number;
@@ -728,6 +755,10 @@ function bgapiOriginate(opts: BgapiOptions): Promise<string> {
       `execute_on_answer=record_session ${escapeChannelValue(opts.recordingPath)}`,
     );
     channelVars.push('RECORD_STEREO=true');
+  }
+  if (opts.extraChannelVars && opts.extraChannelVars.length > 0) {
+    // Iter 68 — caller already formatted these as key=value pairs.
+    for (const kv of opts.extraChannelVars) channelVars.push(kv);
   }
   const vars = `{${channelVars.join(',')}}`;
   const dial = `${vars}sofia/gateway/${opts.gateway}/${opts.destination}`;

@@ -239,10 +239,18 @@ export const CampaignUpdateInputSchema = z
     // Iter 49 — hopper + dial level.
     hopper_level: z.number().int().min(1).max(10000).optional(),
     dial_level: z.number().min(0.1).max(10).optional(),
-    // Iter 66 — answering-machine handling. `voicemail_path` is
-    // managed via the campaign-detail upload form, not this PATCH;
-    // it's listed here so the inline-edit pass-through is harmless.
-    amd_action: z.enum(['bridge', 'drop', 'voicemail']).optional(),
+    // Iter 66 / 68 — answering-machine handling. `voicemail_path`
+    // is managed via the campaign-detail upload form, not this
+    // PATCH; it's listed here so the inline-edit pass-through is
+    // harmless.
+    //
+    //   bridge    — connect lead to agent (default; iter 39).
+    //   drop      — &hangup at answer; no audio (iter 66).
+    //   voicemail — &playback(<file>) at answer; no agent (iter 66).
+    //   detect    — run amd_v2 at answer; HUMAN/NOTSURE -> bridge to
+    //               agent, MACHINE -> playback voicemail (if set)
+    //               then hangup, else just hangup (iter 68).
+    amd_action: z.enum(['bridge', 'drop', 'voicemail', 'detect']).optional(),
     voicemail_path: z
       .string()
       .nullable()
