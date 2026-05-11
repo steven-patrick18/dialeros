@@ -239,7 +239,36 @@ export {
   getRoutePlansForCarrier,
   parseFailoverIds,
   parseCidPool,
+  parseCidGroupIds,
 } from './route-plan';
+
+// CID groups (iter 72)
+export {
+  CidGroupStrategySchema,
+  CID_GROUP_STRATEGY_HINTS,
+  CidGroupInputSchema,
+  CidGroupUpdateInputSchema,
+  createCidGroup,
+  listCidGroups,
+  getCidGroup,
+  updateCidGroup,
+  deleteCidGroup,
+  listCidsInGroup,
+  countCidsInGroup,
+  addCidsToGroup,
+  removeCidFromGroup,
+  parseCidNumberBlob,
+} from './cid-group';
+export { listRoutePlansUsingCidGroup } from './db';
+export type {
+  CidGroupStrategy,
+  CidGroupInput,
+  CidGroupUpdateInput,
+  AddCidsResult,
+  CreateCidGroupResult,
+  CidGroupRecord,
+  CidGroupNumberRecord,
+} from './cid-group';
 export type {
   CidStrategy,
   RoutePlanInput,

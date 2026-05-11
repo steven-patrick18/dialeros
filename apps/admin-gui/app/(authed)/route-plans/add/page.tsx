@@ -1,5 +1,9 @@
 ﻿import { redirect } from 'next/navigation';
-import { listCarriers } from '@dialeros/control-plane';
+import {
+  countCidsInGroup,
+  listCarriers,
+  listCidGroups,
+} from '@dialeros/control-plane';
 import { AddRoutePlanForm } from './add-form';
 
 export const dynamic = 'force-dynamic';
@@ -9,6 +13,12 @@ export default async function AddRoutePlanPage() {
   if (carriers.length === 0) {
     redirect('/route-plans');
   }
+  const cidGroups = listCidGroups().map((g) => ({
+    id: g.id,
+    name: g.name,
+    strategy: g.strategy,
+    cid_count: countCidsInGroup(g.id),
+  }));
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-2">Add Route Plan</h1>
@@ -24,6 +34,7 @@ export default async function AddRoutePlanPage() {
           host: c.host,
           enabled: c.enabled === 1,
         }))}
+        cidGroups={cidGroups}
       />
     </div>
   );

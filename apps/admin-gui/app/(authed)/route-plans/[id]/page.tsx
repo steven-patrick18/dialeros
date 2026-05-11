@@ -1,9 +1,13 @@
 ﻿import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  countCidsInGroup,
   getCarrier,
+  getCidGroup,
   getRoutePlan,
   listCarriers,
+  listCidGroups,
+  parseCidGroupIds,
   parseCidPool,
   parseFailoverIds,
 } from '@dialeros/control-plane';
@@ -26,7 +30,10 @@ export default async function RoutePlanDetail({
   const failoverIds = parseFailoverIds(plan);
   const failovers = failoverIds.map((fid) => getCarrier(fid));
   const cidPool = parseCidPool(plan);
+  const cidGroupIds = parseCidGroupIds(plan);
+  const cidGroups = cidGroupIds.map((gid) => getCidGroup(gid)).filter(Boolean);
   const allCarriers = listCarriers();
+  const allCidGroups = listCidGroups();
 
   const exampleNumber = '+14155551234';
   const transformed = applyTransform(
@@ -153,10 +160,14 @@ export default async function RoutePlanDetail({
                 },
                 {
                   value: 'rotate',
-                  label: 'rotate — cycle through a pool',
+                  label: 'rotate — cycle through inline pool',
+                },
+                {
+                  value: 'groups',
+                  label: 'groups — pull from CID Groups (recommended)',
                 },
               ],
-              hint: 'How the outbound caller-ID is chosen. passthrough = whatever the lead row has; single = the cid_single field; rotate = cycle cid_pool round-robin.',
+              hint: 'How the outbound caller-ID is chosen. passthrough = whatever the lead row has; single = the cid_single field; rotate = cycle the inline cid_pool; groups = pull from reusable CID Groups with their own per-group logic.',
             },
             {
               type: 'text',
@@ -176,6 +187,41 @@ export default async function RoutePlanDetail({
             },
           ]}
         />
+
+        <div className="border border-border rounded p-4 space-y-2">
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+            CID Groups ({cidGroups.length})
+          </h2>
+          <p className="text-xs text-fg-subtle mb-2">
+            Pick one or more reusable CID Groups. Only consulted when
+            Strategy is <span className="font-mono">groups</span>. Pacer
+            rotates across groups per call and then applies each
+            group&apos;s own logic (rotate / random / sticky_by_area).
+          </p>
+          {allCidGroups.length === 0 ? (
+            <p className="text-xs text-fg-subtle">
+              No CID groups defined yet.{' '}
+              <Link href="/cid-groups/add" className="underline">
+                Create one
+              </Link>{' '}
+              first.
+            </p>
+          ) : (
+            <AttachmentPicker
+              endpoint={`/api/route-plans/${plan.id}`}
+              bodyKey="cid_group_ids"
+              method="PUT"
+              options={allCidGroups.map((g) => ({
+                id: g.id,
+                name: g.name,
+                hint: `${g.strategy} · ${countCidsInGroup(g.id)} CID${
+                  countCidsInGroup(g.id) === 1 ? '' : 's'
+                }`,
+              }))}
+              initialSelected={cidGroupIds}
+            />
+          )}
+        </div>
 
         <InlineCardForm
           title="Number transform"

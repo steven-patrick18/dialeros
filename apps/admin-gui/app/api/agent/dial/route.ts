@@ -14,8 +14,10 @@ import {
   isDnc,
   listCampaigns,
   normalizePhone,
+  parseCidGroupIds,
   parseCidPool,
   rotateDialPlanCursor,
+  listCidsInGroup,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 import { originate } from '@/lib/esl';
@@ -162,6 +164,17 @@ export async function POST(req: NextRequest) {
     cid = route.cid_single;
   } else if (route.cid_strategy === 'rotate') {
     cid = parseCidPool(route)[0] ?? null;
+  } else if (route.cid_strategy === 'groups') {
+    // Iter 72 — manual dial doesn't share the pacer's rotation cursor,
+    // so we just take the first number from the first non-empty
+    // attached group. Same TCPA constraints apply.
+    for (const gid of parseCidGroupIds(route)) {
+      const first = listCidsInGroup(gid)[0];
+      if (first) {
+        cid = first.number;
+        break;
+      }
+    }
   }
 
   // The agent's softphone extension — primary phone if any, else hash.

@@ -4,13 +4,15 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
-const STRATEGIES = ['passthrough', 'single', 'rotate'] as const;
+const STRATEGIES = ['passthrough', 'single', 'rotate', 'groups'] as const;
 type Strategy = (typeof STRATEGIES)[number];
 
 const STRATEGY_HINTS: Record<Strategy, string> = {
   passthrough: 'Use whatever caller ID the lead specifies.',
   single: 'Always present the same caller ID.',
-  rotate: 'Rotate through a pool of caller IDs.',
+  rotate: 'Rotate through an inline pool of caller IDs.',
+  groups:
+    'Pull from one or more reusable CID Groups, each with its own per-call logic.',
 };
 
 interface PlanState {
@@ -22,17 +24,27 @@ interface PlanState {
   cid_strategy: string;
   cid_single: string | null;
   cid_pool: string[];
+  cid_group_ids: string[];
   transform_strip_prefix: string | null;
   transform_add_prefix: string | null;
   enabled: boolean;
 }
 
+interface CidGroupOption {
+  id: string;
+  name: string;
+  strategy: string;
+  cid_count: number;
+}
+
 export function EditRoutePlanForm({
   plan,
   carriers,
+  cidGroups,
 }: {
   plan: PlanState;
   carriers: Array<{ id: string; name: string; host: string; enabled: boolean }>;
+  cidGroups: CidGroupOption[];
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -44,6 +56,13 @@ export function EditRoutePlanForm({
     plan.failover_carrier_ids,
   );
   const [cidPoolText, setCidPoolText] = useState(plan.cid_pool.join('\n'));
+  const [cidGroupIds, setCidGroupIds] = useState<string[]>(plan.cid_group_ids);
+
+  function toggleCidGroup(id: string) {
+    setCidGroupIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
 
   const failoverChoices = useMemo(
     () => carriers.filter((c) => c.id !== plan.primary_carrier_id),
@@ -80,6 +99,7 @@ export function EditRoutePlanForm({
           ? String(fd.get('cid_single') ?? '').trim() || undefined
           : undefined,
       cid_pool: strategy === 'rotate' ? parsedPool : undefined,
+      cid_group_ids: strategy === 'groups' ? cidGroupIds : [],
       transform_strip_prefix:
         String(fd.get('transform_strip_prefix') ?? ''),
       transform_add_prefix: String(fd.get('transform_add_prefix') ?? ''),
@@ -186,6 +206,43 @@ export function EditRoutePlanForm({
               rows={4}
               className="input font-mono text-xs"
             />
+          </Field>
+        )}
+
+        {strategy === 'groups' && (
+          <Field
+            label="CID Groups"
+            hint="Pick one or more groups. Pacer rotates across groups per call, then applies each group's own logic."
+          >
+            {cidGroups.length === 0 ? (
+              <div className="border border-dashed border-border rounded p-3 text-xs text-fg-subtle">
+                No CID groups exist yet.{' '}
+                <Link href="/cid-groups/add" className="underline">
+                  Create one
+                </Link>{' '}
+                first.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {cidGroups.map((g) => (
+                  <label
+                    key={g.id}
+                    className="flex items-center gap-2 px-3 py-2 border border-border rounded text-sm cursor-pointer hover:bg-card-hover"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={cidGroupIds.includes(g.id)}
+                      onChange={() => toggleCidGroup(g.id)}
+                    />
+                    <span>{g.name}</span>
+                    <span className="text-fg-subtle text-xs ml-auto font-mono">
+                      {g.strategy} · {g.cid_count} CID
+                      {g.cid_count === 1 ? '' : 's'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
           </Field>
         )}
       </Section>

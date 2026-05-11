@@ -1,8 +1,11 @@
 import { notFound } from 'next/navigation';
 import {
+  countCidsInGroup,
   getCarrier,
   getRoutePlan,
   listCarriers,
+  listCidGroups,
+  parseCidGroupIds,
   parseCidPool,
   parseFailoverIds,
 } from '@dialeros/control-plane';
@@ -39,6 +42,7 @@ export default async function EditRoutePlanPage({
           cid_strategy: plan.cid_strategy,
           cid_single: plan.cid_single,
           cid_pool: parseCidPool(plan),
+          cid_group_ids: parseCidGroupIds(plan),
           transform_strip_prefix: plan.transform_strip_prefix,
           transform_add_prefix: plan.transform_add_prefix,
           enabled: plan.enabled === 1,
@@ -48,6 +52,12 @@ export default async function EditRoutePlanPage({
           name: c.name,
           host: c.host,
           enabled: c.enabled === 1,
+        }))}
+        cidGroups={listCidGroups().map((g) => ({
+          id: g.id,
+          name: g.name,
+          strategy: g.strategy,
+          cid_count: countCidsInGroup(g.id),
         }))}
       />
     </div>

@@ -6,6 +6,7 @@ import {
   getAvailableAgentsForCampaign,
   getCampaignFromDb,
   getCarrierFromDb,
+  getCidGroupFromDb,
   getNodeFromDb,
   getPhoneByExtension,
   getPrimaryPhoneForUser,
@@ -13,6 +14,7 @@ import {
   hopperSize,
   insertDialIntent,
   listCampaignsFromDb,
+  listCidsInGroupFromDb,
   listDialIntentsForCampaign,
   markLeadDialed,
   parseNodeRoles,
@@ -22,7 +24,7 @@ import {
   type DialIntentRecord,
   type RemoteAgentRecord,
 } from './db';
-import { parseCidPool } from './route-plan';
+import { parseCidGroupIds, parseCidPool } from './route-plan';
 import {
   applyDialPlanRule,
   carrierAcceptsDestination,
@@ -72,6 +74,14 @@ interface BusContainer {
   // Iter 58 — campaign_id -> cursor over the combined local+remote
   // bridge pool. Recomputed each tick from live capacity.
   bridgeRotateState: Map<string, number>;
+  // Iter 72 — when route plan has cid_strategy='groups', we rotate
+  // across the attached groups per call: key = route_plan_id, value
+  // = cursor into cid_group_ids array.
+  cidGroupPlanCursor: Map<string, number>;
+  // Iter 72 — within a chosen group with strategy='rotate' or
+  // 'sticky_by_area' (fallback), we rotate across the numbers:
+  // key = group_id, value = cursor.
+  cidGroupNumberCursor: Map<string, number>;
 }
 
 declare global {
@@ -90,6 +100,8 @@ function container(): BusContainer {
       agentRotateState: new Map(),
       dialPlanRotateState: new Map(),
       bridgeRotateState: new Map(),
+      cidGroupPlanCursor: new Map(),
+      cidGroupNumberCursor: new Map(),
     };
   }
   // Older sessions might predate the newer state maps — patch
@@ -98,6 +110,8 @@ function container(): BusContainer {
   if (!c.agentRotateState) c.agentRotateState = new Map();
   if (!c.dialPlanRotateState) c.dialPlanRotateState = new Map();
   if (!c.bridgeRotateState) c.bridgeRotateState = new Map();
+  if (!c.cidGroupPlanCursor) c.cidGroupPlanCursor = new Map();
+  if (!c.cidGroupNumberCursor) c.cidGroupNumberCursor = new Map();
   return c;
 }
 
@@ -143,6 +157,9 @@ function pickCid(
   strategy: string,
   single: string | null,
   pool: string[],
+  groupIds: string[],
+  routePlanId: string,
+  destination: string,
 ): string | null {
   if (strategy === 'single') return single;
   if (strategy === 'rotate' && pool.length > 0) {
@@ -152,7 +169,73 @@ function pickCid(
     c.rotateState.set(campaign_id, cursor + 1);
     return cid;
   }
+  if (strategy === 'groups' && groupIds.length > 0) {
+    return pickCidFromGroups(routePlanId, groupIds, destination);
+  }
   return null; // passthrough — campaign / lead-level CID logic added later
+}
+
+/** Iter 72 — pick a CID by:
+ *   1. Rotate across the plan's attached groups (one per call).
+ *   2. Apply the chosen group's own strategy:
+ *        rotate          — round-robin numbers
+ *        random          — uniform random
+ *        sticky_by_area  — first prefix match against `destination`,
+ *                          else fall back to rotate.
+ * Returns null when no usable number is found (empty groups). */
+function pickCidFromGroups(
+  routePlanId: string,
+  groupIds: string[],
+  destination: string,
+): string | null {
+  const c = container();
+  // Rotate to the next group with at least one number. Bounded retry so
+  // we don't infinite-loop if every attached group is empty.
+  let cursor = c.cidGroupPlanCursor.get(routePlanId) ?? 0;
+  for (let attempt = 0; attempt < groupIds.length; attempt++) {
+    const gid = groupIds[(cursor + attempt) % groupIds.length]!;
+    const group = getCidGroupFromDb(gid);
+    if (!group) continue;
+    const numbers = listCidsInGroupFromDb(gid).map((n) => n.number);
+    if (numbers.length === 0) continue;
+
+    c.cidGroupPlanCursor.set(routePlanId, cursor + attempt + 1);
+
+    if (group.strategy === 'random') {
+      return numbers[Math.floor(Math.random() * numbers.length)]!;
+    }
+    if (group.strategy === 'sticky_by_area') {
+      const m = matchByAreaCode(numbers, destination);
+      if (m) return m;
+      // Fall through to rotate.
+    }
+    // rotate (default) — bump per-group cursor.
+    const numCursor = c.cidGroupNumberCursor.get(gid) ?? 0;
+    const cid = numbers[numCursor % numbers.length]!;
+    c.cidGroupNumberCursor.set(gid, numCursor + 1);
+    return cid;
+  }
+  // Every attached group was empty / missing.
+  c.cidGroupPlanCursor.set(routePlanId, cursor + 1);
+  return null;
+}
+
+/** Pick the number whose digits share the longest leading-digit prefix
+ * with `destination`. Falls back to area-code (first 3-5 digits) match.
+ * Returns null when nothing usefully matches. Strips leading + / 1 so
+ * "+14155551234" and "4155551234" compare equally. */
+function matchByAreaCode(
+  numbers: string[],
+  destination: string,
+): string | null {
+  const dest = destination.replace(/^\+?1?/, '');
+  if (dest.length < 3) return null;
+  const destArea = dest.slice(0, 3);
+  for (const n of numbers) {
+    const cleaned = n.replace(/^\+?1?/, '');
+    if (cleaned.slice(0, 3) === destArea) return n;
+  }
+  return null;
 }
 
 export interface PacingTickResult {
@@ -376,6 +459,9 @@ export async function paceCampaignOnce(
     plan.cid_strategy,
     plan.cid_single,
     parseCidPool(plan),
+    parseCidGroupIds(plan),
+    plan.id,
+    transformed,
   );
 
   // Iter 32 — when dial_mode='live', issue a real bgapi originate. We

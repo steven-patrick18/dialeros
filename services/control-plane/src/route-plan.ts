@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   deleteRoutePlanFromDb,
   getCarrierFromDb,
+  getCidGroupFromDb,
   getRoutePlanFromDb,
   insertRoutePlan,
   listRoutePlansFromDb,
@@ -11,7 +12,16 @@ import {
   type RoutePlanRecord,
 } from './db';
 
-export const CidStrategySchema = z.enum(['passthrough', 'single', 'rotate']);
+// Iter 72 — 'groups' picks CIDs from one or more attached cid_groups.
+// Each group has its own per-call strategy (rotate / random /
+// sticky_by_area). Multiple groups are rotated across at the plan
+// level, then the chosen group's own strategy runs.
+export const CidStrategySchema = z.enum([
+  'passthrough',
+  'single',
+  'rotate',
+  'groups',
+]);
 export type CidStrategy = z.infer<typeof CidStrategySchema>;
 
 const PHONE_NUMBER_RE = /^\+?[0-9]{4,20}$/;
@@ -29,6 +39,9 @@ export const RoutePlanInputSchema = z
     cid_strategy: CidStrategySchema.default('passthrough'),
     cid_single: z.string().optional(),
     cid_pool: z.array(z.string()).default([]),
+    /** Iter 72 — attached CID group ids (only consulted when
+     * cid_strategy === 'groups'). */
+    cid_group_ids: z.array(z.string().uuid()).default([]),
     transform_strip_prefix: z.string().max(20).optional(),
     transform_add_prefix: z.string().max(20).optional(),
     enabled: z.boolean().default(true),
@@ -52,6 +65,14 @@ export const RoutePlanInputSchema = z
       message:
         'cid_pool must contain at least one valid phone number for rotate strategy.',
       path: ['cid_pool'],
+    },
+  )
+  .refine(
+    (d) => d.cid_strategy !== 'groups' || d.cid_group_ids.length > 0,
+    {
+      message:
+        'Pick at least one CID group when strategy is "groups".',
+      path: ['cid_group_ids'],
     },
   )
   .refine(
@@ -80,6 +101,13 @@ export function createRoutePlan(input: RoutePlanInput): CreateRoutePlanResult {
     }
   }
 
+  // Iter 72 — validate that every referenced CID group exists.
+  for (const gid of input.cid_group_ids) {
+    if (!getCidGroupFromDb(gid)) {
+      throw new Error(`CID group ${gid} not found.`);
+    }
+  }
+
   const id = randomUUID();
   insertRoutePlan({
     id,
@@ -90,6 +118,7 @@ export function createRoutePlan(input: RoutePlanInput): CreateRoutePlanResult {
     cid_strategy: input.cid_strategy,
     cid_single: input.cid_single ?? null,
     cid_pool_json: JSON.stringify(input.cid_pool),
+    cid_group_ids_json: JSON.stringify(input.cid_group_ids),
     transform_strip_prefix: input.transform_strip_prefix ?? null,
     transform_add_prefix: input.transform_add_prefix ?? null,
     enabled: input.enabled,
@@ -133,6 +162,18 @@ export function parseCidPool(plan: RoutePlanRecord): string[] {
   }
 }
 
+/** Iter 72 — attached CID group IDs on the plan. */
+export function parseCidGroupIds(plan: RoutePlanRecord): string[] {
+  try {
+    const parsed = JSON.parse(plan.cid_group_ids_json ?? '[]');
+    return Array.isArray(parsed)
+      ? parsed.filter((s): s is string => typeof s === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 // Iter 14: edit. primary_carrier_id intentionally NOT mutable here — a
 // route plan's primary carrier is the load-bearing reference; changing
 // it should be a delete + recreate flow. Failovers, CID strategy,
@@ -150,6 +191,7 @@ export const RoutePlanUpdateInputSchema = z
     cid_strategy: CidStrategySchema.optional(),
     cid_single: z.string().optional(),
     cid_pool: z.array(z.string()).optional(),
+    cid_group_ids: z.array(z.string().uuid()).optional(),
     transform_strip_prefix: z.string().max(20).optional(),
     transform_add_prefix: z.string().max(20).optional(),
     enabled: z.boolean().optional(),
@@ -212,6 +254,7 @@ export function updateRoutePlan(
     if (input.cid_strategy === 'passthrough') {
       updates.cid_single = null;
       updates.cid_pool_json = '[]';
+      updates.cid_group_ids_json = '[]';
     }
   }
   if (input.cid_single !== undefined) {
@@ -219,6 +262,15 @@ export function updateRoutePlan(
   }
   if (input.cid_pool !== undefined) {
     updates.cid_pool_json = JSON.stringify(input.cid_pool);
+  }
+  if (input.cid_group_ids !== undefined) {
+    // Iter 72 — validate referenced groups exist before persisting.
+    for (const gid of input.cid_group_ids) {
+      if (!getCidGroupFromDb(gid)) {
+        throw new Error(`CID group ${gid} not found.`);
+      }
+    }
+    updates.cid_group_ids_json = JSON.stringify(input.cid_group_ids);
   }
   if (input.transform_strip_prefix !== undefined) {
     updates.transform_strip_prefix = input.transform_strip_prefix || null;

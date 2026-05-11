@@ -317,6 +317,28 @@ function db(): DatabaseSync {
       added_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- Iter 72: CID groups — reusable pool of caller-IDs with their own
+    -- rotation logic. Route plans attach one or more groups; pacer
+    -- round-robins across groups per call, then applies the group's
+    -- per-call strategy (rotate / random / sticky_by_area).
+    CREATE TABLE IF NOT EXISTS cid_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      strategy TEXT NOT NULL DEFAULT 'rotate',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS cid_group_numbers (
+      id TEXT PRIMARY KEY,
+      group_id TEXT NOT NULL REFERENCES cid_groups(id) ON DELETE CASCADE,
+      number TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(group_id, number)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cid_group_numbers_group ON cid_group_numbers(group_id);
   `);
 
   // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
@@ -443,6 +465,11 @@ function db(): DatabaseSync {
     // this column).
     "ALTER TABLE phones ADD COLUMN telephony_node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL",
     "CREATE INDEX IF NOT EXISTS idx_phones_telephony_node ON phones(telephony_node_id)",
+    // Iter 72: route plans can attach 0..N CID groups. When
+    // cid_strategy='groups', the pacer rotates across these groups
+    // per call and applies each group's own strategy. Default '[]'
+    // keeps every existing plan a no-op.
+    "ALTER TABLE route_plans ADD COLUMN cid_group_ids_json TEXT NOT NULL DEFAULT '[]'",
   ];
   for (const sql of migrations) {
     try {
@@ -1120,6 +1147,8 @@ export interface RoutePlanRecord {
   cid_strategy: string;
   cid_single: string | null;
   cid_pool_json: string;
+  /** Iter 72 — JSON array of cid_groups.id attached to this plan. */
+  cid_group_ids_json: string;
   transform_strip_prefix: string | null;
   transform_add_prefix: string | null;
   enabled: number;
@@ -1136,6 +1165,7 @@ export function insertRoutePlan(rec: {
   cid_strategy: string;
   cid_single: string | null;
   cid_pool_json: string;
+  cid_group_ids_json: string;
   transform_strip_prefix: string | null;
   transform_add_prefix: string | null;
   enabled: boolean;
@@ -1144,9 +1174,9 @@ export function insertRoutePlan(rec: {
     .prepare(
       `INSERT INTO route_plans (
         id, name, description, primary_carrier_id, failover_carrier_ids_json,
-        cid_strategy, cid_single, cid_pool_json,
+        cid_strategy, cid_single, cid_pool_json, cid_group_ids_json,
         transform_strip_prefix, transform_add_prefix, enabled
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
@@ -1157,6 +1187,7 @@ export function insertRoutePlan(rec: {
       rec.cid_strategy,
       rec.cid_single,
       rec.cid_pool_json,
+      rec.cid_group_ids_json,
       rec.transform_strip_prefix,
       rec.transform_add_prefix,
       rec.enabled ? 1 : 0,
@@ -1178,6 +1209,144 @@ export function getRoutePlanFromDb(id: string): RoutePlanRecord | undefined {
 export function deleteRoutePlanFromDb(id: string): boolean {
   const result = db().prepare(`DELETE FROM route_plans WHERE id = ?`).run(id);
   return Number(result.changes) > 0;
+}
+
+// =====================================================================
+// cid groups (iter 72)
+// =====================================================================
+
+export interface CidGroupRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  strategy: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CidGroupNumberRecord {
+  id: string;
+  group_id: string;
+  number: string;
+  created_at: string;
+}
+
+export function insertCidGroup(rec: {
+  id: string;
+  name: string;
+  description: string | null;
+  strategy: string;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO cid_groups (id, name, description, strategy)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(rec.id, rec.name, rec.description, rec.strategy);
+}
+
+export function listCidGroupsFromDb(): CidGroupRecord[] {
+  return db()
+    .prepare(`SELECT * FROM cid_groups ORDER BY name ASC`)
+    .all() as unknown as CidGroupRecord[];
+}
+
+export function getCidGroupFromDb(id: string): CidGroupRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM cid_groups WHERE id = ?`)
+    .get(id) as unknown as CidGroupRecord | undefined;
+}
+
+export function deleteCidGroupFromDb(id: string): boolean {
+  const result = db().prepare(`DELETE FROM cid_groups WHERE id = ?`).run(id);
+  return Number(result.changes) > 0;
+}
+
+export function updateCidGroupFields(
+  id: string,
+  updates: Partial<{
+    name: string;
+    description: string | null;
+    strategy: string;
+  }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === undefined) continue;
+    fields.push(`${k} = ?`);
+    values.push(v);
+  }
+  if (fields.length === 0) return false;
+  fields.push(`updated_at = CURRENT_TIMESTAMP`);
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE cid_groups SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+export function listCidsInGroupFromDb(groupId: string): CidGroupNumberRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM cid_group_numbers WHERE group_id = ? ORDER BY created_at ASC, number ASC`,
+    )
+    .all(groupId) as unknown as CidGroupNumberRecord[];
+}
+
+export function countCidsInGroupFromDb(groupId: string): number {
+  const row = db()
+    .prepare(`SELECT COUNT(*) AS n FROM cid_group_numbers WHERE group_id = ?`)
+    .get(groupId) as { n: number };
+  return Number(row.n);
+}
+
+/** Bulk insert. Each row gets a fresh uuid. ON CONFLICT (group_id, number)
+ * silently no-ops so re-uploading the same list is idempotent. Returns
+ * the count of rows actually inserted. */
+export function bulkInsertCidGroupNumbers(
+  groupId: string,
+  rows: Array<{ id: string; number: string }>,
+): number {
+  if (rows.length === 0) return 0;
+  const d = db();
+  const stmt = d.prepare(
+    `INSERT INTO cid_group_numbers (id, group_id, number)
+     VALUES (?, ?, ?)
+     ON CONFLICT(group_id, number) DO NOTHING`,
+  );
+  let inserted = 0;
+  d.exec('BEGIN');
+  try {
+    for (const r of rows) {
+      const res = stmt.run(r.id, groupId, r.number);
+      inserted += Number(res.changes);
+    }
+    d.exec('COMMIT');
+  } catch (e) {
+    d.exec('ROLLBACK');
+    throw e;
+  }
+  return inserted;
+}
+
+export function deleteCidGroupNumberFromDb(numberId: string): boolean {
+  const result = db()
+    .prepare(`DELETE FROM cid_group_numbers WHERE id = ?`)
+    .run(numberId);
+  return Number(result.changes) > 0;
+}
+
+/** Returns the route plans that currently reference the given cid group,
+ * by scanning route_plans.cid_group_ids_json for the id. */
+export function listRoutePlansUsingCidGroup(groupId: string): RoutePlanRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM route_plans
+        WHERE cid_group_ids_json LIKE '%' || ? || '%'
+        ORDER BY name ASC`,
+    )
+    .all(groupId) as unknown as RoutePlanRecord[];
 }
 
 // =====================================================================
@@ -2570,6 +2739,7 @@ export function updateRoutePlanFields(
     cid_strategy: string;
     cid_single: string | null;
     cid_pool_json: string;
+    cid_group_ids_json: string;
     transform_strip_prefix: string | null;
     transform_add_prefix: string | null;
     enabled: boolean;

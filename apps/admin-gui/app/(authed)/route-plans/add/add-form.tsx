@@ -11,16 +11,31 @@ interface CarrierOption {
   enabled: boolean;
 }
 
-const STRATEGIES = ['passthrough', 'single', 'rotate'] as const;
+interface CidGroupOption {
+  id: string;
+  name: string;
+  strategy: string;
+  cid_count: number;
+}
+
+const STRATEGIES = ['passthrough', 'single', 'rotate', 'groups'] as const;
 type Strategy = (typeof STRATEGIES)[number];
 
 const STRATEGY_HINTS: Record<Strategy, string> = {
   passthrough: 'Use whatever caller ID the lead specifies (or campaign default).',
   single: 'Always present the same caller ID.',
-  rotate: 'Rotate through a pool of caller IDs (e.g. local-presence DIDs).',
+  rotate: 'Rotate through an inline pool of caller IDs entered below.',
+  groups:
+    'Pull caller IDs from one or more reusable CID Groups. Each group has its own rotation logic.',
 };
 
-export function AddRoutePlanForm({ carriers }: { carriers: CarrierOption[] }) {
+export function AddRoutePlanForm({
+  carriers,
+  cidGroups,
+}: {
+  carriers: CarrierOption[];
+  cidGroups: CidGroupOption[];
+}) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +43,13 @@ export function AddRoutePlanForm({ carriers }: { carriers: CarrierOption[] }) {
   const [failoverIds, setFailoverIds] = useState<string[]>([]);
   const [strategy, setStrategy] = useState<Strategy>('passthrough');
   const [cidPool, setCidPool] = useState('');
+  const [cidGroupIds, setCidGroupIds] = useState<string[]>([]);
+
+  function toggleCidGroup(id: string) {
+    setCidGroupIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
 
   const failoverChoices = useMemo(
     () => carriers.filter((c) => c.id !== primaryId),
@@ -67,6 +89,7 @@ export function AddRoutePlanForm({ carriers }: { carriers: CarrierOption[] }) {
           ? String(fd.get('cid_single') ?? '').trim() || undefined
           : undefined,
       cid_pool: parsedPool,
+      cid_group_ids: strategy === 'groups' ? cidGroupIds : [],
       transform_strip_prefix:
         String(fd.get('transform_strip_prefix') ?? '').trim() || undefined,
       transform_add_prefix:
@@ -204,6 +227,43 @@ export function AddRoutePlanForm({ carriers }: { carriers: CarrierOption[] }) {
               className="input font-mono text-xs"
               placeholder="+14155551234&#10;+14155551235&#10;+14155551236"
             />
+          </Field>
+        )}
+
+        {strategy === 'groups' && (
+          <Field
+            label="CID Groups"
+            hint="Pick one or more groups. Pacer rotates across groups per call, then applies each group's own logic."
+          >
+            {cidGroups.length === 0 ? (
+              <div className="border border-dashed border-border rounded p-3 text-xs text-fg-subtle">
+                No CID groups exist yet.{' '}
+                <Link href="/cid-groups/add" className="underline">
+                  Create one
+                </Link>{' '}
+                first.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {cidGroups.map((g) => (
+                  <label
+                    key={g.id}
+                    className="flex items-center gap-2 px-3 py-2 border border-border rounded text-sm cursor-pointer hover:bg-card-hover"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={cidGroupIds.includes(g.id)}
+                      onChange={() => toggleCidGroup(g.id)}
+                    />
+                    <span>{g.name}</span>
+                    <span className="text-fg-subtle text-xs ml-auto font-mono">
+                      {g.strategy} · {g.cid_count} CID
+                      {g.cid_count === 1 ? '' : 's'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
           </Field>
         )}
       </Section>
