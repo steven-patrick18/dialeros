@@ -428,36 +428,61 @@ function BasicTab({
               delivering calls.
             </p>
           )}
-        {/* Iter 86 — per-tick math is now ViciDial-style:
-              target = floor(total_remote_lines × dial_level)
-            i.e. dial_level is an over-dial multiplier on the
-            configured capacity, not on what's available right
-            now. With lines=5 and dial_level=2 you get 10 originates
-            per tick regardless of how many are already in-flight;
-            the carrier port cap throttles at the trunk level.
+        {/* Iter 89 — pacing math is remote-lines × dial_level (when
+            any remote agents are attached). Local agents are bridge
+            targets, NOT pool inflaters. Remote agents are pure
+            ratio-dial seats — they never receive bridges.
          */}
-        {c.status === 'active' &&
-          activeAgents.length === 0 &&
-          remoteLinesTotal > 0 && (
-            <p className="bg-card-hover/40 text-fg-muted border border-border rounded mt-3 px-3 py-2 text-xs">
-              {remoteInFlight} / {remoteLinesTotal} remote line
-              {remoteLinesTotal === 1 ? '' : 's'} in flight. Per-tick
-              target:{' '}
-              <span className="font-mono">
-                floor({remoteLinesTotal} × {c.dial_level}) ={' '}
-                {Math.max(
-                  1,
-                  Math.floor(remoteLinesTotal * (c.dial_level || 1)),
-                )}
-              </span>{' '}
-              call
+        {c.status === 'active' && remoteLinesTotal > 0 && (
+          <p className="bg-card-hover/40 text-fg-muted border border-border rounded mt-3 px-3 py-2 text-xs">
+            {remoteInFlight} / {remoteLinesTotal} remote line
+            {remoteLinesTotal === 1 ? '' : 's'} in flight. Per-tick
+            target:{' '}
+            <span className="font-mono">
+              floor({remoteLinesTotal} × {c.dial_level}) ={' '}
               {Math.max(
                 1,
                 Math.floor(remoteLinesTotal * (c.dial_level || 1)),
-              ) === 1
-                ? ''
-                : 's'}{' '}
-              this tick.
+              )}
+            </span>{' '}
+            call
+            {Math.max(
+              1,
+              Math.floor(remoteLinesTotal * (c.dial_level || 1)),
+            ) === 1
+              ? ''
+              : 's'}{' '}
+            this tick. Remote agents only count toward the ratio —
+            bridges land on local agents{' '}
+            {activeAgents.length > 0
+              ? `(${activeAgents.length} signed in right now)`
+              : '(none signed in right now)'}
+            .
+          </p>
+        )}
+        {/* Iter 89 — when amd_action=bridge but ONLY remote agents
+            exist (no local), every answered call abandons because
+            there's no local target to bridge to. Surface that
+            loudly. */}
+        {c.status === 'active' &&
+          (c.amd_action === 'bridge' || c.amd_action === 'detect') &&
+          activeAgents.length === 0 &&
+          remoteLinesTotal > 0 && (
+            <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
+              On-answer mode is{' '}
+              <span className="font-mono">{c.amd_action}</span> but
+              no local agent is signed in for this campaign. Every
+              answered call will instantly hang up (= abandoned)
+              because remote agents are ratio-dial seats only — they
+              don&apos;t accept bridges. Sign an agent into{' '}
+              <Link href="/agent" className="underline hover:text-fg">
+                /agent
+              </Link>{' '}
+              for a user attached to this campaign, or switch
+              On-answer to{' '}
+              <span className="font-mono">voicemail</span> /{' '}
+              <span className="font-mono">drop</span> on the Detail
+              tab.
             </p>
           )}
         {c.status === 'active' && !insideWindow && (
@@ -704,10 +729,12 @@ function RealtimeTab({
   remoteLinesTotal: number;
   remoteInFlight: number;
 }) {
-  // Iter 86 — math is now over-dial against CONFIGURED capacity.
-  // remoteCapacity (= available) shown separately for live load
-  // visibility, not used in the target formula.
-  const poolSize = activeAgents + remoteLinesTotal;
+  // Iter 89 — pacing pool = remote lines only (when any remote
+  // agents attached). Local agents are bridge targets, not ratio
+  // seats. Matches the change in pacing.ts. Fallback to local
+  // count for pure-local campaigns.
+  const poolSize =
+    remoteLinesTotal > 0 ? remoteLinesTotal : activeAgents;
   const target =
     poolSize > 0
       ? Math.max(1, Math.floor(poolSize * (c.dial_level || 1)))
@@ -724,17 +751,17 @@ function RealtimeTab({
           initialTotal={totalIntentsFor(c.id)}
         />
         <p className="text-xs text-fg-subtle mt-3">
-          Pool: {activeAgents} local agent
-          {activeAgents === 1 ? '' : 's'} + {remoteLinesTotal} remote
-          line{remoteLinesTotal === 1 ? '' : 's'} (configured) ={' '}
-          <span className="font-mono">{poolSize}</span> slot
-          {poolSize === 1 ? '' : 's'}. Currently {remoteInFlight} in
-          flight · {remoteCapacity} idle. Per-tick target:{' '}
+          Ratio pool: {remoteLinesTotal} remote line
+          {remoteLinesTotal === 1 ? '' : 's'} ({remoteInFlight} in
+          flight · {remoteCapacity} idle). Bridge targets:{' '}
+          {activeAgents} local agent
+          {activeAgents === 1 ? '' : 's'} signed in (remote agents
+          are seats only, never receive bridges). Per-tick target:{' '}
           <span className="font-mono">
             floor({poolSize} × {c.dial_level}) = {target}
           </span>{' '}
-          call{target === 1 ? '' : 's'}. For carrier-level and floor-wide
-          live boards, see{' '}
+          call{target === 1 ? '' : 's'}. For carrier-level and
+          floor-wide live boards, see{' '}
           <Link href="/realtime" className="underline hover:text-fg">
             /realtime
           </Link>

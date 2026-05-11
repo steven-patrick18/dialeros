@@ -379,21 +379,17 @@ type BridgeTarget =
 
 function buildBridgePool(
   localAgents: Array<{ id: string; username: string }>,
-  remote: Array<{ agent: RemoteAgentRecord; available: number }>,
+  _remote: Array<{ agent: RemoteAgentRecord; available: number }>,
 ): BridgeTarget[] {
-  // Iter 86 — pool sizes by CONFIGURED lines, not currently-available
-  // ones. ViciDial-style over-dialing fires more originates than the
-  // remote agent can answer simultaneously; the bridge attempt on the
-  // FS side handles the saturated case as an abandoned call.
-  // Originating only against `available` made dial_level > 1 a no-op
-  // because the pool kept hitting zero.
+  // Iter 89 — bridge targets are LOCAL ONLY. Remote agents now
+  // exist solely for ratio-dial math; they never receive a bridge.
+  // Calls bridge to a real human agent registered on the box. If
+  // no local agent is signed in, the originate still goes out (the
+  // remote-agent count drives the pacing math), the call answers,
+  // and the bridge fails with NO_USER — that's the abandoned-call
+  // case ViciDial's max_abandon_% covers.
   const pool: BridgeTarget[] = [];
   for (const a of localAgents) pool.push({ kind: 'local', agent: a });
-  for (const { agent } of remote) {
-    for (let i = 0; i < agent.lines; i++) {
-      pool.push({ kind: 'remote', agent });
-    }
-  }
   return pool;
 }
 
@@ -407,6 +403,26 @@ function pickBridgeTarget(
   const target = pool[cursor % pool.length]!;
   c.bridgeRotateState.set(campaignId, cursor + 1);
   return target;
+}
+
+/** Iter 89 — round-robin a remote agent's id onto each outgoing
+ * originate so port-cap math (inFlightForRemoteAgent) and
+ * downstream reports stay accurate. Pacer no longer bridges TO the
+ * remote, but the originate is "carried" by one of the remote
+ * agent's logical lines — that's where the ratio-dial seat count
+ * comes from. */
+function pickRemoteAgentForAttribution(
+  campaignId: string,
+  remoteSlots: Array<{ agent: RemoteAgentRecord; available: number }>,
+): RemoteAgentRecord | null {
+  if (remoteSlots.length === 0) return null;
+  const c = container();
+  // Reuse the bridge rotate cursor — it's already campaign-scoped
+  // and was previously walking the same set.
+  const cursor = c.bridgeRotateState.get(`${campaignId}:remote`) ?? 0;
+  const pick = remoteSlots[cursor % remoteSlots.length]!;
+  c.bridgeRotateState.set(`${campaignId}:remote`, cursor + 1);
+  return pick.agent;
 }
 
 /**
@@ -513,25 +529,25 @@ export async function paceCampaignOnce(
     }
   }
 
-  // Iter 58 — pick from the combined local+remote bridge pool. Local
-  // slots have a backing user (assigned_user_id, user/<ext> bridge);
-  // remote slots have no local user (assigned_user_id stays NULL,
-  // remote_agent_id is set, bridge goes to the raw SIP URI).
-  // Iter 59 — remote agents scoped to a campaign: matching agents
-  // OR the shared pool (campaign_id IS NULL).
-  // Iter 73 — remoteSlots already computed above for the pool-empty
-  // short-circuit; reuse it here.
+  // Iter 89 — bridge pool is LOCAL agents only. Remote agents drive
+  // the ratio-dialing pool (above) but never receive bridges. If no
+  // local agent is available at originate time AND amd_action needs
+  // a bridge (bridge / detect HUMAN path), the call still goes out
+  // — the originate is "abandoned" in ViciDial terms when it
+  // answers with no agent to receive it. Concretely: bridgeApp gets
+  // overridden to &hangup so the answered call drops cleanly.
   const bridgePool = buildBridgePool(agents, remoteSlots);
   const bridgeTarget = pickBridgeTarget(campaignId, bridgePool);
-  if (!bridgeTarget) return { outcome: 'no_agents' };
-  // Keep pickAgent's cursor in sync for local picks so other callers
-  // that only look at agentRotateState (audit, reports) don't see a
-  // stuck cursor on busy campaigns.
-  if (bridgeTarget.kind === 'local') pickAgent(campaignId, agents);
+  if (bridgeTarget?.kind === 'local') pickAgent(campaignId, agents);
   const assigned: { id: string; username: string } | null =
-    bridgeTarget.kind === 'local' ? bridgeTarget.agent : null;
-  const remoteAgent =
-    bridgeTarget.kind === 'remote' ? bridgeTarget.agent : null;
+    bridgeTarget?.kind === 'local' ? bridgeTarget.agent : null;
+  // Iter 89 — remoteAgent is now only used for in-flight accounting
+  // and dial_intents.remote_agent_id. We attribute the originate to
+  // the rotated-through remote agent (so port-cap math + reports
+  // stay correct), even though that remote agent itself never gets
+  // bridged into the call.
+  const remoteAgent: RemoteAgentRecord | null =
+    remoteSlots.length > 0 ? pickRemoteAgentForAttribution(campaignId, remoteSlots) : null;
 
   const transformed = applyTransform(
     lead.phone,
@@ -630,7 +646,11 @@ export async function paceCampaignOnce(
     //               MACHINE -> voicemail-if-present, else hangup.
     //               Bridge target + voicemail path passed as channel
     //               vars (see amdChannelVars below).
-    //   bridge (default) — the existing user/<ext> or remote bridge.
+    //   bridge (default) — the existing user/<ext> bridge.
+    //
+    // Iter 89 — bridge target is LOCAL agent only. Remotes are
+    // ratio-dial seats, not bridge targets. If no local agent is
+    // available, the bridge falls through to &hangup (= abandoned).
     let computedBridgeTarget: string;
     if (assigned) {
       const primary = getPrimaryPhoneForUser(assigned.id);
@@ -638,8 +658,10 @@ export async function paceCampaignOnce(
         primary?.extension ?? extensionForUser(assigned.id);
       computedBridgeTarget = `user/${agentExtension}`;
     } else {
-      const target = remoteAgent!.sip_uri.replace(/^sip:/i, '');
-      computedBridgeTarget = `sofia/internal/${target}`;
+      // No local agent available — used only by AMD-detect's channel
+      // var (empty string signals "no bridge target; treat HUMAN
+      // path as abandoned" to the dialeros-amd-route extension).
+      computedBridgeTarget = '';
     }
 
     let bridgeApp: string;
@@ -663,7 +685,12 @@ export async function paceCampaignOnce(
       }
       bridgeApp = '&execute_extension(dialeros-amd-route XML default)';
     } else {
-      bridgeApp = `&bridge(${computedBridgeTarget})`;
+      // bridge mode. Need a real local target — if none, treat as
+      // abandoned (call answers, instantly hangs up). Reports +
+      // max_abandon% pick this up via hangup_cause / answered_at.
+      bridgeApp = computedBridgeTarget
+        ? `&bridge(${computedBridgeTarget})`
+        : '&hangup';
     }
     // Iter 79 — INSERT the dial_intent row BEFORE issuing bgapi.
     // FreeSWITCH rejects bad routes faster than the bgapi await
@@ -800,23 +827,25 @@ export function startPacer(campaignId: string): boolean {
     try {
       const c = getCampaignFromDb(campaignId);
       if (!c) return;
-      // Iter 86 — ViciDial-style pacing math:
-      //   target = floor((active_local_agents + total_remote_lines) × dial_level)
-      // Note: total_remote_lines is the CONFIGURED capacity, not
-      // what's currently available. dial_level > 1 is meant to
-      // OVER-DIAL — fire more originates than seats so that the
-      // ones that get rejected / no-answer don't starve the pool.
-      // The per-(plan, carrier) port cap (iter 74) still throttles
-      // at the trunk level so we never push more than the carrier
-      // can handle. ViciDial's max_abandon% kicks in as a separate
-      // safety on the carrier-rejected fraction.
+      // Iter 89 — pacing pool is REMOTE-LINES-ONLY when any remote
+      // agent is attached. Remote agents are now strictly a "ratio
+      // dialer seat count" — they do NOT receive bridges. Local
+      // agents are bridge targets; counting them in the pacing pool
+      // would over-fire on small operator teams. When no remote
+      // agents are attached the pool falls back to the local agent
+      // count so a 100% local campaign still paces normally.
+      //   poolSize = remoteLinesTotal (if any remotes attached)
+      //            = localAgents      (otherwise)
+      //   target   = floor(poolSize × dial_level)
+      // With 1 remote × 5 lines × dial_level 3 → 15 calls per tick.
       const localAgents = getAvailableAgentsForCampaign(campaignId);
       const remoteSlots = listRemoteAgentsWithCapacity(campaignId);
       const remoteLinesTotal = remoteSlots.reduce(
         (sum, r) => sum + r.agent.lines,
         0,
       );
-      const poolSize = localAgents.length + remoteLinesTotal;
+      const poolSize =
+        remoteLinesTotal > 0 ? remoteLinesTotal : localAgents.length;
       if (poolSize === 0) return;
       const target = Math.max(
         1,
