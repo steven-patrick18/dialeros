@@ -2839,6 +2839,19 @@ export function getDialIntentById(id: number): DialIntentRecord | undefined {
     .get(id) as unknown as DialIntentRecord | undefined;
 }
 
+/** Iter 95 — lookup by correlation_id for the agent softphone's
+ * polling fallback. When sip.js misses a BYE (transient WS drop,
+ * proxy hiccup), the client polls this endpoint with its dial's
+ * correlation_id; if hangup_at is set the client force-clears its
+ * stuck "Connected" UI. */
+export function getDialIntentByCorrelationId(
+  correlationId: string,
+): DialIntentRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM dial_intents WHERE correlation_id = ?`)
+    .get(correlationId) as unknown as DialIntentRecord | undefined;
+}
+
 /**
  * Iter 46 — most recent intent assigned to this user that has no
  * disposition yet. Drives the wrap-up modal: when an agent's call

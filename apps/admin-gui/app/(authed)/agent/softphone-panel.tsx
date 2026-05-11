@@ -73,6 +73,15 @@ export function AgentSoftphonePanel() {
   const [cid, setCid] = useState('');
   const [dialBusy, setDialBusy] = useState(false);
   const [dialMsg, setDialMsg] = useState<string | null>(null);
+  /** Iter 95 — correlation_id from the last manual dial. Polled
+   * against /api/agent/call-status every 3 s while sp.inCall is
+   * true; if the server reports hangup_at set but the softphone
+   * still thinks it's connected, force-clear the UI. Fixes the
+   * "stuck connected after carrier hung up" sip.js BYE-miss
+   * problem. */
+  const [activeCorrelationId, setActiveCorrelationId] = useState<
+    string | null
+  >(null);
 
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
 
@@ -127,6 +136,66 @@ export function AgentSoftphonePanel() {
     return () => clearInterval(id);
   }, [sp.inCall]);
 
+  // Iter 95 — BYE-miss watchdog. While the softphone thinks we're
+  // in a call AND we have a correlation_id from the manual dial,
+  // poll /api/agent/call-status every 3 s. If the server says the
+  // dial_intent is hung_up but the softphone still believes it's
+  // connected, sip.js missed the BYE. forceClear() unsticks the
+  // UI. Cleared on natural hangup (when activeCorrelationId is
+  // reset below).
+  useEffect(() => {
+    if (!sp.inCall || !activeCorrelationId) return;
+    let cancelled = false;
+    let consecutiveHungUp = 0;
+    async function tick() {
+      try {
+        const res = await fetch(
+          `/api/agent/call-status?correlation_id=${encodeURIComponent(activeCorrelationId!)}`,
+          { cache: 'no-store' },
+        );
+        if (!res.ok) return;
+        const j = (await res.json()) as {
+          hung_up?: boolean;
+          unknown?: boolean;
+          cause?: string;
+        };
+        if (cancelled) return;
+        if (j.hung_up) {
+          // Two consecutive hung_up:true responses before clearing
+          // — a tiny dead-band against the very narrow race where
+          // sip.js is mid-BYE-processing.
+          consecutiveHungUp++;
+          if (consecutiveHungUp >= 2) {
+            setDialMsg(
+              `hung up: ${j.cause ?? 'remote'} (sip.js missed the BYE — force-cleared)`,
+            );
+            await sp.forceClear();
+            setActiveCorrelationId(null);
+          }
+        } else {
+          consecutiveHungUp = 0;
+        }
+      } catch {
+        /* network blip — keep trying */
+      }
+    }
+    const handle = setInterval(tick, 3000);
+    // Don't fire immediately — sip.js usually processes BYE in
+    // <100ms; only kick in if the call's still showing after 3 s.
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [sp.inCall, activeCorrelationId, sp]);
+
+  // Iter 95 — once sp.inCall flips back to false (natural hangup
+  // path), drop the correlation_id so the next dial starts fresh.
+  useEffect(() => {
+    if (!sp.inCall && activeCorrelationId) {
+      setActiveCorrelationId(null);
+    }
+  }, [sp.inCall, activeCorrelationId]);
+
   // Iter 46 — wrap-up overlay flips status to PAUSED while disposing.
   // Refresh local state on focus / visibility change so the panel
   // reflects what /agent/status actually says (debounced via the
@@ -178,12 +247,18 @@ export function AgentSoftphonePanel() {
       const j = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         error?: string;
+        correlation_id?: string;
       };
       if (!res.ok || !j.ok) {
         setDialMsg(j.error ?? `dial failed (${res.status})`);
       } else {
         setDialMsg('dialing…');
         setBuffer('');
+        // Iter 95 — remember the correlation_id so the BYE-miss
+        // watchdog can poll its server-side hangup state.
+        if (j.correlation_id) {
+          setActiveCorrelationId(j.correlation_id);
+        }
         // Iter 50 — push to local history. Dedup by destination+cid:
         // a redial of the same number bumps the existing entry rather
         // than creating a duplicate.

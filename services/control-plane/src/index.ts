@@ -396,7 +396,7 @@ export {
   isUserRegistered,
   emitIntentUpdate,
 } from './pacing';
-export { insertDialIntent } from './db';
+export { insertDialIntent, getDialIntentByCorrelationId } from './db';
 export type { PacingTickResult, DialIntentRecord } from './pacing';
 
 // SIP extensions (iter 39 — shared user→extension derivation)

@@ -285,6 +285,11 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     uuid,
+    // Iter 95 — return the correlation_id so the softphone can
+    // poll /api/agent/call-status as a defensive fallback for
+    // missed SIP BYEs (sip.js sometimes loses BYE on WS hiccups
+    // and the UI sticks at "Connected" forever).
+    correlation_id: correlationId,
     to: dest,
     dialed: dialDest,
     cid,

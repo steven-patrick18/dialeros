@@ -22,6 +22,19 @@ export const dynamic = 'force-dynamic';
 
 const PAGE_SIZE = 50;
 
+// Iter 95 — kept in sync with reset-button.tsx's RESETTABLE set so
+// the inline Reset link only shows where it actually does
+// something. NEW + DNC excluded by design.
+const RESETTABLE_STATUSES = new Set([
+  'CALLED_NO_ANSWER',
+  'BUSY',
+  'CALLBACK_SCHEDULED',
+  'CONVERTED',
+  'DNC_TEMP',
+  'BAD_NUMBER',
+  'DIALING',
+]);
+
 // Iter 80 — map FS hangup causes onto SIP response codes for the
 // breakdown panel. ViciDial operators are used to reading SIP
 // codes; the table is auto-extended with the raw cause when no
@@ -224,11 +237,18 @@ export default async function LeadListDetail({
             <ul className="space-y-1 text-sm">
               {breakdown.map((b) => {
                 const active = status === b.status;
+                // Iter 95 — inline Reset button next to retriable
+                // statuses so the operator doesn't have to drill
+                // into the filtered view first.
+                const resettable = RESETTABLE_STATUSES.has(b.status);
                 return (
-                  <li key={b.status}>
+                  <li
+                    key={b.status}
+                    className="flex justify-between items-center gap-2"
+                  >
                     <Link
                       href={buildHref({ status: b.status, page: 1 })}
-                      className={`flex justify-between items-center px-2 py-1 rounded ${
+                      className={`flex justify-between items-center px-2 py-1 rounded flex-1 ${
                         active
                           ? 'bg-accent/15 text-accent'
                           : 'hover:bg-card-hover'
@@ -243,6 +263,14 @@ export default async function LeadListDetail({
                         {b.count.toLocaleString()}
                       </span>
                     </Link>
+                    {resettable && (
+                      <ResetStatusButton
+                        listId={id}
+                        status={b.status}
+                        matchedCount={b.count}
+                        compact
+                      />
+                    )}
                   </li>
                 );
               })}

@@ -34,10 +34,14 @@ export function ResetStatusButton({
   listId,
   status,
   matchedCount,
+  compact = false,
 }: {
   listId: string;
   status: string;
   matchedCount: number;
+  /** Iter 95 — compact mode for inline placement on the status
+   * breakdown rows: smaller, just "Reset" without the count. */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -68,6 +72,19 @@ export function ResetStatusButton({
     router.refresh();
   }
 
+  if (compact) {
+    return (
+      <button
+        type="button"
+        onClick={reset}
+        disabled={busy}
+        title={`Reset ${matchedCount.toLocaleString()} ${status} → NEW`}
+        className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border border-warn/40 text-warn hover:bg-warn/10 disabled:opacity-40 shrink-0"
+      >
+        {busy ? '…' : 'Reset'}
+      </button>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-2">
       <button

@@ -65,6 +65,10 @@ export interface SoftphoneApi extends SoftphoneState {
   toggleMute: () => void;
   setVolume: (v: number) => void;
   hangup: () => Promise<void>;
+  /** Iter 95 — escape hatch when sip.js misses a BYE and the UI
+   * sticks at "Connected" forever. Polled call-status check
+   * invokes this. */
+  forceClear: () => Promise<void>;
   sendDtmf: (digit: string) => void;
   toggleHold: () => void;
   /** Iter 47 — blind transfer via SIP REFER. Target is a SIP URI or
@@ -563,6 +567,34 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  /** Iter 95 — emergency "the call's actually gone, just clean up
+   * the UI" escape hatch. Used by the call-status poll fallback
+   * when FS has hung up but sip.js missed the BYE (transient WS
+   * drop, proxy quirk, etc.) and the agent's UI sticks at
+   * "Connected" forever. Tries a normal hangup first, then
+   * unconditionally clears local state + detaches media. Safe to
+   * call when there's no session — it just no-ops the cleanup. */
+  const forceClear = useCallback(async () => {
+    try {
+      await hangup();
+    } catch {
+      /* ignore */
+    }
+    detachMedia();
+    if (audioRef.current) {
+      audioRef.current.srcObject = null;
+      audioRef.current.muted = false;
+    }
+    sessionRef.current = null;
+    setState((prev) => ({
+      ...prev,
+      inCall: false,
+      muted: false,
+      onHold: false,
+      remoteIdentity: null,
+    }));
+  }, [hangup, detachMedia]);
+
   const sendDtmf = useCallback((digit: string) => {
     const session = sessionRef.current;
     if (!session) return;
@@ -678,11 +710,21 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
       toggleMute,
       setVolume,
       hangup,
+      forceClear,
       sendDtmf,
       toggleHold,
       transfer,
     }),
-    [state, toggleMute, setVolume, hangup, sendDtmf, toggleHold, transfer],
+    [
+      state,
+      toggleMute,
+      setVolume,
+      hangup,
+      forceClear,
+      sendDtmf,
+      toggleHold,
+      transfer,
+    ],
   );
 
   return (
