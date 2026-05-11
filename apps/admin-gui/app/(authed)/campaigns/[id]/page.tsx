@@ -57,14 +57,22 @@ export default async function CampaignDetail({
     0,
   );
   const activeAgents = getActiveAgentsForCampaign(id);
-  // Iter 73 — pool size for the "no agents" banner now also counts
-  // remote agents (external SIP endpoints assigned to this campaign
-  // or the shared pool) so a campaign staffed entirely by remotes
-  // doesn't show the misleading "pacer cannot dial" warning.
-  const remoteCapacity = listRemoteAgentsWithCapacity(id).reduce(
-    (s, r) => s + r.available,
+  // Iter 73 / 82 — pool size for the warning banners. We need both:
+  //   remoteCapacity   = sum of AVAILABLE lines right now (lines -
+  //                      in-flight). Used for the per-tick math.
+  //   remoteLinesTotal = sum of CONFIGURED lines across attached
+  //                      remote agents, regardless of how many are
+  //                      currently busy. Lets us distinguish
+  //                      "no remote assigned" (truly no agents) from
+  //                      "remote saturated" (assigned but every line
+  //                      is in-flight) — two very different banners.
+  const remoteSlots = listRemoteAgentsWithCapacity(id);
+  const remoteCapacity = remoteSlots.reduce((s, r) => s + r.available, 0);
+  const remoteLinesTotal = remoteSlots.reduce(
+    (s, r) => s + r.agent.lines,
     0,
   );
+  const remoteInFlight = remoteLinesTotal - remoteCapacity;
   const insideWindow = isCampaignWithinCallWindow(c);
   const hopperDepth = hopperSize(id);
   const inGroupIds = getCampaignInGroups(id);
@@ -105,6 +113,8 @@ export default async function CampaignDetail({
           hopperDepth={hopperDepth}
           activeAgents={activeAgents}
           remoteCapacity={remoteCapacity}
+          remoteLinesTotal={remoteLinesTotal}
+          remoteInFlight={remoteInFlight}
           insideWindow={insideWindow}
         />
       )}
@@ -126,6 +136,8 @@ export default async function CampaignDetail({
           c={c}
           activeAgents={activeAgents.length}
           remoteCapacity={remoteCapacity}
+          remoteLinesTotal={remoteLinesTotal}
+          remoteInFlight={remoteInFlight}
         />
       )}
     </div>
@@ -141,6 +153,8 @@ function BasicTab({
   hopperDepth,
   activeAgents,
   remoteCapacity,
+  remoteLinesTotal,
+  remoteInFlight,
   insideWindow,
 }: {
   c: ReturnType<typeof getCampaign> & {};
@@ -151,6 +165,8 @@ function BasicTab({
   hopperDepth: number;
   activeAgents: ReturnType<typeof getActiveAgentsForCampaign>;
   remoteCapacity: number;
+  remoteLinesTotal: number;
+  remoteInFlight: number;
   insideWindow: boolean;
 }) {
   return (
@@ -337,9 +353,17 @@ function BasicTab({
           ACTIVE starts the pacer (one dial intent every ~3s, round-robin
           across active attached agents). PAUSED / ARCHIVED stops it.
         </p>
+        {/* Iter 82 — three distinct cases for active campaigns:
+              A) truly nothing attached → red warn
+              B) capacity exists & free → green math card
+              C) capacity exists but saturated (in-flight ≥ lines) →
+                 amber "throttled" card so the operator doesn't
+                 misread "no agent" when a remote agent IS attached
+                 but currently full.
+         */}
         {c.status === 'active' &&
           activeAgents.length === 0 &&
-          remoteCapacity === 0 && (
+          remoteLinesTotal === 0 && (
             <p className="bg-warn/10 text-warn border border-warn/50 rounded mt-3 px-3 py-2 text-xs">
               No active agents attached — pacer is running but cannot dial.
               Attach an active agent below or assign a remote agent to start
@@ -348,16 +372,47 @@ function BasicTab({
           )}
         {c.status === 'active' &&
           activeAgents.length === 0 &&
+          remoteLinesTotal > 0 &&
           remoteCapacity > 0 && (
             <p className="bg-card-hover/40 text-fg-muted border border-border rounded mt-3 px-3 py-2 text-xs">
-              {remoteCapacity} remote line{remoteCapacity === 1 ? '' : 's'}{' '}
-              available — pacer will dial via remote agent
-              {remoteCapacity === 1 ? '' : 's'}. Per-tick target:{' '}
+              {remoteInFlight} / {remoteLinesTotal} remote line
+              {remoteLinesTotal === 1 ? '' : 's'} in flight ·{' '}
+              {remoteCapacity} available. Per-tick target:{' '}
               <span className="font-mono">
                 floor({remoteCapacity} × {c.dial_level}) ={' '}
-                {Math.max(1, Math.floor(remoteCapacity * (c.dial_level || 1)))}
+                {Math.max(
+                  1,
+                  Math.floor(remoteCapacity * (c.dial_level || 1)),
+                )}
               </span>{' '}
-              call{Math.max(1, Math.floor(remoteCapacity * (c.dial_level || 1))) === 1 ? '' : 's'}.
+              call
+              {Math.max(
+                1,
+                Math.floor(remoteCapacity * (c.dial_level || 1)),
+              ) === 1
+                ? ''
+                : 's'}{' '}
+              this tick.
+            </p>
+          )}
+        {c.status === 'active' &&
+          activeAgents.length === 0 &&
+          remoteLinesTotal > 0 &&
+          remoteCapacity === 0 && (
+            <p className="bg-warn/10 text-warn border border-warn/40 rounded mt-3 px-3 py-2 text-xs">
+              Remote agent at capacity — {remoteInFlight} call
+              {remoteInFlight === 1 ? '' : 's'} in flight against{' '}
+              {remoteLinesTotal} configured line
+              {remoteLinesTotal === 1 ? '' : 's'}. Pacer is waiting for
+              in-flight to drain before dialing the next call. Increase
+              the agent&apos;s line count in{' '}
+              <Link
+                href="/remote-agents"
+                className="underline hover:text-fg"
+              >
+                Remote Agents
+              </Link>{' '}
+              if you want more concurrency.
             </p>
           )}
         {c.status === 'active' && !insideWindow && (
@@ -561,15 +616,20 @@ function RealtimeTab({
   c,
   activeAgents,
   remoteCapacity,
+  remoteLinesTotal,
+  remoteInFlight,
 }: {
   c: ReturnType<typeof getCampaign> & {};
   activeAgents: number;
   remoteCapacity: number;
+  remoteLinesTotal: number;
+  remoteInFlight: number;
 }) {
   const poolSize = activeAgents + remoteCapacity;
-  const target = poolSize > 0
-    ? Math.max(1, Math.floor(poolSize * (c.dial_level || 1)))
-    : 0;
+  const target =
+    poolSize > 0
+      ? Math.max(1, Math.floor(poolSize * (c.dial_level || 1)))
+      : 0;
   return (
     <>
       <div className="border border-border rounded p-4 mb-6 max-w-4xl">
@@ -582,9 +642,13 @@ function RealtimeTab({
           initialTotal={totalIntentsFor(c.id)}
         />
         <p className="text-xs text-fg-subtle mt-3">
-          Pool: {activeAgents} local agent{activeAgents === 1 ? '' : 's'} +{' '}
-          {remoteCapacity} remote line{remoteCapacity === 1 ? '' : 's'} ={' '}
-          {poolSize}. Per-tick target:{' '}
+          Pool: {activeAgents} local agent
+          {activeAgents === 1 ? '' : 's'} ·{' '}
+          {remoteInFlight}/{remoteLinesTotal} remote line
+          {remoteLinesTotal === 1 ? '' : 's'} in flight ({remoteCapacity}{' '}
+          available) ={' '}
+          <span className="font-mono">{poolSize}</span> available slot
+          {poolSize === 1 ? '' : 's'}. Per-tick target:{' '}
           <span className="font-mono">
             floor({poolSize} × {c.dial_level}) = {target}
           </span>{' '}
