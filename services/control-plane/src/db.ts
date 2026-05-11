@@ -1426,16 +1426,23 @@ export function replaceRoutePlanCarriers(
 /** In-flight (un-hung-up) call count for a carrier across ALL route
  * plans. Used by the pacer's port-cap gate. */
 export function inFlightForCarrier(carrierId: string): number {
-  // Iter 77 — only live calls occupy a real trunk port. Simulated
+  // Iter 77 — only real calls occupy a real trunk port. Simulated
   // ticks write dial_intent rows for visibility but never go to FS,
   // so they have no FS event flow to ever set hangup_at. Counting
   // them would permanently inflate the port-cap gauge.
+  // Iter 81 — fix: previously this filtered `kind = 'live'`, but the
+  // pacer never writes that value — it writes 'originating' (pre-bgapi
+  // placeholder, iter 79), 'originated' (bgapi succeeded), or
+  // 'originate_failed'. The wrong filter meant in-flight was always
+  // 0, port cap never enforced, calls piled up on the trunk regardless
+  // of the configured ports value. Use `!= 'simulated'` so every real
+  // kind counts.
   const row = db()
     .prepare(
       `SELECT COUNT(*) AS n FROM dial_intents
         WHERE carrier_id = ?
           AND hangup_at IS NULL
-          AND kind = 'live'`,
+          AND kind != 'simulated'`,
     )
     .get(carrierId) as { n: number };
   return Number(row.n);
@@ -2071,17 +2078,23 @@ export function insertDialIntent(rec: {
  * pacer to skip remote agents that already have `lines` calls live.
  */
 export function inFlightForRemoteAgent(remoteAgentId: string): number {
-  // Iter 77 — see inFlightForCarrier: only live calls occupy a real
-  // SIP line on the remote endpoint. Simulated rows would otherwise
+  // Iter 77 — see inFlightForCarrier: only real calls occupy a SIP
+  // line on the remote endpoint. Simulated rows would otherwise
   // permanently saturate capacity because there's no FS event flow
   // to ever close them.
+  // Iter 81 — fix wrong filter (kind = 'live' never matches the
+  // actual pacer kinds: 'originating' / 'originated' /
+  // 'originate_failed'). With the bug, in-flight was always 0 so
+  // a remote with lines=1 still got dialed every 3-second tick;
+  // calls piled up well past the configured line count. Use
+  // `!= 'simulated'` so the cap actually caps.
   const row = db()
     .prepare(
       `SELECT COUNT(*) AS n
          FROM dial_intents
         WHERE remote_agent_id = ?
           AND hangup_at IS NULL
-          AND kind = 'live'`,
+          AND kind != 'simulated'`,
     )
     .get(remoteAgentId) as { n: number };
   return row.n;
