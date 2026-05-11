@@ -2148,7 +2148,18 @@ export function closeSimulatedDialIntent(intentId: number): void {
  * length with a generous safety margin. The annotation lands in
  * originate_error so an admin can grep audit / dial_intents to see
  * what was reaped. */
-export function reapStaleDialIntents(maxAgeSeconds = 300): number {
+export function reapStaleDialIntents(maxAgeSeconds = 120): number {
+  // Iter 83 — same bug as inFlightForCarrier / inFlightForRemoteAgent
+  // (fixed in iter 81): the filter was `kind = 'live'`, but the pacer
+  // never writes that value (it writes 'originating' / 'originated' /
+  // 'originate_failed'). With the wrong filter the reaper matched
+  // nothing — every dropped hangup event left a permanent zombie.
+  // Use `!= 'simulated'` so every real kind is reapable.
+  // Threshold also dropped from 300s to 120s — typical answered calls
+  // are < 60s and unanswered SIP transactions terminate in < 32s, so
+  // 120s is a generous floor for "this row's hangup event never
+  // arrived". Reaper runs every 60s; worst-case dwell as a zombie is
+  // now 180s instead of 360s.
   const result = db()
     .prepare(
       `UPDATE dial_intents
@@ -2158,7 +2169,7 @@ export function reapStaleDialIntents(maxAgeSeconds = 300): number {
                 ?
               )
         WHERE hangup_at IS NULL
-          AND kind = 'live'
+          AND kind != 'simulated'
           AND strftime('%s', 'now') - strftime('%s', ts) > ?`,
     )
     .run(
