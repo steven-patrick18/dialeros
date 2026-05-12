@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSoftphone } from '@/components/softphone';
+import { TransferModal } from './transfer-modal';
 
 // Iter 39 — eyeBeam-style softphone for the agent console.
 // Iter 40 — pause/resume + manual-dial mode for expert users.
@@ -358,14 +359,14 @@ export function AgentSoftphonePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sp.inCall, manualDial, buffer, status]);
 
+  // Iter 118 — replaced window.prompt with TransferModal that
+  // supports both blind (SIP REFER, iter 47) and attended
+  // (server-side consult+bridge flow). showTransfer toggles the
+  // modal; the modal itself owns the rest of the state.
+  const [showTransfer, setShowTransfer] = useState(false);
   function startTransfer() {
     if (!sp.inCall) return;
-    const target = window.prompt(
-      'Blind transfer to (extension or phone number):',
-      '',
-    );
-    if (!target) return;
-    void sp.transfer(target);
+    setShowTransfer(true);
   }
 
   // Iter 52 — manual dial is gated on PAUSED. A READY agent is
@@ -649,6 +650,10 @@ export function AgentSoftphonePanel() {
           </span>
         </div>
       </div>
+      <TransferModal
+        open={showTransfer}
+        onClose={() => setShowTransfer(false)}
+      />
     </div>
   );
 }
