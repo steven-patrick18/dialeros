@@ -5,6 +5,7 @@ import {
   type NodeRecord,
   type NodeStatus,
 } from '@dialeros/control-plane';
+import { RecordingsCard } from './recordings-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,8 @@ export default async function NodesList() {
           + Add Node
         </Link>
       </div>
+
+      <RecordingsCard />
 
       {nodes.length === 0 ? (
         <div className="border border-dashed border-border rounded p-8 text-center">

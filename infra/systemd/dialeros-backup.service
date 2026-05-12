@@ -1,0 +1,24 @@
+# Iter 112 — nightly DialerOS backup unit (triggered by .timer).
+# Drop in /etc/systemd/system/ alongside the .timer. Enable with:
+#   systemctl enable --now dialeros-backup.timer
+
+[Unit]
+Description=DialerOS nightly backup
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/dialeros/backup.env
+ExecStart=/opt/dialeros/scripts/backup-nightly.sh
+StandardOutput=journal
+StandardError=journal
+User=dialeros
+Group=dialeros
+
+# Hardening — backup script needs read on /var/lib/dialeros and
+# write on /var/backups/dialeros; everything else is sandboxed.
+ProtectSystem=strict
+ReadWritePaths=/var/backups/dialeros
+ReadOnlyPaths=/var/lib/dialeros
+NoNewPrivileges=true
+PrivateTmp=true

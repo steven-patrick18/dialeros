@@ -9,6 +9,7 @@
     "start": "pnpm --filter @dialeros/admin-gui start",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "test": "pnpm --filter @dialeros/control-plane test",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

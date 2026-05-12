@@ -76,8 +76,13 @@ rag-index/
 *.dkb
 bundles/
 
-# Recordings (never commit)
-recordings/
+# Recordings (never commit). Storage directories live at the
+# repo root or under /var/lib in deploy targets; source code
+# directories named "recordings" (e.g. app/api/cluster/recordings
+# from iter 113) are fine. Use leading slash to anchor.
+/recordings/
+data/recordings/
+var/lib/dialeros/recordings/
 *.wav
 *.mp3
 *.opus

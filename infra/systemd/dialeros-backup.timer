@@ -1,0 +1,16 @@
+# Iter 112 — fires the nightly backup at 02:00 local time.
+# Persistent=true catches up after an outage (e.g. VPS was offline
+# at 02:00). RandomizedDelaySec spreads load if multiple boxes
+# share the offsite target.
+
+[Unit]
+Description=DialerOS nightly backup timer
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=15min
+Unit=dialeros-backup.service
+
+[Install]
+WantedBy=timers.target
