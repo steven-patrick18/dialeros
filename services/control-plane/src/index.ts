@@ -155,6 +155,11 @@ export {
 
 // Agent scoreboard (iter 98)
 export { agentTodayScoreboard } from './db';
+// iter 129 — supervisors browse audit + intent activity per user
+// from /users/[id]; expose listAuditEventsFiltered so the page
+// can pull this user's audit trail without a new helper.
+// AuditEventRecord is re-exported once near the top of this file.
+export { listAuditEventsFiltered } from './db';
 export type { AgentTodayScoreboard } from './db';
 
 // Campaign disposition mix (iter 99)

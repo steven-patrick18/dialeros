@@ -17,6 +17,7 @@ import { DeactivateButton } from './deactivate-button';
 import { AttachmentsForm } from './attachments-form';
 import { PhonesPanel } from './phones-panel';
 import { AccessPanel } from './access-panel';
+import { UserActivityPanel } from './activity-panel';
 
 const ROLES = ['admin', 'supervisor', 'operator', 'agent'] as const;
 const TIERS = ['new', 'certified', 'expert'] as const;
@@ -70,6 +71,12 @@ export default async function UserDetail({
       {u.display_name && (
         <p className="text-fg-muted text-sm mb-6">{u.display_name}</p>
       )}
+
+      {/* Iter 129 — supervisor activity + diagnostics card. Shows
+          today's scoreboard, common misconfig checks, and the
+          most recent dial-intents + audit events for bug hunting
+          ("what was this agent doing before X happened?"). */}
+      <UserActivityPanel user={u} />
 
       <div className="max-w-2xl mb-6">
         <InlineCardForm
