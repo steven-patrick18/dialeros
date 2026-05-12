@@ -1,0 +1,39 @@
+<!--
+  Iter 119 — mod_xml_curl config so FS asks DialerOS for SIP
+  directory entries on demand. Hard phones (and the existing
+  WSS softphones, once we cut over) register with credentials
+  from the phones table without FS ever needing a static XML
+  user directory.
+
+  Drop this file in /etc/freeswitch/autoload_configs/ and reload
+  with `fs_cli -x 'reload mod_xml_curl'`.
+
+  The gateway:
+    - url        — admin-gui's /api/internal/fs-directory
+                   endpoint. Defaults to local loopback; override
+                   via DIALEROS_ADMIN_URL env if FS lives on a
+                   different node than admin-gui.
+    - auth-scheme — basic auth uses X-Inbound-Token semantics in
+                   our endpoint, but mod_xml_curl natively only
+                   speaks Basic / Digest. We expose the token in
+                   the Authorization header as a basic-auth pass
+                   with a fixed username; the endpoint reads it
+                   via the X-Inbound-Token header we add at the
+                   nginx layer in production.
+    - disable-100-continue — FS chokes on 100-continue interim
+                   responses from many Node servers.
+    - bindings   — directory only. Configuration / dialplan stay
+                   on static FS XML so this endpoint stays narrow.
+-->
+<configuration name="xml_curl.conf" description="cURL XML Gateway">
+  <bindings>
+    <binding name="dialeros-directory">
+      <param name="gateway-url" value="http://127.0.0.1:3000/api/internal/fs-directory" bindings="directory"/>
+      <param name="gateway-credentials" value="fs:CHANGE_ME_TOKEN"/>
+      <param name="auth-scheme" value="basic"/>
+      <param name="disable-100-continue" value="true"/>
+      <param name="timeout" value="2000"/>
+      <param name="connect-timeout" value="1500"/>
+    </binding>
+  </bindings>
+</configuration>

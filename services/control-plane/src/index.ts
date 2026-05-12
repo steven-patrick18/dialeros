@@ -444,6 +444,10 @@ export {
   getPhone,
   getPrimaryPhone,
 } from './phone';
+// Iter 119 — hard-phone REGISTER via FS mod_xml_curl. The
+// directory endpoint queries by extension to build the FS
+// directory XML response on demand.
+export { getPhoneByExtension } from './db';
 export type {
   PhoneInput,
   PhoneUpdateInput,
