@@ -729,13 +729,34 @@ export async function paceCampaignOnce(
         `dialeros_vm_beep_grace_ms=${vm.beep_grace_ms}`,
       );
     }
+    // Iter 141 — when the call is going to land on the
+    // voicemail-drop path (amd_action=voicemail or amd_action=detect
+    // when amd_v2 says MACHINE), pass the recording path as a channel
+    // var so the dialplan can start record_session AFTER the beep —
+    // see dialeros-record-then-playback in dialeros_amd.xml. The
+    // bgapiOriginate call below skips execute_on_answer record_session
+    // for these modes so the saved .wav doesn't capture the greeting.
+    if (
+      recordingPath &&
+      (campaign.amd_action === 'voicemail' ||
+        campaign.amd_action === 'detect')
+    ) {
+      amdChannelVars.push(`dialeros_recording_path=${recordingPath}`);
+    }
     if (campaign.amd_action === 'drop') {
       bridgeApp = '&hangup';
     } else if (
       campaign.amd_action === 'voicemail' &&
       campaign.voicemail_path
     ) {
-      bridgeApp = `&playback(${campaign.voicemail_path})`;
+      // Iter 141 — route through the common dialeros-vm-drop
+      // extension (wait_for_silence + beep grace + record-then-play)
+      // instead of an inline &playback. dialeros-vm-drop reads
+      // dialeros_voicemail_path and (optionally) dialeros_recording_path.
+      amdChannelVars.push(
+        `dialeros_voicemail_path=${campaign.voicemail_path}`,
+      );
+      bridgeApp = '&execute_extension(dialeros-vm-drop XML default)';
     } else if (campaign.amd_action === 'detect') {
       // Pass bridge target + (optional) voicemail path through
       // channel vars; the dialeros-amd-route dialplan extension
@@ -803,12 +824,22 @@ export async function paceCampaignOnce(
       const eslHost = pickEslHostForBridgeTarget(
         bgapiParams.computedBridgeTarget,
       );
+      // Iter 141 — for voicemail-drop and AMD-detect, the dialplan
+      // starts record_session after the beep (or right before bridge
+      // for the HUMAN branch). Skip the originate-time
+      // execute_on_answer record_session so we don't double-record
+      // and so the saved .wav starts after the greeting.
+      const skipOriginateRecording =
+        campaign.amd_action === 'voicemail' ||
+        campaign.amd_action === 'detect';
       const jobUuid = await bgapiOriginate({
         gateway: bgapiParams.gateway,
         destination: bgapiParams.dialDestination,
         callerIdNumber: cid ?? undefined,
         correlationId,
-        recordingPath: recordingPath ?? undefined,
+        recordingPath: skipOriginateRecording
+          ? undefined
+          : (recordingPath ?? undefined),
         extraChannelVars:
           bgapiParams.amdChannelVars.length > 0
             ? bgapiParams.amdChannelVars

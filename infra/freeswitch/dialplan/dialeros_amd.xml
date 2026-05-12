@@ -1,28 +1,30 @@
 <include>
   <!--
     Iter 68 — AMD-conditional dispatch for outbound calls.
-    Iter 139 — voicemail-drop now waits for the machine's
-    greeting to end + the beep before playing the message,
-    matching ViciDial behavior. Previously we played the file
-    the instant amd_v2 said MACHINE, which overlapped the
-    machine's "you have reached..." greeting and produced the
-    audio garble the operator reported.
+    Iter 139 — wait_for_silence before VM drop so we don't
+               talk over the machine's greeting.
+    Iter 140 — five wait-for-beep params are channel-var
+               overridable per campaign.
+    Iter 141 — recording is now started AFTER the beep on the
+               VM-drop path so the saved .wav contains only
+               the dropped message, not the greeting + beep
+               + message overlap. HUMAN branch starts the
+               recording right before bridge so the saved
+               .wav captures only the live conversation.
 
-    The pacer originates with:
-      dial app          = &execute_extension(dialeros-amd-route XML default)
-      channel vars      = {
-        dialeros_bridge_target  = user/1001  OR  sofia/internal/x@y
-        dialeros_voicemail_path = /var/lib/dialeros/voicemails/<id>.wav  (optional)
-      }
+    The pacer originates with channel vars:
+      dialeros_bridge_target    = user/1001 OR sofia/internal/...
+      dialeros_voicemail_path   = /var/lib/dialeros/voicemails/<id>.wav
+      dialeros_recording_path   = /var/lib/dialeros/recordings/<corr>.wav
+      dialeros_amd_action       = bridge | detect | voicemail | drop
+      dialeros_vm_*             = wait-for-beep tuning (iter 140)
 
-    Branches:
-      MACHINE     -> wait_for_silence (greeting ends) + small
-                     beep-clearance sleep + playback voicemail
-                     + hangup. Drops with no audio when no
-                     voicemail file is configured.
-      HUMAN /     -> bridge to the agent target. NOTSURE is
-      NOTSURE /     treated as human so we err on the side of
-      UNKNOWN       not dropping a real caller.
+    For amd_action=bridge the pacer still uses execute_on_answer
+    record_session so the recording captures the full call from
+    answer (same as iter 79 behavior). For amd_action=detect or
+    voicemail the pacer SKIPS execute_on_answer and lets the
+    dialplan branches below start the recording at the right
+    moment.
   -->
 
   <extension name="dialeros-amd-route" continue="false">
@@ -30,16 +32,10 @@
       <action application="log" data="INFO [dialeros-amd] start uuid=${uuid} cid=${dialeros_correlation_id}"/>
       <action application="amd_v2" data="async:false"/>
       <action application="log" data="INFO [dialeros-amd] result=${amd_result} uuid=${uuid}"/>
-      <!-- Iter 122 — copy the amd_v2 verdict onto our own var
-           so fs-events.ts can read variable_dialeros_amd_result
-           on CHANNEL_HANGUP_COMPLETE without depending on FS's
-           internal channel-var namespace surviving the dispatch
-           branches below. -->
       <action application="set" data="dialeros_amd_result=${amd_result}"/>
       <action application="execute_extension" data="dialeros-amd-dispatch XML default"/>
     </condition>
     <condition>
-      <!-- fall-through when execute_extension didn't match -->
       <action application="amd_v2" data="async:false"/>
       <action application="set" data="dialeros_amd_result=${amd_result}"/>
       <action application="execute_extension" data="dialeros-amd-dispatch XML default"/>
@@ -49,73 +45,87 @@
   <extension name="dialeros-amd-dispatch" continue="false">
     <condition field="${amd_result}" expression="^MACHINE$">
       <action application="log" data="INFO [dialeros-amd] machine_path uuid=${uuid} voicemail=${dialeros_voicemail_path}"/>
-      <action application="execute_extension" data="dialeros-amd-machine XML default"/>
+      <action application="execute_extension" data="dialeros-vm-drop XML default"/>
     </condition>
     <condition field="${amd_result}" expression="^(HUMAN|NOTSURE|UNKNOWN|)$">
       <action application="log" data="INFO [dialeros-amd] human_path uuid=${uuid} target=${dialeros_bridge_target}"/>
-      <action application="bridge" data="${dialeros_bridge_target}"/>
+      <!--
+        Iter 141 — start recording immediately before the bridge
+        so the .wav captures only the live conversation. The
+        pacer skips execute_on_answer record_session when
+        amd_action=detect; this is the substitute.
+
+        Recording is best-effort: when dialeros_recording_path is
+        unset (admin disabled call recording in settings), the
+        playback application below would normally treat
+        record_session of an empty path as an error — we guard
+        with a regex condition.
+      -->
+      <action application="execute_extension" data="dialeros-record-and-bridge XML default"/>
     </condition>
   </extension>
 
-  <extension name="dialeros-amd-machine" continue="false">
+  <!--
+    Iter 141 — common VM-drop machinery used by BOTH
+    amd_action=voicemail (direct route) and amd_action=detect
+    (MACHINE branch). One implementation for the
+    silence-wait → grace → record → playback pattern.
+  -->
+  <extension name="dialeros-vm-drop" continue="false">
     <condition field="${dialeros_voicemail_path}" expression="^.+$">
-      <!--
-        Iter 139 — ViciDial-style "wait for beep, then drop"
-        before the playback action below.
-
-        wait_for_silence args: <silence_thresh> <silence_hits>
-                                <listen_hits> <timeout_ms>
-          silence_thresh  256   — energy threshold; lower = more
-                                  sensitive. 256 picks up most
-                                  carrier noise floors without
-                                  triggering on quiet greetings.
-          silence_hits    25    — frames of contiguous silence
-                                  before we call it done. 25 ×
-                                  20ms ≈ 500ms — enough to be
-                                  the post-greeting silence
-                                  before the beep, not a
-                                  mid-word pause.
-          listen_hits     4     — voice frames required before
-                                  we'll honour a silence. Skips
-                                  brief pauses inside the
-                                  greeting (typical "...leave
-                                  ___a message" cadence).
-          timeout_ms      30000 — 30s ceiling. Most VM greetings
-                                  finish well under 20s; the
-                                  cap is for pathological cases
-                                  (broken machines, manual
-                                  pickup mid-flow).
-
-        After wait_for_silence returns we sleep 750ms to let the
-        actual beep tone play through, THEN start playback. The
-        sleep is empirical — ViciDial's mechanism is the same
-        pattern: detect end of greeting + grace period for the
-        beep ~= 600-1000ms.
-
-        Operators can tune by setting channel vars BEFORE
-        invoking this extension:
-          dialeros_vm_silence_thresh    overrides 256
-          dialeros_vm_silence_hits      overrides 25
-          dialeros_vm_listen_hits       overrides 4
-          dialeros_vm_silence_timeout   overrides 30000 (ms)
-          dialeros_vm_beep_grace_ms     overrides 750
-        Iter 140 surfaces these as a per-campaign settings card.
-      -->
       <action application="set" data="vm_silence_thresh=${dialeros_vm_silence_thresh:-256}"/>
       <action application="set" data="vm_silence_hits=${dialeros_vm_silence_hits:-25}"/>
       <action application="set" data="vm_listen_hits=${dialeros_vm_listen_hits:-4}"/>
       <action application="set" data="vm_silence_timeout=${dialeros_vm_silence_timeout:-30000}"/>
       <action application="set" data="vm_beep_grace_ms=${dialeros_vm_beep_grace_ms:-750}"/>
-      <action application="log" data="INFO [dialeros-amd] machine waiting for greeting silence uuid=${uuid}"/>
+      <action application="log" data="INFO [dialeros-vm-drop] waiting for greeting silence uuid=${uuid}"/>
       <action application="wait_for_silence" data="${vm_silence_thresh} ${vm_silence_hits} ${vm_listen_hits} ${vm_silence_timeout}"/>
-      <action application="log" data="INFO [dialeros-amd] silence detected, beep-grace sleep uuid=${uuid}"/>
+      <action application="log" data="INFO [dialeros-vm-drop] silence detected, beep-grace sleep uuid=${uuid}"/>
       <action application="sleep" data="${vm_beep_grace_ms}"/>
-      <action application="log" data="INFO [dialeros-amd] starting voicemail drop uuid=${uuid} path=${dialeros_voicemail_path}"/>
+      <!--
+        Iter 141 — start recording NOW (post-beep) so the saved
+        .wav holds only the dropped message. Guarded so
+        record_session isn't invoked with an empty path which
+        FS treats as an error.
+      -->
+      <action application="execute_extension" data="dialeros-record-then-playback XML default"/>
+    </condition>
+    <condition>
+      <action application="log" data="INFO [dialeros-vm-drop] no voicemail file configured uuid=${uuid}"/>
+      <action application="hangup"/>
+    </condition>
+  </extension>
+
+  <!--
+    Iter 141 — start record_session conditionally + bridge.
+    Split into its own extension because FreeSWITCH actions
+    are sequential and we want the record_session to fire
+    only when dialeros_recording_path is non-empty.
+  -->
+  <extension name="dialeros-record-and-bridge" continue="false">
+    <condition field="${dialeros_recording_path}" expression="^.+$">
+      <action application="log" data="INFO [dialeros-amd] starting record_session uuid=${uuid} path=${dialeros_recording_path}"/>
+      <action application="set" data="RECORD_STEREO=true"/>
+      <action application="record_session" data="${dialeros_recording_path}"/>
+      <action application="bridge" data="${dialeros_bridge_target}"/>
+    </condition>
+    <condition>
+      <!-- No recording configured: just bridge. -->
+      <action application="bridge" data="${dialeros_bridge_target}"/>
+    </condition>
+  </extension>
+
+  <extension name="dialeros-record-then-playback" continue="false">
+    <condition field="${dialeros_recording_path}" expression="^.+$">
+      <action application="log" data="INFO [dialeros-vm-drop] starting post-beep record_session uuid=${uuid} path=${dialeros_recording_path}"/>
+      <action application="set" data="RECORD_STEREO=true"/>
+      <action application="record_session" data="${dialeros_recording_path}"/>
       <action application="playback" data="${dialeros_voicemail_path}"/>
       <action application="hangup"/>
     </condition>
     <condition>
-      <!-- no voicemail file configured: just drop -->
+      <!-- No recording configured: play + hangup. -->
+      <action application="playback" data="${dialeros_voicemail_path}"/>
       <action application="hangup"/>
     </condition>
   </extension>
