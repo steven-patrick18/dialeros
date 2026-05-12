@@ -174,6 +174,10 @@ export type { AmdBreakdownRow } from './db';
 export { pauseReasonAnalytics } from './db';
 export type { PauseReasonRow } from './db';
 
+// Daily summary report (iter 131)
+export { buildDailySummary } from './reports';
+export type { DailySummary } from './reports';
+
 // CSV exports (iter 126)
 export {
   listCampaignCallHistoryForExport,

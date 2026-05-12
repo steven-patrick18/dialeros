@@ -1,0 +1,20 @@
+# Iter 131 — fires the daily summary report. Triggered by
+# dialeros-daily-report.timer. Reads env from
+# /etc/dialeros/admin.env (same file the admin-gui unit uses) so
+# DIALEROS_REPORT_TO + KAMAILIO_INBOUND_TOKEN come from one
+# place.
+
+[Unit]
+Description=DialerOS daily summary email
+After=network.target dialeros-admin.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/dialeros/admin.env
+ExecStart=/opt/dialeros/scripts/send-daily-report.sh
+StandardOutput=journal
+StandardError=journal
+User=dialeros
+Group=dialeros
+NoNewPrivileges=true
+PrivateTmp=true

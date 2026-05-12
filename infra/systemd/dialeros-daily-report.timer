@@ -1,0 +1,16 @@
+# Iter 131 — fires the daily report at 06:00 local time.
+# Persistent=true catches missed runs after a host outage.
+# RandomizedDelaySec spreads load on multi-box deploys + keeps
+# the email send out of the round-zero minute.
+
+[Unit]
+Description=DialerOS daily summary email timer
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=dialeros-daily-report.service
+
+[Install]
+WantedBy=timers.target
