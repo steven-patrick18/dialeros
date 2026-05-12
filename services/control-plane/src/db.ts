@@ -3225,6 +3225,51 @@ export function deleteDid(did: string): boolean {
   return Number(result.changes) > 0;
 }
 
+/** Iter 114 — pick a single available agent attached to an in-group
+ * so Kamailio's inbound-route hook can produce a concrete bridge
+ * target. Joins user_in_groups × users × agent_status × phones and
+ * filters to active + AVAILABLE + not currently in a live call (no
+ * undisposed intent with hangup_at IS NULL). Returns the agent's
+ * primary phone extension when present — that's what FS bridges
+ * to via user/<ext>. Returns undefined when no agent is reachable;
+ * caller decides whether to fall back to a queue / fast-busy.
+ *
+ * iter 115 will replace this with ring-strategy support
+ * (longest-idle, round-robin, ring-all). For now it's "first
+ * available wins" — enough to wire the inbound path end-to-end. */
+export interface InGroupAgentPick {
+  user_id: string;
+  username: string;
+  extension: string;
+}
+export function pickAvailableAgentForInGroup(
+  inGroupId: string,
+): InGroupAgentPick | undefined {
+  return db()
+    .prepare(
+      `SELECT u.id   AS user_id,
+              u.username,
+              p.extension
+         FROM user_in_groups uig
+         JOIN users u ON u.id = uig.user_id
+         JOIN phones p ON p.user_id = u.id AND p.is_primary = 1
+         LEFT JOIN agent_status s ON s.user_id = u.id
+        WHERE uig.in_group_id = ?
+          AND u.is_active = 1
+          AND COALESCE(s.status, 'AVAILABLE') = 'AVAILABLE'
+          AND NOT EXISTS (
+            SELECT 1 FROM dial_intents di
+             WHERE di.assigned_user_id = u.id
+               AND di.answered_at IS NOT NULL
+               AND di.hangup_at IS NULL
+               AND di.kind != 'simulated'
+          )
+        ORDER BY COALESCE(s.updated_at, '1970-01-01') ASC
+        LIMIT 1`,
+    )
+    .get(inGroupId) as InGroupAgentPick | undefined;
+}
+
 export function findDidOwner(did: string): string | undefined {
   const row = db()
     .prepare(`SELECT in_group_id FROM in_group_dids WHERE did = ?`)

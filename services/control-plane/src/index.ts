@@ -504,6 +504,12 @@ export type {
   DidWithOwner,
 } from './did';
 
+// Iter 114 — inbound routing primitives. findDidOwner +
+// pickAvailableAgentForInGroup feed the /api/internal/inbound-route
+// hook that Kamailio queries on every inbound INVITE.
+export { findDidOwner, pickAvailableAgentForInGroup } from './db';
+export type { InGroupAgentPick } from './db';
+
 // In-Groups
 export {
   InGroupTypeSchema,
