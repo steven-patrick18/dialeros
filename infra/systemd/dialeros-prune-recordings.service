@@ -1,0 +1,19 @@
+# Iter 144 — recording retention prune. Hits the internal
+# /api/internal/prune-recordings endpoint which short-circuits when
+# the retention toggle is off, so running this nightly is safe even
+# on fresh installs that haven't opted in yet.
+
+[Unit]
+Description=DialerOS recording retention prune
+After=network.target dialeros-admin.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/dialeros/admin.env
+ExecStart=/opt/dialeros/scripts/prune-recordings.py
+StandardOutput=journal
+StandardError=journal
+User=dialeros
+Group=dialeros
+NoNewPrivileges=true
+PrivateTmp=true

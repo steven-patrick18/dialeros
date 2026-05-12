@@ -43,6 +43,10 @@ export const APP_SETTING_KEYS = {
   // every other app_setting, even though it's not secret — keeps the
   // table shape uniform.
   recordingRetentionDays: 'recording.retention_days',
+  // Iter 144 — opt-in toggle for the nightly prune job. Default
+  // false so existing deploys don't silently lose recordings the
+  // moment iter 144 lands; admin opts in via /settings/recording-retention.
+  recordingRetentionEnabled: 'recording.retention_enabled',
   // Iter 134 — predictive-pacing recommendation curve.
   // JSON-encoded PacingThresholds object. Admin-tunable
   // via /settings/pacing; defaults applied when unset.
@@ -59,6 +63,32 @@ export function getRecordingRetentionDays(): number {
     return RECORDING_RETENTION_DEFAULT_DAYS;
   }
   return n;
+}
+
+/* Iter 144 — recording retention setters + enabled flag.
+ * The "enabled" toggle is independent of the days knob: an
+ * admin can stage a 7-day value, then flip the switch when
+ * they're ready. Clamps to [1, 3650] days at write time so a
+ * misclick can't accidentally configure "delete everything
+ * older than 0 days" (which would wipe the entire folder on
+ * the next prune tick). */
+export function setRecordingRetentionDays(days: number): void {
+  const clamped = Math.max(1, Math.min(3650, Math.floor(days)));
+  setAppSetting(
+    APP_SETTING_KEYS.recordingRetentionDays,
+    String(clamped),
+  );
+}
+
+export function getRecordingRetentionEnabled(): boolean {
+  return getAppSetting(APP_SETTING_KEYS.recordingRetentionEnabled) === '1';
+}
+
+export function setRecordingRetentionEnabled(enabled: boolean): void {
+  setAppSetting(
+    APP_SETTING_KEYS.recordingRetentionEnabled,
+    enabled ? '1' : '0',
+  );
 }
 
 // Iter 134 — admin-tunable predictive-pacing recommendation curve.

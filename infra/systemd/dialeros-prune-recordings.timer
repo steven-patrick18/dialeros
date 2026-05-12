@@ -1,0 +1,16 @@
+# Iter 144 — fires the recording-retention prune at 03:30 daily.
+# RandomizedDelaySec avoids a thundering-herd if multiple DialerOS
+# boxes share a backend (future cluster work). Persistent=true so
+# a missed tick (box was off) fires on next boot.
+
+[Unit]
+Description=DialerOS recording retention prune timer
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+Unit=dialeros-prune-recordings.service
+
+[Install]
+WantedBy=timers.target

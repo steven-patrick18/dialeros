@@ -2571,6 +2571,34 @@ export interface CallDetailRow {
   ai_processed_at: string | null;
 }
 
+/* Iter 144 — bulk-NULL recording_path on rows whose .wav file
+ * the prune job is about to delete. Chunked at 500 placeholders
+ * per UPDATE so a single tick that deletes thousands of old
+ * recordings doesn't bump sqlite's 999-param ceiling. Returns
+ * the total number of rows whose recording_path column was
+ * cleared (NOT the number of file paths processed — some paths
+ * may not have a matching dial_intent if rows were already
+ * pruned). */
+export function clearRecordingPathsForFiles(paths: string[]): number {
+  if (paths.length === 0) return 0;
+  const CHUNK = 500;
+  let total = 0;
+  const conn = db();
+  for (let i = 0; i < paths.length; i += CHUNK) {
+    const chunk = paths.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const result = conn
+      .prepare(
+        `UPDATE dial_intents
+            SET recording_path = NULL
+          WHERE recording_path IN (${placeholders})`,
+      )
+      .run(...chunk);
+    total += Number(result.changes ?? 0);
+  }
+  return total;
+}
+
 export function getCallDetail(id: number): CallDetailRow | undefined {
   return db()
     .prepare(

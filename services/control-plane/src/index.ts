@@ -183,6 +183,7 @@ export {
   listCampaignCallHistoryForExport,
   listFloorCallHistory,
   getCallDetail,
+  clearRecordingPathsForFiles,
   listLeadsInList,
 } from './db';
 export type { CampaignCallHistoryRow } from './db';
@@ -228,6 +229,9 @@ export {
   APP_SETTING_KEYS,
   RECORDING_RETENTION_DEFAULT_DAYS,
   getRecordingRetentionDays,
+  setRecordingRetentionDays,
+  getRecordingRetentionEnabled,
+  setRecordingRetentionEnabled,
   // Iter 134 — pacing-recommendation curve
   PACING_THRESHOLDS_DEFAULT,
   getPacingThresholds,

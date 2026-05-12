@@ -54,6 +54,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/cid-groups', label: 'CID Groups' },
       { href: '/cluster/nodes', label: 'Cluster Nodes' },
       { href: '/settings/telephony', label: 'Telephony settings' },
+      { href: '/settings/recording-retention', label: 'Recording retention' },
       { href: '/settings/domain', label: 'Domain & TLS' },
       { href: '/settings/pacing', label: 'Pacing curve' },
     ],
