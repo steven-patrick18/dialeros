@@ -1426,6 +1426,17 @@ export function listLeadsInList(
     .all(listId, limit, offset) as unknown as LeadRecord[];
 }
 
+/** Iter 127 — phones-only projection for in-memory dedupe during
+ * CSV ingest. Avoids N+1 findLeadByPhone calls on big imports
+ * (10k rows → 10k queries → ~seconds in dev). Single indexed
+ * scan of a single column is sub-100ms even on 100k-lead lists. */
+export function listLeadPhonesInList(listId: string): string[] {
+  const rows = db()
+    .prepare(`SELECT phone FROM leads WHERE list_id = ?`)
+    .all(listId) as Array<{ phone: string }>;
+  return rows.map((r) => r.phone);
+}
+
 export interface LeadFilterOpts {
   status?: string | null;
   search?: string | null; // matches phone OR name OR email substring

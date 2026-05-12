@@ -19,6 +19,7 @@ import {
   listCallHistoryForLead,
   listLeadListsForCampaign,
   listLeadListsFromDb,
+  listLeadPhonesInList,
   listLeadsFiltered,
   listLeadsInList,
   moveLeadListToCampaign,
@@ -31,6 +32,7 @@ import {
   type LeadRecord,
   type LeadStatusBreakdown,
 } from './db';
+import { isDnc } from './dnc';
 import { inferLeadTimezone } from './timezones';
 
 // Phone shape: digits with optional +, dashes, spaces, parens. Min 4 digits,
@@ -244,8 +246,30 @@ export interface CsvIngestResult {
   inserted: number;
   duplicates: number;
   rejected: number;
+  /** Iter 127 — phones detected on the DNC list and skipped. Only
+   * populated when scrub_dnc=true (default). When false these
+   * phones are inserted normally and dnc_scrubbed stays 0. */
+  dnc_scrubbed: number;
+  /** Iter 127 — first ~50 duplicate phones for the import-report
+   * card. Lets operators see exactly which numbers were dupes
+   * without opening the list page; capped so a 100k-dupe import
+   * doesn't return megabytes. */
+  duplicate_phones: string[];
+  /** Iter 127 — same shape for DNC matches. */
+  dnc_phones: string[];
   rejections: Array<{ row: number; reason: string }>;
 }
+
+export interface CsvIngestOptions {
+  /** Iter 127 — default true. Skip any row whose phone is on
+   * the DNC list. Operators almost always want this — TCPA
+   * exposure on importing a CSV that includes a DNC number and
+   * then dialing it is real. Setting false bypasses the check
+   * for legitimate cases (e.g. importing back an export). */
+  scrub_dnc?: boolean;
+}
+
+const REPORT_SAMPLE_CAP = 50;
 
 const PHONE_HEADERS = new Set([
   'phone',
@@ -301,14 +325,28 @@ function parseCsvLine(line: string): string[] {
   return out.map((s) => s.trim());
 }
 
-export function ingestCsv(listId: string, csv: string): CsvIngestResult {
+export function ingestCsv(
+  listId: string,
+  csv: string,
+  opts: CsvIngestOptions = {},
+): CsvIngestResult {
   const result: CsvIngestResult = {
     parsed: 0,
     inserted: 0,
     duplicates: 0,
     rejected: 0,
+    dnc_scrubbed: 0,
+    duplicate_phones: [],
+    dnc_phones: [],
     rejections: [],
   };
+  const scrubDnc = opts.scrub_dnc ?? true;
+  // Iter 127 — pre-load every phone already in this list into an
+  // in-memory Set. Single indexed scan instead of N+1 findLeadByPhone
+  // calls during the row loop. Also keys our duplicate_phones
+  // sampling so we know WHICH numbers were dupes, not just how
+  // many.
+  const existing = new Set(listLeadPhonesInList(listId));
 
   // Strip BOM, split on any newline style.
   const text = csv.replace(/^﻿/, '');
@@ -364,6 +402,33 @@ export function ingestCsv(listId: string, csv: string): CsvIngestResult {
       });
       continue;
     }
+    // Iter 127 — early dedupe check. Counts here + below the
+    // insertLeadsBulk call would double-count, so we skip rows
+    // we already know will collide. duplicate_phones captures
+    // up to REPORT_SAMPLE_CAP so the import-report UI can show
+    // operators which numbers were already on the list.
+    if (existing.has(phone)) {
+      result.duplicates++;
+      if (result.duplicate_phones.length < REPORT_SAMPLE_CAP) {
+        result.duplicate_phones.push(phone);
+      }
+      continue;
+    }
+    // Iter 127 — DNC scrub. When enabled (default true), TCPA-
+    // sensitive numbers don't get inserted. dnc_phones gives the
+    // operator visibility so a confusing "1000 imported, 50
+    // missing" doesn't turn into a support ticket.
+    if (scrubDnc && isDnc(phone)) {
+      result.dnc_scrubbed++;
+      if (result.dnc_phones.length < REPORT_SAMPLE_CAP) {
+        result.dnc_phones.push(phone);
+      }
+      continue;
+    }
+    // Track in the in-memory set so duplicates WITHIN the same
+    // CSV file also dedupe. Without this a CSV with two rows for
+    // the same number would inflate `inserted`.
+    existing.add(phone);
     rows.push({
       id: randomUUID(),
       list_id: listId,
@@ -377,9 +442,13 @@ export function ingestCsv(listId: string, csv: string): CsvIngestResult {
     });
   }
 
+  // insertLeadsBulk's own `skipped` would only fire on a race
+  // (concurrent imports). We've already filtered for known
+  // duplicates above, so any skipped here is purely racy and we
+  // fold it into the duplicates count without per-phone detail.
   const { inserted, skipped } = insertLeadsBulk(rows);
   result.inserted = inserted;
-  result.duplicates = skipped;
+  result.duplicates += skipped;
   return result;
 }
 

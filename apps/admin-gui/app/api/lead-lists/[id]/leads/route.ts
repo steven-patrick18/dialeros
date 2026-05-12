@@ -57,7 +57,16 @@ export async function POST(
   }
 
   let csv = '';
+  // Iter 127 — scrub_dnc opt-out flag. Default true: TCPA-
+  // sensitive imports skip phones already on the DNC list and
+  // the response payload's dnc_scrubbed/dnc_phones surfaces the
+  // count + sample. Pass scrub_dnc=false via the form field or
+  // ?scrub_dnc=0 query for explicit override (e.g. importing a
+  // previously-exported list back).
   const contentType = req.headers.get('content-type') ?? '';
+  let scrubDnc = true;
+  const scrubParam = req.nextUrl.searchParams.get('scrub_dnc');
+  if (scrubParam === '0' || scrubParam === 'false') scrubDnc = false;
 
   if (contentType.includes('multipart/form-data')) {
     const form = await req.formData();
@@ -69,6 +78,8 @@ export async function POST(
       );
     }
     csv = await file.text();
+    const scrubField = form.get('scrub_dnc');
+    if (scrubField === '0' || scrubField === 'false') scrubDnc = false;
   } else {
     csv = await req.text();
   }
@@ -86,7 +97,7 @@ export async function POST(
     );
   }
 
-  const result = ingestCsv(id, csv);
+  const result = ingestCsv(id, csv, { scrub_dnc: scrubDnc });
   appendAudit({
     actorUserId: user.id,
     actorIp: clientIp(req),
@@ -98,6 +109,8 @@ export async function POST(
       inserted: result.inserted,
       duplicates: result.duplicates,
       rejected: result.rejected,
+      dnc_scrubbed: result.dnc_scrubbed,
+      scrub_dnc_enabled: scrubDnc,
     },
   });
 
