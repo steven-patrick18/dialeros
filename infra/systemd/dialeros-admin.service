@@ -18,6 +18,11 @@ Environment=NODE_ENV=production
 Environment=PORT=1111
 Environment=DIALEROS_DB=/opt/dialeros/apps/admin-gui/data/dialeros.db
 Environment=DIALEROS_MASTER_KEY_PATH=/opt/dialeros/apps/admin-gui/data/.master_key
+# Iter 145 — load the shared secret + operator-tweakable values
+# (KAMAILIO_INBOUND_TOKEN, DIALEROS_REPORT_TO, ...). The leading
+# "-" means systemd won't fail if the file is missing (fresh
+# installs run bootstrap-admin-env.sh to create it).
+EnvironmentFile=-/etc/dialeros/admin.env
 
 # Hardening — minimal. ANY of the systemd "Protect*" / "Restrict*" /
 # "Lock*" sandboxing directives implicitly set NoNewPrivileges=yes,
