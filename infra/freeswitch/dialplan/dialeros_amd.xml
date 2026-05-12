@@ -1,6 +1,12 @@
 <include>
   <!--
     Iter 68 — AMD-conditional dispatch for outbound calls.
+    Iter 139 — voicemail-drop now waits for the machine's
+    greeting to end + the beep before playing the message,
+    matching ViciDial behavior. Previously we played the file
+    the instant amd_v2 said MACHINE, which overlapped the
+    machine's "you have reached..." greeting and produced the
+    audio garble the operator reported.
 
     The pacer originates with:
       dial app          = &execute_extension(dialeros-amd-route XML default)
@@ -9,19 +15,14 @@
         dialeros_voicemail_path = /var/lib/dialeros/voicemails/<id>.wav  (optional)
       }
 
-    The route extension below runs amd_v2 synchronously at answer
-    time. amd_v2 sets ${amd_result} to HUMAN, MACHINE, NOTSURE, or
-    UNKNOWN. The dispatch extension then branches:
-
-      MACHINE     -> playback voicemail (if voicemail_path is set)
-                     then hangup. Drops with no audio when there's
-                     no voicemail file.
-      HUMAN /     -> bridge to the agent target. NOTSURE is treated
-      NOTSURE /     as human so we err on the side of not dropping
-      UNKNOWN       a real caller.
-
-    The pacer is responsible for setting dialeros_bridge_target.
-    dialeros_voicemail_path is optional (only used on machine).
+    Branches:
+      MACHINE     -> wait_for_silence (greeting ends) + small
+                     beep-clearance sleep + playback voicemail
+                     + hangup. Drops with no audio when no
+                     voicemail file is configured.
+      HUMAN /     -> bridge to the agent target. NOTSURE is
+      NOTSURE /     treated as human so we err on the side of
+      UNKNOWN       not dropping a real caller.
   -->
 
   <extension name="dialeros-amd-route" continue="false">
@@ -58,6 +59,58 @@
 
   <extension name="dialeros-amd-machine" continue="false">
     <condition field="${dialeros_voicemail_path}" expression="^.+$">
+      <!--
+        Iter 139 — ViciDial-style "wait for beep, then drop"
+        before the playback action below.
+
+        wait_for_silence args: <silence_thresh> <silence_hits>
+                                <listen_hits> <timeout_ms>
+          silence_thresh  256   — energy threshold; lower = more
+                                  sensitive. 256 picks up most
+                                  carrier noise floors without
+                                  triggering on quiet greetings.
+          silence_hits    25    — frames of contiguous silence
+                                  before we call it done. 25 ×
+                                  20ms ≈ 500ms — enough to be
+                                  the post-greeting silence
+                                  before the beep, not a
+                                  mid-word pause.
+          listen_hits     4     — voice frames required before
+                                  we'll honour a silence. Skips
+                                  brief pauses inside the
+                                  greeting (typical "...leave
+                                  ___a message" cadence).
+          timeout_ms      30000 — 30s ceiling. Most VM greetings
+                                  finish well under 20s; the
+                                  cap is for pathological cases
+                                  (broken machines, manual
+                                  pickup mid-flow).
+
+        After wait_for_silence returns we sleep 750ms to let the
+        actual beep tone play through, THEN start playback. The
+        sleep is empirical — ViciDial's mechanism is the same
+        pattern: detect end of greeting + grace period for the
+        beep ~= 600-1000ms.
+
+        Operators can tune by setting channel vars BEFORE
+        invoking this extension:
+          dialeros_vm_silence_thresh    overrides 256
+          dialeros_vm_silence_hits      overrides 25
+          dialeros_vm_listen_hits       overrides 4
+          dialeros_vm_silence_timeout   overrides 30000 (ms)
+          dialeros_vm_beep_grace_ms     overrides 750
+        Iter 140 surfaces these as a per-campaign settings card.
+      -->
+      <action application="set" data="vm_silence_thresh=${dialeros_vm_silence_thresh:-256}"/>
+      <action application="set" data="vm_silence_hits=${dialeros_vm_silence_hits:-25}"/>
+      <action application="set" data="vm_listen_hits=${dialeros_vm_listen_hits:-4}"/>
+      <action application="set" data="vm_silence_timeout=${dialeros_vm_silence_timeout:-30000}"/>
+      <action application="set" data="vm_beep_grace_ms=${dialeros_vm_beep_grace_ms:-750}"/>
+      <action application="log" data="INFO [dialeros-amd] machine waiting for greeting silence uuid=${uuid}"/>
+      <action application="wait_for_silence" data="${vm_silence_thresh} ${vm_silence_hits} ${vm_listen_hits} ${vm_silence_timeout}"/>
+      <action application="log" data="INFO [dialeros-amd] silence detected, beep-grace sleep uuid=${uuid}"/>
+      <action application="sleep" data="${vm_beep_grace_ms}"/>
+      <action application="log" data="INFO [dialeros-amd] starting voicemail drop uuid=${uuid} path=${dialeros_voicemail_path}"/>
       <action application="playback" data="${dialeros_voicemail_path}"/>
       <action application="hangup"/>
     </condition>
