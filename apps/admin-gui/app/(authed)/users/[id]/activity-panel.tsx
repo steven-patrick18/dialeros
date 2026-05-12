@@ -6,8 +6,10 @@ import {
   getUserInGroupIds,
   listAuditEventsFiltered,
   listDialIntentsForUser,
+  pauseReasonAnalytics,
   type AgentTodayScoreboard,
   type AuditEventRecord,
+  type PauseReasonRow,
   type UserRecord,
 } from '@dialeros/control-plane';
 
@@ -48,6 +50,11 @@ export function UserActivityPanel({ user }: { user: UserRecord }) {
     actorUserId: user.id,
     limit: 30,
   });
+  // Iter 130 — last-7d pause patterns scoped to this user. A
+  // wider window than /reports' 24h slice because per-user
+  // patterns emerge over a week, not a shift.
+  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const userPauses = pauseReasonAnalytics(since7d, user.id);
 
   const isAgent = user.role === 'agent';
   const diagnostics = [
@@ -132,6 +139,58 @@ export function UserActivityPanel({ user }: { user: UserRecord }) {
           ))}
         </ul>
       </section>
+
+      {/* Iter 130 — per-user pause patterns over the last 7 days.
+          Surfaces "this agent spent 4h on Coaching this week"
+          which would be invisible in the floor-wide /reports view.
+          Hidden when nothing to report — keeps the card list
+          tight for new accounts. */}
+      {userPauses.length > 0 && (
+        <section>
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+            Pause patterns — last 7 days
+          </h2>
+          <div className="border border-border rounded overflow-hidden max-w-3xl">
+            <table className="w-full text-sm">
+              <thead className="text-left text-fg-subtle border-b border-border bg-card-hover/30">
+                <tr>
+                  <th className="py-1.5 px-3 font-medium">Reason</th>
+                  <th className="font-medium tabular-nums text-right">
+                    Pauses
+                  </th>
+                  <th className="font-medium tabular-nums text-right">
+                    Avg
+                  </th>
+                  <th className="font-medium tabular-nums text-right px-3">
+                    Total
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {userPauses.map((p) => (
+                  <tr key={p.reason} className="border-b border-border/40">
+                    <td className="py-1.5 px-3">
+                      {p.reason}
+                      {p.still_paused > 0 && (
+                        <span className="text-warn text-[10px] uppercase tracking-wide ml-2">
+                          on pause
+                        </span>
+                      )}
+                    </td>
+                    <td className="tabular-nums text-right">{p.count}</td>
+                    <td className="tabular-nums text-right text-fg-muted">
+                      {fmtPauseDuration(p.avg_duration_ms)}
+                    </td>
+                    <td className="tabular-nums text-right text-fg px-3">
+                      {fmtPauseDuration(p.total_duration_ms)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Recent intents + audit, side by side on wide screens */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-6xl">
@@ -311,6 +370,20 @@ function Stat({
       <div className={`text-lg mt-0.5 tabular-nums ${tone}`}>{value}</div>
     </div>
   );
+}
+
+function fmtPauseDuration(ms: number): string {
+  if (ms <= 0) return '—';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) {
+    const s = sec % 60;
+    return `${min}m${s.toString().padStart(2, '0')}s`;
+  }
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${h}h${m.toString().padStart(2, '0')}m`;
 }
 
 function AuditRow({ row }: { row: AuditEventRecord }) {

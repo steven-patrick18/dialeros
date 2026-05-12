@@ -6,8 +6,10 @@ import {
   globalLeadStatusBreakdown,
   listLeadLists,
   loginActivityRollup,
+  pauseReasonAnalytics,
   topCampaignsByIntents,
   totalDialIntents,
+  type PauseReasonRow,
 } from '@dialeros/control-plane';
 
 export const dynamic = 'force-dynamic';
@@ -25,6 +27,7 @@ export default async function ReportsPage() {
   const loginActivity = loginActivityRollup(since24);
   const leadLists = listLeadLists();
   const leaderboard = agentLeaderboardToday();
+  const pauseReasons = pauseReasonAnalytics(since24);
 
   return (
     <div>
@@ -71,6 +74,28 @@ export default async function ReportsPage() {
           </p>
         ) : (
           <AgentLeaderboard rows={leaderboard} />
+        )}
+      </div>
+
+      {/* Iter 130 — pause-reason analytics. Surfaces what's eating
+          shift hours so operators can spot patterns like "Coaching
+          dominates Monday mornings" or "Restroom on the 3pm shift
+          is unusually long this week". */}
+      <div className="border border-border rounded p-4 mb-6 max-w-5xl">
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+            Pause reasons — last 24h
+          </h2>
+          <span className="text-xs text-fg-subtle">
+            paired across agent.paused → agent.resumed events
+          </span>
+        </div>
+        {pauseReasons.length === 0 ? (
+          <p className="text-fg-subtle text-sm">
+            No pauses logged in the last 24h.
+          </p>
+        ) : (
+          <PauseReasonsTable rows={pauseReasons} />
         )}
       </div>
 
@@ -266,6 +291,78 @@ function HourlyBars({
       ))}
     </div>
   );
+}
+
+// Iter 130 — pause-reason table for /reports. Sorted by total
+// time eaten (DESC) — the reason chewing through most floor-hours
+// gets top billing so the supervisor sees the actionable lever
+// first. Width-coded bar gives a quick relative read; absolute
+// numbers + agent count anchor it.
+function PauseReasonsTable({ rows }: { rows: PauseReasonRow[] }) {
+  const maxTotal = Math.max(1, ...rows.map((r) => r.total_duration_ms));
+  return (
+    <table className="w-full text-sm">
+      <thead className="text-left text-fg-subtle border-b border-border">
+        <tr>
+          <th className="py-2 font-medium">Reason</th>
+          <th className="font-medium tabular-nums text-right">Count</th>
+          <th className="font-medium tabular-nums text-right">Agents</th>
+          <th className="font-medium tabular-nums text-right">Avg</th>
+          <th className="font-medium tabular-nums text-right">Total</th>
+          <th className="font-medium" />
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => {
+          const pct = (r.total_duration_ms / maxTotal) * 100;
+          return (
+            <tr key={r.reason} className="border-b border-border/40">
+              <td className="py-2">
+                <span className="text-fg">{r.reason}</span>
+                {r.still_paused > 0 && (
+                  <span className="text-warn text-[10px] uppercase tracking-wide ml-2">
+                    {r.still_paused} still paused
+                  </span>
+                )}
+              </td>
+              <td className="tabular-nums text-right">{r.count}</td>
+              <td className="tabular-nums text-right text-fg-muted">
+                {r.agents_affected}
+              </td>
+              <td className="tabular-nums text-right text-fg-muted">
+                {fmtDuration(r.avg_duration_ms)}
+              </td>
+              <td className="tabular-nums text-right text-fg">
+                {fmtDuration(r.total_duration_ms)}
+              </td>
+              <td className="w-32">
+                <div className="bg-card-hover/30 rounded relative h-3">
+                  <div
+                    className="bg-warn/70 rounded h-3"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function fmtDuration(ms: number): string {
+  if (ms <= 0) return '—';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) {
+    const s = sec % 60;
+    return `${min}m${s.toString().padStart(2, '0')}s`;
+  }
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${h}h${m.toString().padStart(2, '0')}m`;
 }
 
 // Iter 100 — agent leaderboard sorted by talk-time. Each row

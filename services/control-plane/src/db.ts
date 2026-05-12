@@ -3526,6 +3526,145 @@ export function expireStaleQueuedCalls(maxAgeSeconds = 600): number {
   return Number(result.changes);
 }
 
+/** Iter 130 — pause-reason analytics. Walks audit_events for
+ * agent.paused / agent.resumed and pairs each paused event with
+ * the next resumed event for the same actor, computing duration.
+ * Aggregates by the paused event's reason from payload_json.
+ *
+ * Sort by total time so the reason eating most of the floor's
+ * shift-hours surfaces first. Per-user variant lives in
+ * pauseAnalyticsForUser for the /users/[id] view.
+ *
+ * Unmatched paused events (still on pause at the end of the
+ * window) are excluded from average duration — counting "since
+ * 30min ago to right now" as a completed pause would bias the
+ * mean down on every refresh. Their existence is reported as
+ * `still_paused`. */
+export interface PauseReasonRow {
+  reason: string;
+  count: number;
+  total_duration_ms: number;
+  avg_duration_ms: number;
+  agents_affected: number;
+  still_paused: number;
+}
+export function pauseReasonAnalytics(
+  sinceIso: string,
+  actorUserId: string | null = null,
+): PauseReasonRow[] {
+  const where: string[] = [
+    "action IN ('agent.paused', 'agent.resumed')",
+    'ts >= ?',
+  ];
+  const values: unknown[] = [sinceIso];
+  if (actorUserId) {
+    where.push('actor_user_id = ?');
+    values.push(actorUserId);
+  }
+  const rows = db()
+    .prepare(
+      `SELECT actor_user_id, action, ts, payload_json
+         FROM audit_events
+        WHERE ${where.join(' AND ')}
+        ORDER BY actor_user_id ASC, ts ASC, id ASC`,
+    )
+    .all(...(values as never[])) as Array<{
+    actor_user_id: string | null;
+    action: string;
+    ts: string;
+    payload_json: string | null;
+  }>;
+
+  // Pair paused → resumed per user.
+  interface Pending {
+    reason: string;
+    ts: number;
+  }
+  const pending = new Map<string, Pending>(); // user_id → open pause
+  type Agg = {
+    count: number;
+    total_duration_ms: number;
+    agents_affected: Set<string>;
+    still_paused: number;
+  };
+  const agg = new Map<string, Agg>();
+  function bumpAgg(reason: string): Agg {
+    let r = agg.get(reason);
+    if (!r) {
+      r = {
+        count: 0,
+        total_duration_ms: 0,
+        agents_affected: new Set(),
+        still_paused: 0,
+      };
+      agg.set(reason, r);
+    }
+    return r;
+  }
+  for (const ev of rows) {
+    if (!ev.actor_user_id) continue;
+    const userId = ev.actor_user_id;
+    if (ev.action === 'agent.paused') {
+      // If a prior paused never got a resumed (e.g. agent
+      // double-paused without resuming — shouldn't happen but
+      // be defensive), bump the previous one as still_paused
+      // before overwriting.
+      const prev = pending.get(userId);
+      if (prev) {
+        const slot = bumpAgg(prev.reason);
+        slot.still_paused++;
+        slot.count++;
+        slot.agents_affected.add(userId);
+      }
+      let reason = 'unspecified';
+      try {
+        const p = ev.payload_json
+          ? (JSON.parse(ev.payload_json) as { reason?: unknown })
+          : {};
+        if (typeof p.reason === 'string' && p.reason.length > 0) {
+          reason = p.reason;
+        }
+      } catch {
+        /* malformed payload — fall back to "unspecified" */
+      }
+      pending.set(userId, { reason, ts: Date.parse(ev.ts) });
+    } else if (ev.action === 'agent.resumed') {
+      const open = pending.get(userId);
+      if (!open) continue;
+      pending.delete(userId);
+      const slot = bumpAgg(open.reason);
+      slot.count++;
+      slot.agents_affected.add(userId);
+      slot.total_duration_ms += Math.max(0, Date.parse(ev.ts) - open.ts);
+    }
+  }
+  // Account for currently-still-paused agents — they DO count
+  // toward the floor-time analytics but only as in-flight, not
+  // completed pauses.
+  for (const [userId, open] of pending) {
+    const slot = bumpAgg(open.reason);
+    slot.count++;
+    slot.agents_affected.add(userId);
+    slot.still_paused++;
+  }
+
+  const out: PauseReasonRow[] = [];
+  for (const [reason, a] of agg) {
+    const completed = a.count - a.still_paused;
+    out.push({
+      reason,
+      count: a.count,
+      total_duration_ms: a.total_duration_ms,
+      avg_duration_ms:
+        completed > 0 ? Math.round(a.total_duration_ms / completed) : 0,
+      agents_affected: a.agents_affected.size,
+      still_paused: a.still_paused,
+    });
+  }
+  out.sort((a, b) => b.total_duration_ms - a.total_duration_ms);
+  return out;
+}
+
 /** Iter 122 — AMD result breakdown for a campaign since UTC
  * midnight. Only counts non-simulated rows that actually ran AMD
  * (amd_result IS NOT NULL). The four expected codes match

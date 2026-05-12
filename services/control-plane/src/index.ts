@@ -170,6 +170,10 @@ export type { CampaignDispositionRow } from './db';
 export { amdBreakdownForCampaignToday } from './db';
 export type { AmdBreakdownRow } from './db';
 
+// Pause-reason analytics (iter 130)
+export { pauseReasonAnalytics } from './db';
+export type { PauseReasonRow } from './db';
+
 // CSV exports (iter 126)
 export {
   listCampaignCallHistoryForExport,
