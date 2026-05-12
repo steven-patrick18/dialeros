@@ -134,6 +134,49 @@ export function TransferModal({
     }
   }
 
+  // Iter 120 — third completion path: 3-way conference. All three
+  // legs (customer, consult target, agent) end up in a conference
+  // room instead of the iter-118 "drop agent + bridge two" flow.
+  async function conferenceAttended() {
+    if (!consult || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/agent/transfer/conference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          original_uuid: consult.original_uuid,
+          consult_uuid: consult.consult_uuid,
+        }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        room?: string;
+        partial_failures?: unknown;
+      };
+      if (!res.ok || !j.ok) {
+        setError(j.error ?? `conference failed (${res.status})`);
+        return;
+      }
+      // partial_failures means at least one leg made it but
+      // another didn't. Surface a soft warning so the agent
+      // knows to verify on their softphone.
+      if (j.partial_failures) {
+        setError(
+          'conference created but one leg failed — verify the call on your softphone',
+        );
+      }
+      reset();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'conference failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function cancelAttended() {
     if (!consult || busy) return;
     setBusy(true);
@@ -289,6 +332,15 @@ export function TransferModal({
                 className="text-xs px-3 py-1.5 rounded border border-warn/50 text-warn hover:bg-warn/10 disabled:opacity-40"
               >
                 {busy ? '…' : 'Cancel & resume'}
+              </button>
+              <button
+                type="button"
+                onClick={conferenceAttended}
+                disabled={busy}
+                className="text-xs px-3 py-1.5 rounded border border-info/50 text-info hover:bg-info/10 disabled:opacity-40"
+                title="Bring the customer in alongside you and the consult target — all three on the call"
+              >
+                {busy ? '…' : 'Add to call (3-way)'}
               </button>
               <button
                 type="button"
