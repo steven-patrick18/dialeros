@@ -2526,6 +2526,81 @@ export function listFloorCallHistory(
     .all(...(values as never[]), limit) as unknown as FloorCallHistoryRow[];
 }
 
+/* Iter 143 — Single-row fetch for the /calls/[id] detail page.
+ * Same joins as listFloorCallHistory plus route_plan_name (the
+ * detail view shows which plan picked the carrier + CID) and the
+ * AI columns (transcript_text, ai_summary, ai_sentiment, ai_flags,
+ * ai_processed_at). Returns undefined for unknown ids so the page
+ * can render a 404.
+ *
+ * Authorization is the caller's responsibility — the detail page
+ * does an admin/supervisor-OR-assignee check before invoking. */
+export interface CallDetailRow {
+  id: number;
+  ts: string;
+  correlation_id: string | null;
+  call_uuid: string | null;
+  campaign_id: string;
+  campaign_name: string | null;
+  lead_id: string;
+  lead_phone: string;
+  lead_name: string | null;
+  transformed_phone: string;
+  cid_used: string | null;
+  kind: string;
+  assigned_user_id: string | null;
+  assigned_username: string | null;
+  assigned_display_name: string | null;
+  route_plan_id: string | null;
+  route_plan_name: string | null;
+  carrier_id: string | null;
+  carrier_name: string | null;
+  answered_at: string | null;
+  hangup_at: string | null;
+  hangup_cause: string | null;
+  duration_ms: number | null;
+  disposition: string | null;
+  dispositioned_at: string | null;
+  amd_result: string | null;
+  recording_path: string | null;
+  originate_error: string | null;
+  transcript_text: string | null;
+  ai_summary: string | null;
+  ai_sentiment: string | null;
+  ai_flags: string | null;
+  ai_processed_at: string | null;
+}
+
+export function getCallDetail(id: number): CallDetailRow | undefined {
+  return db()
+    .prepare(
+      `SELECT di.id, di.ts, di.correlation_id, di.call_uuid,
+              di.campaign_id, cm.name AS campaign_name,
+              di.lead_id, l.phone AS lead_phone, l.name AS lead_name,
+              di.transformed_phone, di.cid_used, di.kind,
+              di.assigned_user_id,
+              u.username AS assigned_username,
+              u.display_name AS assigned_display_name,
+              di.route_plan_id, rp.name AS route_plan_name,
+              di.carrier_id, c.name AS carrier_name,
+              di.answered_at, di.hangup_at, di.hangup_cause,
+              di.duration_ms,
+              di.disposition, di.dispositioned_at,
+              di.amd_result,
+              di.recording_path, di.originate_error,
+              di.transcript_text, di.ai_summary,
+              di.ai_sentiment, di.ai_flags, di.ai_processed_at
+         FROM dial_intents di
+         JOIN leads l ON l.id = di.lead_id
+         LEFT JOIN campaigns cm ON cm.id = di.campaign_id
+         LEFT JOIN users u ON u.id = di.assigned_user_id
+         LEFT JOIN route_plans rp ON rp.id = di.route_plan_id
+         LEFT JOIN carriers c ON c.id = di.carrier_id
+        WHERE di.id = ?`,
+    )
+    .get(id) as unknown as CallDetailRow | undefined;
+}
+
 export function countDialIntentsForCampaign(campaignId: string): number {
   const row = db()
     .prepare(

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState, useTransition } from 'react';
 
 // Iter 142 — Floor call-history table + filter form. Client
@@ -322,7 +323,12 @@ export function CallsList({
                   className="border-t border-border align-top"
                 >
                   <td className="px-3 py-2 whitespace-nowrap">
-                    {fmtTime(r.ts)}
+                    <Link
+                      href={`/calls/${r.id}`}
+                      className="text-link hover:underline"
+                    >
+                      {fmtTime(r.ts)}
+                    </Link>
                   </td>
                   <td className="px-3 py-2">
                     {r.campaign_name ?? r.campaign_id}

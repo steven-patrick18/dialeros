@@ -96,14 +96,29 @@ export async function GET(
     );
   }
 
+  // Iter 143 — ?download=1 forces Content-Disposition attachment so
+  // the "Download .wav" link on /calls/[id] saves to disk instead of
+  // streaming inline. The filename includes the intent id and the
+  // lead phone (sanitised) so a downloaded folder full of recordings
+  // stays readable.
+  const wantsDownload = req.nextUrl.searchParams.get('download') === '1';
+  const baseName = intent.phone
+    ? intent.phone.replace(/[^0-9+]/g, '')
+    : String(intentId);
+  const filename = `call-${intentId}-${baseName || 'unknown'}.wav`;
+
   const stream = createReadStream(safePath);
+  const headers: Record<string, string> = {
+    'Content-Type': 'audio/wav',
+    'Content-Length': String(total),
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, max-age=300',
+  };
+  if (wantsDownload) {
+    headers['Content-Disposition'] = `attachment; filename="${filename}"`;
+  }
   return new NextResponse(stream as unknown as ReadableStream<Uint8Array>, {
     status: 200,
-    headers: {
-      'Content-Type': 'audio/wav',
-      'Content-Length': String(total),
-      'Accept-Ranges': 'bytes',
-      'Cache-Control': 'private, max-age=300',
-    },
+    headers,
   });
 }

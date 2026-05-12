@@ -182,12 +182,14 @@ export type { DailySummary } from './reports';
 export {
   listCampaignCallHistoryForExport,
   listFloorCallHistory,
+  getCallDetail,
   listLeadsInList,
 } from './db';
 export type { CampaignCallHistoryRow } from './db';
 export type {
   FloorCallHistoryRow,
   FloorCallHistoryFilters,
+  CallDetailRow,
 } from './db';
 
 // Floor disposition mix (iter 103)

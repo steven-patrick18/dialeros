@@ -105,12 +105,24 @@ export default async function TranscriptsSearch({
                 className="border border-border rounded p-3 hover:bg-card-hover/30"
               >
                 <div className="flex items-baseline justify-between gap-3 mb-1">
-                  <Link
-                    href={`/leads/lead/${h.lead_id}`}
-                    className="font-mono text-sm hover:underline"
-                  >
-                    {h.lead_phone}
-                  </Link>
+                  <div className="flex items-baseline gap-3">
+                    <Link
+                      href={`/leads/lead/${h.lead_id}`}
+                      className="font-mono text-sm hover:underline"
+                    >
+                      {h.lead_phone}
+                    </Link>
+                    {/* Iter 143 — deep-link to the specific call,
+                       not just the lead. The call detail page
+                       holds the recording + transcript + AI fields
+                       for THIS hit's row. */}
+                    <Link
+                      href={`/calls/${h.id}`}
+                      className="text-xs text-link hover:underline"
+                    >
+                      open call →
+                    </Link>
+                  </div>
                   <span className="text-fg-subtle text-xs">
                     {new Date(h.ts).toLocaleString()} ·{' '}
                     {h.campaign_name ?? '—'}
