@@ -35,6 +35,7 @@ import {
   type RemoteAgentRecord,
 } from './db';
 import { parseCidGroupIds, parseCidPool } from './route-plan';
+import { getVoicemailConfig } from './campaign';
 import {
   applyDialPlanRule,
   carrierAcceptsDestination,
@@ -711,6 +712,23 @@ export async function paceCampaignOnce(
 
     let bridgeApp: string;
     const amdChannelVars: string[] = [];
+    // Iter 140 — push per-campaign VM tuning whenever the
+    // call could end up at the iter-139 voicemail-drop path.
+    // The dialplan reads dialeros_vm_* channel vars; unset
+    // means use the in-dialplan defaults.
+    if (
+      campaign.amd_action === 'voicemail' ||
+      campaign.amd_action === 'detect'
+    ) {
+      const vm = getVoicemailConfig(campaign);
+      amdChannelVars.push(
+        `dialeros_vm_silence_thresh=${vm.silence_thresh}`,
+        `dialeros_vm_silence_hits=${vm.silence_hits}`,
+        `dialeros_vm_listen_hits=${vm.listen_hits}`,
+        `dialeros_vm_silence_timeout=${vm.silence_timeout_ms}`,
+        `dialeros_vm_beep_grace_ms=${vm.beep_grace_ms}`,
+      );
+    }
     if (campaign.amd_action === 'drop') {
       bridgeApp = '&hangup';
     } else if (

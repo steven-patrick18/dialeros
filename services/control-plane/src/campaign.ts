@@ -357,7 +357,11 @@ export const CampaignUpdateInputSchema = z
     // is allowed to dial. Empty = nothing dials (operator can
     // pause-by-whitelist). Validates each entry against the lead
     // status enum so a typo can't silently turn off dialing.
-    dialable_statuses: z
+    voicemail_config: z
+    .string()
+    .nullable()
+    .optional(),
+  dialable_statuses: z
       .array(
         z.enum([
           'NEW',
@@ -429,7 +433,63 @@ export function updateCampaign(
   if (input.dialable_statuses !== undefined) {
     updates.dialable_statuses = JSON.stringify(input.dialable_statuses);
   }
+  if (input.voicemail_config !== undefined) {
+    updates.voicemail_config = input.voicemail_config;
+  }
   return updateCampaignFields(id, updates);
 }
 
 export type { CampaignRecord } from './db';
+
+// Iter 140 — per-campaign voicemail-drop tuning. The five values
+// thread through to the dialplan as channel vars at originate
+// time. Defaults match the iter-139 dialplan baked-ins so an
+// unconfigured campaign behaves identically.
+export interface VoicemailConfig {
+  silence_thresh: number;
+  silence_hits: number;
+  listen_hits: number;
+  silence_timeout_ms: number;
+  beep_grace_ms: number;
+}
+
+export const VOICEMAIL_CONFIG_DEFAULTS: VoicemailConfig = {
+  silence_thresh: 256,
+  silence_hits: 25,
+  listen_hits: 4,
+  silence_timeout_ms: 30_000,
+  beep_grace_ms: 750,
+};
+
+export const VoicemailConfigSchema = z.object({
+  silence_thresh: z.number().int().min(50).max(10_000),
+  silence_hits: z.number().int().min(5).max(500),
+  listen_hits: z.number().int().min(1).max(50),
+  silence_timeout_ms: z.number().int().min(2_000).max(120_000),
+  beep_grace_ms: z.number().int().min(0).max(5_000),
+});
+
+/** Parse the JSON column with the defaults filled in for any
+ * missing or invalid field. Tolerant — corrupt config can't
+ * take down the pacer; we just fall back to defaults. */
+export function getVoicemailConfig(
+  campaign: { voicemail_config: string | null },
+): VoicemailConfig {
+  const raw = campaign.voicemail_config;
+  if (!raw) return { ...VOICEMAIL_CONFIG_DEFAULTS };
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const v = VoicemailConfigSchema.safeParse({
+      silence_thresh: parsed.silence_thresh,
+      silence_hits: parsed.silence_hits,
+      listen_hits: parsed.listen_hits,
+      silence_timeout_ms: parsed.silence_timeout_ms,
+      beep_grace_ms: parsed.beep_grace_ms,
+    });
+    if (v.success) return v.data;
+  } catch {
+    /* corrupted — fall through */
+  }
+  return { ...VOICEMAIL_CONFIG_DEFAULTS };
+}
+

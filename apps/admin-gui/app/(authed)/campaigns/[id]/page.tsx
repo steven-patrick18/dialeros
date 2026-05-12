@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   amdBreakdownForCampaignToday,
+  getVoicemailConfig,
+  VOICEMAIL_CONFIG_DEFAULTS,
   campaignDispositionMix,
   getActiveAgentsForCampaign,
   getCampaign,
@@ -28,6 +30,7 @@ import { CloneCampaignButton } from './clone-button';
 import { AnswerRateCard } from './answer-rate-card';
 import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
+import { VoicemailTuningCard } from './voicemail-tuning-card';
 import { HopperResetButton } from './hopper-reset-button';
 import { CampaignTabs, parseCampaignTab } from './campaign-tabs';
 import { AttachmentPicker } from '@/components/attachment-picker';
@@ -753,6 +756,17 @@ function DetailTab({
           campaignId={c.id}
           amdAction={c.amd_action}
           voicemailPath={c.voicemail_path}
+        />
+
+        <VoicemailTuningCard
+          campaignId={c.id}
+          amdAction={c.amd_action}
+          initialConfig={getVoicemailConfig(c)}
+          usingDefaults={
+            !c.voicemail_config ||
+            JSON.stringify(getVoicemailConfig(c)) ===
+              JSON.stringify(VOICEMAIL_CONFIG_DEFAULTS)
+          }
         />
 
         <InlineCardForm

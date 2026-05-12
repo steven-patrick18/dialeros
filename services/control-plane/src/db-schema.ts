@@ -537,4 +537,12 @@ export const COLUMN_MIGRATIONS: string[] = [
      INSERT INTO dial_intents_fts(dial_intents_fts, rowid, transcript_text, ai_summary)
      VALUES ('delete', old.id, old.transcript_text, old.ai_summary);
    END`,
+  // Iter 140 — per-campaign voicemail-drop tuning. JSON
+  // override of the iter-139 wait-for-beep dialplan params.
+  // Shape: {silence_thresh, silence_hits, listen_hits,
+  //         silence_timeout_ms, beep_grace_ms}
+  // NULL = use the dialplan defaults (256 / 25 / 4 / 30000 /
+  // 750). Operator tunes via the campaign Detail tab when a
+  // specific carrier's machines have unusual greeting cadence.
+  "ALTER TABLE campaigns ADD COLUMN voicemail_config TEXT",
 ];

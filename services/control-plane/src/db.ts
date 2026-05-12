@@ -4207,6 +4207,9 @@ export interface CampaignRecord {
    * refill. Default
    * `["NEW","CALLED_NO_ANSWER","BUSY"]`. */
   dialable_statuses: string;
+  // Iter 140 — JSON override of wait-for-beep dialplan params.
+  // NULL = use the iter-139 baked-in defaults.
+  voicemail_config: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -4478,6 +4481,7 @@ export function updateCampaignFields(
     voicemail_path: string | null;
     list_order: string;
     dialable_statuses: string;
+    voicemail_config: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

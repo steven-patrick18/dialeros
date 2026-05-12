@@ -627,3 +627,11 @@ export type { AiPendingIntent } from './db';
 // Transcript search (iter 138 — FTS5)
 export { searchTranscripts } from './db';
 export type { TranscriptHit } from './db';
+
+// Iter 140 — per-campaign VM tuning
+export {
+  getVoicemailConfig,
+  VOICEMAIL_CONFIG_DEFAULTS,
+  VoicemailConfigSchema,
+} from './campaign';
+export type { VoicemailConfig } from './campaign';
