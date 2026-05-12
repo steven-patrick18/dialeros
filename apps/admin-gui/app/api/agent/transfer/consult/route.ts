@@ -2,13 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  carrierAcceptsDestination,
   extensionForUser,
+  getCampaign,
+  getCarrier,
   getPrimaryPhone,
+  getRoutePlan,
   latestUndisposedIntentForUser,
   normalizePhone,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 import { eslApi } from '@/lib/esl';
+import { gatewayNameFor } from '@/lib/freeswitch-config';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -100,12 +105,47 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    // External: reuse the default outbound gateway. The actual
-    // gateway choice should come from the agent's attached
-    // campaign route plan; iter 119 wires that. For now,
-    // dialeros-default is the placeholder gateway name installed
-    // by infra/freeswitch/dialplan.
-    originateLeg = `sofia/gateway/dialeros-default/${dest}`;
+    // Iter 121 — pick the gateway from the same campaign + route
+    // plan the active call is on. This is the same resolution
+    // path /api/agent/dial uses for manual dials, so a consult
+    // out the carrier rides identical routing + dial-prefix +
+    // CID strategy as the original call. Iter 118 had this
+    // hardcoded to `dialeros-default`, which only worked when an
+    // operator happened to name their gateway that.
+    const campaign = getCampaign(active.campaign_id);
+    if (!campaign) {
+      return NextResponse.json(
+        {
+          error:
+            'Active call campaign no longer exists; cannot route external consult.',
+        },
+        { status: 409 },
+      );
+    }
+    const plan = getRoutePlan(campaign.route_plan_id);
+    if (!plan) {
+      return NextResponse.json(
+        { error: 'Active campaign has no route plan.' },
+        { status: 409 },
+      );
+    }
+    const carrier = getCarrier(plan.primary_carrier_id);
+    if (!carrier) {
+      return NextResponse.json(
+        { error: 'Route plan primary carrier is missing.' },
+        { status: 409 },
+      );
+    }
+    if (!carrierAcceptsDestination(carrier, dest)) {
+      return NextResponse.json(
+        {
+          error: `Carrier ${carrier.name} does not accept this destination prefix.`,
+        },
+        { status: 409 },
+      );
+    }
+    const gateway = gatewayNameFor(carrier);
+    originateLeg = `sofia/gateway/${gateway}/${dest}`;
   }
 
   // Originate the consult leg, bridging the agent in. Generate a
