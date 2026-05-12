@@ -1,0 +1,40 @@
+<!--
+  Iter 116 — FS-side inbound hold-queue.
+
+  Kamailio forwards parked callers to this extension when DialerOS
+  said action=queue. The dialplan:
+    1. Answers the call
+    2. Plays MOH via mod_local_stream (default FS layout) — fall
+       back to a held tone if no MOH source is configured
+    3. Every QUEUE_POLL_SEC seconds, hits /api/internal/queue-poll
+       via mod_curl
+    4. When the response says action=forward, bridges to the
+       returned target_uri
+    5. On caller hangup, fires one final POST with hangup=true so
+       the inbound_queue row is expired cleanly
+
+  Production-ready version of this extension needs:
+    - mod_curl loaded
+    - mod_local_stream pointed at a MOH source (or comment in the
+      `playback held_tone.wav` fallback)
+    - DIALEROS_ADMIN_URL + KAMAILIO_INBOUND_TOKEN exposed as
+      channel vars (set by Kamailio when it bridges in, or
+      hard-coded for single-box deploys)
+
+  Iter 117 wires this into Kamailio's route block + adds a real
+  hangup callback via FS event hook so we don't depend on a final
+  poll for caller_hangup detection.
+-->
+<include>
+  <extension name="dialeros_inbound_queue">
+    <condition field="destination_number" expression="^dialeros-inbound-queue$">
+      <action application="answer"/>
+      <action application="set" data="dialeros_admin_url=${dialeros_admin_url:-http://127.0.0.1:3000}"/>
+      <action application="set" data="dialeros_queue_token=${dialeros_queue_token}"/>
+      <action application="set" data="api_hangup_hook=curl ${dialeros_admin_url}/api/internal/queue-poll content-type 'application/json' post '{\"call_id\":\"${uuid}\",\"hangup\":true}'"/>
+
+      <!-- Lua handles the poll loop. -->
+      <action application="lua" data="dialeros_queue_poll.lua"/>
+    </condition>
+  </extension>
+</include>

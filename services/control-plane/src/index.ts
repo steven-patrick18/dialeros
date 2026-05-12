@@ -504,16 +504,29 @@ export type {
   DidWithOwner,
 } from './did';
 
-// Iter 114-115 — inbound routing primitives. findDidOwner +
+// Iter 114-116 — inbound routing primitives. findDidOwner +
 // pickAvailableAgentForInGroup feed the /api/internal/inbound-route
 // hook that Kamailio queries on every inbound INVITE.
-// listRecentInboundDecisions powers the supervisor monitor card.
+// listRecentInboundDecisions powers the supervisor audit card.
+// enqueue/dispatch/expire + listActiveQueuedCalls drive the iter
+// 116 hold-queue state machine.
 export {
   findDidOwner,
   pickAvailableAgentForInGroup,
   listRecentInboundDecisions,
+  enqueueInboundCall,
+  getQueuedCallByCallId,
+  dispatchQueuedCall,
+  expireQueuedCall,
+  expireStaleQueuedCalls,
+  listActiveQueuedCalls,
 } from './db';
-export type { InGroupAgentPick, InboundDecisionRow } from './db';
+export type {
+  InGroupAgentPick,
+  InboundDecisionRow,
+  InboundQueueRow,
+  SupervisorQueueRow,
+} from './db';
 
 // In-Groups
 export {

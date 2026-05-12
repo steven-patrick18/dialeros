@@ -429,4 +429,30 @@ export const COLUMN_MIGRATIONS: string[] = [
   "CREATE INDEX IF NOT EXISTS idx_leads_timezone ON leads(timezone)",
   // Iter 94: per-campaign dialable_statuses whitelist (JSON array).
   "ALTER TABLE campaigns ADD COLUMN dialable_statuses TEXT NOT NULL DEFAULT '[\"NEW\",\"CALLED_NO_ANSWER\",\"BUSY\"]'",
+  // Iter 116: inbound call queue. When the inbound-route hook says
+  // "queue" (no available agent), we persist the parked caller
+  // here so the FS queue extension can poll for an agent + so the
+  // supervisor can see who's waiting. dispatched_to_user_id +
+  // dispatched_at fill in when an agent becomes available; the
+  // FS queue extension re-checks /api/internal/queue-poll every
+  // N seconds and bridges as soon as one of these is non-null.
+  // expired_at marks the row done (caller hung up, timed out,
+  // or got connected).
+  `CREATE TABLE IF NOT EXISTS inbound_queue (
+    id TEXT PRIMARY KEY,
+    call_id TEXT NOT NULL UNIQUE,
+    from_phone TEXT NOT NULL,
+    to_phone TEXT NOT NULL,
+    in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
+    classification TEXT,
+    lead_id TEXT,
+    enqueued_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    dispatched_at TEXT,
+    dispatched_to_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    dispatched_extension TEXT,
+    expired_at TEXT,
+    expire_reason TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_inbound_queue_active ON inbound_queue(in_group_id, enqueued_at) WHERE expired_at IS NULL",
+  "CREATE INDEX IF NOT EXISTS idx_inbound_queue_pending ON inbound_queue(call_id, dispatched_at, expired_at)",
 ];

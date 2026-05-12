@@ -1,11 +1,13 @@
 import { redirect } from 'next/navigation';
 import {
   listActiveCalls,
+  listActiveQueuedCalls,
   listRecentInboundDecisions,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { SupervisorBoard } from './board';
 import { InboundMonitor } from './inbound-monitor';
+import { QueuedCalls } from './queued-calls';
 import { SoftphoneProvider } from '@/components/softphone';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +31,7 @@ export default async function SupervisorPage() {
   const inboundDecisions = JSON.parse(
     JSON.stringify(listRecentInboundDecisions(50)),
   );
+  const queuedCalls = JSON.parse(JSON.stringify(listActiveQueuedCalls()));
 
   return (
     <SoftphoneProvider>
@@ -53,6 +56,7 @@ export default async function SupervisorPage() {
           }))}
         />
 
+        <QueuedCalls initial={queuedCalls} />
         <InboundMonitor initial={inboundDecisions} />
       </div>
     </SoftphoneProvider>

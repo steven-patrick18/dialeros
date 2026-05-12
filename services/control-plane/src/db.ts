@@ -3284,6 +3284,159 @@ export function pickAvailableAgentForInGroup(
     .get(inGroupId) as InGroupAgentPick | undefined;
 }
 
+/** Iter 116 — inbound call queue state machine. When the inbound-
+ * route endpoint can't find an agent for an in-group, the call
+ * is parked in the FS queue extension; we persist the wait here
+ * so:
+ *   1. The FS queue extension can poll /api/internal/queue-poll
+ *      and bridge as soon as an agent becomes available.
+ *   2. The supervisor /supervisor view can see who's waiting
+ *      and how long.
+ *   3. iter 117's expiry sweeper can age out stuck rows when FS
+ *      misses the dispatched/expired callback.
+ *
+ * enqueueInboundCall is idempotent on the call_id so Kamailio's
+ * retry behavior doesn't fork duplicate rows. */
+export interface InboundQueueRow {
+  id: string;
+  call_id: string;
+  from_phone: string;
+  to_phone: string;
+  in_group_id: string;
+  classification: string | null;
+  lead_id: string | null;
+  enqueued_at: string;
+  dispatched_at: string | null;
+  dispatched_to_user_id: string | null;
+  dispatched_extension: string | null;
+  expired_at: string | null;
+  expire_reason: string | null;
+}
+
+export function enqueueInboundCall(args: {
+  callId: string;
+  fromPhone: string;
+  toPhone: string;
+  inGroupId: string;
+  classification: string | null;
+  leadId: string | null;
+}): InboundQueueRow {
+  const id = randomUUID();
+  const d = db();
+  d.prepare(
+    `INSERT INTO inbound_queue (
+       id, call_id, from_phone, to_phone, in_group_id, classification, lead_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(call_id) DO NOTHING`,
+  ).run(
+    id,
+    args.callId,
+    args.fromPhone,
+    args.toPhone,
+    args.inGroupId,
+    args.classification,
+    args.leadId,
+  );
+  // Read back — when ON CONFLICT fires, the row already exists
+  // with whatever id it was first assigned; return that.
+  return d
+    .prepare(`SELECT * FROM inbound_queue WHERE call_id = ?`)
+    .get(args.callId) as unknown as InboundQueueRow;
+}
+
+export function getQueuedCallByCallId(
+  callId: string,
+): InboundQueueRow | undefined {
+  return db()
+    .prepare(`SELECT * FROM inbound_queue WHERE call_id = ?`)
+    .get(callId) as unknown as InboundQueueRow | undefined;
+}
+
+/** Mark a queued row as dispatched to an agent. Idempotent on a
+ * row that's already been dispatched — caller is expected to
+ * re-check the result and bridge based on the now-set extension. */
+export function dispatchQueuedCall(
+  callId: string,
+  userId: string,
+  extension: string,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE inbound_queue
+          SET dispatched_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+              dispatched_to_user_id = ?,
+              dispatched_extension = ?
+        WHERE call_id = ?
+          AND dispatched_at IS NULL
+          AND expired_at IS NULL`,
+    )
+    .run(userId, extension, callId);
+  return Number(result.changes) > 0;
+}
+
+export function expireQueuedCall(callId: string, reason: string): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE inbound_queue
+          SET expired_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+              expire_reason = ?
+        WHERE call_id = ?
+          AND expired_at IS NULL`,
+    )
+    .run(reason, callId);
+  return Number(result.changes) > 0;
+}
+
+/** Supervisor view — every currently-waiting caller. expired_at
+ * IS NULL means "still on hold or just got an agent assigned but
+ * the bridge hasn't fully completed". dispatched_at distinguishes
+ * "waiting" from "ringing the agent now". */
+export interface SupervisorQueueRow {
+  id: string;
+  call_id: string;
+  from_phone: string;
+  to_phone: string;
+  in_group_id: string;
+  in_group_name: string;
+  classification: string | null;
+  enqueued_at: string;
+  dispatched_at: string | null;
+  dispatched_extension: string | null;
+}
+export function listActiveQueuedCalls(): SupervisorQueueRow[] {
+  return db()
+    .prepare(
+      `SELECT q.id, q.call_id, q.from_phone, q.to_phone,
+              q.in_group_id, ig.name AS in_group_name,
+              q.classification, q.enqueued_at,
+              q.dispatched_at, q.dispatched_extension
+         FROM inbound_queue q
+         JOIN in_groups ig ON ig.id = q.in_group_id
+        WHERE q.expired_at IS NULL
+        ORDER BY q.enqueued_at ASC`,
+    )
+    .all() as unknown as SupervisorQueueRow[];
+}
+
+/** iter 116 — sweep stale queue rows. FS or Kamailio missing the
+ * callback would otherwise leave rows pinned forever. Default
+ * 10-minute ceiling; supervisor max_wait_seconds (on the in_group
+ * record) is a soft hint and iter 117 wires the per-in_group
+ * timeout through this same path. Returns the count expired. */
+export function expireStaleQueuedCalls(maxAgeSeconds = 600): number {
+  const cutoff = new Date(Date.now() - maxAgeSeconds * 1000).toISOString();
+  const result = db()
+    .prepare(
+      `UPDATE inbound_queue
+          SET expired_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+              expire_reason = 'stale_timeout'
+        WHERE expired_at IS NULL
+          AND enqueued_at < ?`,
+    )
+    .run(cutoff);
+  return Number(result.changes);
+}
+
 /** Iter 115 — supervisor inbound monitor. Reads audit_events for
  * the inbound.forwarded / inbound.queued / inbound.rejected
  * actions (the inbound-route endpoint writes these on every

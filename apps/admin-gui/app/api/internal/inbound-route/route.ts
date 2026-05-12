@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  enqueueInboundCall,
   findDidOwner,
   findInboundReturnMatch,
   getCampaignInGroups,
@@ -157,7 +158,7 @@ interface ForwardArgs {
 
 function forwardOrQueue(args: ForwardArgs): NextResponse {
   // Iter 115 — honor each in-group's configured routing_strategy.
-  // ring_all isn't true fork-ring yet (iter 116) so it degrades to
+  // ring_all isn't true fork-ring yet (iter 117) so it degrades to
   // longest_idle inside the picker. Default to longest_idle for
   // unknown / new strategies.
   const ig = getInGroup(args.inGroupId);
@@ -169,10 +170,25 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
       : 'longest_idle';
   const agent = pickAvailableAgentForInGroup(args.inGroupId, strategy);
   if (!agent) {
-    // No-one to route to right this second. Kamailio's dialplan
-    // can park the call (mod_park) or play hold music + ringback
-    // while polling — that's iter 115. For now we tell it to
-    // queue so it doesn't reject the caller outright.
+    // Iter 116 — persist the parked caller so the FS queue
+    // extension can poll for an agent assignment + so the
+    // supervisor can see who's waiting. Kamailio still gets
+    // action=queue back so its dialplan forwards the call to
+    // FS's `dialeros-inbound-queue` extension; from there FS
+    // owns the media (MOH) and re-checks /api/internal/queue-poll.
+    // call_id is required for the enqueue dedupe; if Kamailio
+    // didn't send it (test curl, etc.) we synthesise one from
+    // from+to+now so the audit still gets a stable key.
+    const callId =
+      args.call_id ?? `${args.from}-${args.to}-${Date.now()}`;
+    enqueueInboundCall({
+      callId,
+      fromPhone: args.from,
+      toPhone: args.to,
+      inGroupId: args.inGroupId,
+      classification: args.reason,
+      leadId: args.lead_id ?? null,
+    });
     appendAudit({
       actorUserId: null,
       actorIp: null,
@@ -184,6 +200,7 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
         to: args.to,
         reason: args.reason,
         lead_id: args.lead_id,
+        call_id: callId,
       },
     });
     return NextResponse.json({
@@ -191,6 +208,7 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
       in_group_id: args.inGroupId,
       reason: 'no_agent_available',
       classification: args.reason,
+      call_id: callId,
     });
   }
 
