@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import {
-  countDialIntentsForUser,
-  countDispositionsTodayForUser,
+  agentTodayScoreboard,
+  getAgentStatus,
   getInGroupsForAgent,
   listDialIntentsForUser,
 } from '@dialeros/control-plane';
@@ -10,6 +10,7 @@ import { SoftphoneProvider } from '@/components/softphone';
 import { AgentFeed } from './agent-feed';
 import { AgentSoftphoneBadge } from './softphone-badge';
 import { AgentSoftphonePanel } from './softphone-panel';
+import { PauseControl } from './pause-control';
 import { WrapUpOverlay } from './wrap-up-overlay';
 
 export const dynamic = 'force-dynamic';
@@ -20,10 +21,38 @@ export default async function AgentConsole() {
 
   // Admins can preview the agent console too — useful for QA — but the
   // primary audience is role=agent.
-  const total = countDialIntentsForUser(user.id);
-  const dispoToday = countDispositionsTodayForUser(user.id);
+  const score = agentTodayScoreboard(user.id);
   const initial = [...listDialIntentsForUser(user.id, 20)].reverse();
   const inGroups = getInGroupsForAgent(user.id);
+  // Iter 85 dance — node:sqlite returns null-prototype rows that
+  // React 19 RSC refuses to serialize across the server/client
+  // boundary. Same fix the realtime + dashboard pages apply.
+  const initialStatus = JSON.parse(
+    JSON.stringify(getAgentStatus(user.id)),
+  );
+
+  const onCallLabel = score.current_intent_id ? 'YES' : '—';
+  const onCallTone = score.current_intent_id
+    ? 'text-success'
+    : 'text-fg-subtle';
+  const statusTone =
+    score.status === 'AVAILABLE'
+      ? 'text-success'
+      : score.status === 'PAUSED'
+        ? 'text-warn'
+        : score.status === 'WRAP_UP' || score.status === 'WRAP-UP'
+          ? 'text-info'
+          : 'text-fg';
+  const talkMinutes = Math.floor(score.talk_time_ms_today / 60000);
+  const talkSeconds = Math.floor(
+    (score.talk_time_ms_today % 60000) / 1000,
+  );
+  const talkLabel =
+    score.talk_time_ms_today === 0
+      ? '—'
+      : talkMinutes > 0
+        ? `${talkMinutes}m${talkSeconds.toString().padStart(2, '0')}s`
+        : `${talkSeconds}s`;
 
   return (
     <SoftphoneProvider>
@@ -33,6 +62,7 @@ export default async function AgentConsole() {
         <div className="flex items-center justify-between mb-1">
           <h1 className="text-2xl font-semibold">Agent console</h1>
           <div className="flex items-center gap-3">
+            <PauseControl initial={initialStatus} />
             <AgentSoftphoneBadge />
           </div>
         </div>
@@ -47,18 +77,50 @@ export default async function AgentConsole() {
           when you need a break.
         </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 max-w-4xl mb-6">
           <Stat
-            label="Dispositions today"
-            value={dispoToday.toLocaleString()}
-            accent={dispoToday > 0 ? 'text-success' : 'text-fg-subtle'}
+            label="On call"
+            value={onCallLabel}
+            accent={onCallTone}
+            hint={
+              score.current_phone
+                ? `${score.current_phone} since ${new Date(score.current_answered_at ?? '').toLocaleTimeString()}`
+                : 'No bridged call right now'
+            }
           />
-          <Stat label="On call" value="—" hint="Bridge from pacer TBD" />
-          <Stat label="Wrap-up" value="—" hint="Disposition flow TBD" />
           <Stat
-            label="Intents assigned"
-            value={total.toLocaleString()}
-            accent={total > 0 ? 'text-fg' : 'text-fg-subtle'}
+            label="Status"
+            value={score.status.replace('_', '-')}
+            accent={statusTone}
+            hint={score.pause_reason ?? undefined}
+          />
+          <Stat
+            label="Calls today"
+            value={score.calls_today.toLocaleString()}
+            accent={score.calls_today > 0 ? 'text-fg' : 'text-fg-subtle'}
+            hint="originates assigned to you since midnight (UTC)"
+          />
+          <Stat
+            label="Talked"
+            value={score.talked_today.toLocaleString()}
+            accent={score.talked_today > 0 ? 'text-success' : 'text-fg-subtle'}
+            hint="calls that connected (answered_at set)"
+          />
+          <Stat
+            label="Talk time"
+            value={talkLabel}
+            accent={
+              score.talk_time_ms_today > 0 ? 'text-success' : 'text-fg-subtle'
+            }
+            hint="cumulative duration across today's connected calls"
+          />
+          <Stat
+            label="Dispositions"
+            value={score.dispositions_today.toLocaleString()}
+            accent={
+              score.dispositions_today > 0 ? 'text-success' : 'text-fg-subtle'
+            }
+            hint="outcomes you've logged today"
           />
         </div>
 
@@ -122,13 +184,16 @@ function Stat({
   accent?: string;
   hint?: string;
 }) {
+  // Iter 98 — hover tooltip via `title`. With six stats on a row
+  // the inline hint subtitle made each card 3 lines tall; tooltip
+  // keeps the row compact while still surfacing the same context.
   return (
-    <div className="border border-border rounded p-3">
+    <div
+      title={hint}
+      className={`border border-border rounded p-3 ${hint ? 'cursor-help' : ''}`}
+    >
       <div className="text-xs text-fg-subtle uppercase">{label}</div>
       <div className={`text-xl mt-1 tabular-nums ${accent}`}>{value}</div>
-      {hint && (
-        <div className="text-[10px] text-fg-subtle mt-1">{hint}</div>
-      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  campaignDispositionMix,
   getActiveAgentsForCampaign,
   getCampaign,
   getCampaignAllowedUserIds,
@@ -112,6 +113,7 @@ export default async function CampaignDetail({
   const isInbound = c.type === 'inbound_queue';
   const allInGroups = listInGroups();
   const allLeadLists = listLeadLists();
+  const dispoMix = campaignDispositionMix(id);
 
   return (
     <div>
@@ -149,6 +151,7 @@ export default async function CampaignDetail({
           remoteInFlight={remoteInFlight}
           unregisteredRemotes={unregisteredRemotes}
           insideWindow={insideWindow}
+          dispoMix={dispoMix}
         />
       )}
 
@@ -196,6 +199,7 @@ function BasicTab({
   remoteInFlight,
   unregisteredRemotes,
   insideWindow,
+  dispoMix,
 }: {
   c: ReturnType<typeof getCampaign> & {};
   routePlan: ReturnType<typeof getRoutePlan>;
@@ -209,6 +213,7 @@ function BasicTab({
   remoteInFlight: number;
   unregisteredRemotes: Array<{ name: string; sip_uri: string }>;
   insideWindow: boolean;
+  dispoMix: ReturnType<typeof campaignDispositionMix>;
 }) {
   return (
     <>
@@ -461,8 +466,8 @@ function BasicTab({
         {c.status === 'active' && remoteLinesTotal > 0 && (
           <p className="bg-card-hover/40 text-fg-muted border border-border rounded mt-3 px-3 py-2 text-xs">
             {remoteInFlight} / {remoteLinesTotal} remote line
-            {remoteLinesTotal === 1 ? '' : 's'} in flight. Per-tick
-            target:{' '}
+            {remoteLinesTotal === 1 ? '' : 's'} in flight. Total
+            in-flight cap:{' '}
             <span className="font-mono">
               floor({remoteLinesTotal} × {c.dial_level}) ={' '}
               {Math.max(
@@ -477,8 +482,10 @@ function BasicTab({
             ) === 1
               ? ''
               : 's'}{' '}
-            this tick. Remote agents only count toward the ratio —
-            bridges land on local agents{' '}
+            outstanding at a time (iter 108 — was previously per-tick
+            with no decrement, which over-dialed). Remote agents
+            only count toward the ratio — bridges land on local
+            agents{' '}
             {activeAgents.length > 0
               ? `(${activeAgents.length} signed in right now)`
               : '(none signed in right now)'}
@@ -524,7 +531,92 @@ function BasicTab({
           </p>
         )}
       </div>
+
+      <DispositionMixCard rows={dispoMix} />
     </>
+  );
+}
+
+// Iter 99 — disposition mix card for the campaign basic tab.
+// Renders the 7 ViciDial-style outcomes + an OPEN bucket
+// (connected calls awaiting a disposition) as a horizontal
+// strip. Zero-count cells are dimmed so the operator scans
+// active outcomes at a glance.
+const DISPOSITION_TONES: Record<string, { dot: string; text: string }> = {
+  SALE: { dot: 'bg-success', text: 'text-success' },
+  CALLBACK: { dot: 'bg-info', text: 'text-info' },
+  SURVEYED: { dot: 'bg-success', text: 'text-success' },
+  VOICEMAIL_DROPPED: { dot: 'bg-info', text: 'text-info' },
+  NO_INTEREST: { dot: 'bg-fg-muted', text: 'text-fg-muted' },
+  ANSWERING_MACHINE: { dot: 'bg-fg-muted', text: 'text-fg-muted' },
+  WRONG_NUMBER: { dot: 'bg-warn', text: 'text-warn' },
+  BAD_NUMBER: { dot: 'bg-error', text: 'text-error' },
+  DNC: { dot: 'bg-error', text: 'text-error' },
+  OPEN: { dot: 'bg-accent', text: 'text-accent' },
+};
+function DispositionMixCard({
+  rows,
+}: {
+  rows: ReturnType<typeof campaignDispositionMix>;
+}) {
+  const total = rows.reduce(
+    (a, r) => (r.disposition === 'OPEN' ? a : a + r.count),
+    0,
+  );
+  const open = rows.find((r) => r.disposition === 'OPEN')?.count ?? 0;
+  return (
+    <div className="border border-border rounded p-4 mb-6 max-w-5xl">
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+          Dispositions today
+        </h2>
+        <span className="text-xs text-fg-subtle tabular-nums">
+          {total.toLocaleString()} logged
+          {open > 0 && (
+            <>
+              {' · '}
+              <span className="text-accent">{open} open</span>
+            </>
+          )}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+        {rows.map((r) => {
+          const tone = DISPOSITION_TONES[r.disposition] ?? {
+            dot: 'bg-fg-muted',
+            text: 'text-fg-muted',
+          };
+          const dim = r.count === 0;
+          return (
+            <div
+              key={r.disposition}
+              className={`border border-border rounded px-2 py-1.5 ${
+                dim ? 'opacity-50' : ''
+              }`}
+              title={
+                r.disposition === 'OPEN'
+                  ? 'Calls connected today that the agent has not yet dispositioned'
+                  : r.disposition
+              }
+            >
+              <div className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+                <span className="text-[10px] uppercase tracking-wide text-fg-subtle truncate">
+                  {r.disposition.replace(/_/g, ' ')}
+                </span>
+              </div>
+              <div className={`text-lg mt-0.5 tabular-nums ${tone.text}`}>
+                {r.count.toLocaleString()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-fg-subtle mt-3">
+        Reset at UTC midnight. OPEN = connected calls with no agent
+        outcome yet (wrap-up backlog).
+      </p>
+    </div>
   );
 }
 
@@ -586,6 +678,15 @@ function DetailTab({
                   value: 'CALLBACK_SCHEDULED',
                   label:
                     'CALLBACK_SCHEDULED (kept on for safety — Pass 1 always handles these)',
+                },
+                {
+                  value: 'VM_PLAYED',
+                  label:
+                    'VM_PLAYED (re-engage prospects who heard our voicemail)',
+                },
+                {
+                  value: 'SURVEYED',
+                  label: 'SURVEYED (follow-up on completed surveys)',
                 },
                 {
                   value: 'BAD_NUMBER',

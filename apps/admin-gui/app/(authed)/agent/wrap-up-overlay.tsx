@@ -23,14 +23,24 @@ interface WrapUpIntent {
   transformed_phone: string;
   lead_name: string | null;
   hangup_cause: string | null;
+  hangup_at: string | null;
   duration_ms: number | null;
 }
+
+// Iter 102 — wrap-up time budget. Once elapsed crosses this the
+// modal escalates from neutral → warn → error to nudge the agent
+// who's parked on a dispo for too long. Tunable per-campaign in a
+// later iter; 30s is a sane single-call budget for most flows.
+const WRAP_UP_WARN_SECONDS = 30;
+const WRAP_UP_ESCALATE_SECONDS = 90;
 
 const DISPOSITIONS: Array<{ code: string; label: string; tone: string }> = [
   { code: 'SALE', label: 'Sale', tone: 'success' },
   { code: 'CALLBACK', label: 'Callback', tone: 'warn' },
+  { code: 'SURVEYED', label: 'Surveyed', tone: 'success' },
+  { code: 'VOICEMAIL_DROPPED', label: 'VM dropped', tone: 'warn' },
   { code: 'NO_INTEREST', label: 'No interest', tone: 'neutral' },
-  { code: 'ANSWERING_MACHINE', label: 'Voicemail', tone: 'neutral' },
+  { code: 'ANSWERING_MACHINE', label: 'Hit AM', tone: 'neutral' },
   { code: 'WRONG_NUMBER', label: 'Wrong #', tone: 'neutral' },
   { code: 'BAD_NUMBER', label: 'Bad #', tone: 'neutral' },
   { code: 'DNC', label: 'DNC', tone: 'error' },
@@ -49,6 +59,72 @@ export function WrapUpOverlay() {
   const [error, setError] = useState<string | null>(null);
   const pausedByUsRef = useRef(false);
   const wasInCallRef = useRef(sp.inCall);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  // Iter 102 — recover after a page refresh / tab return. The
+  // inCall-transition handler only fires when the softphone
+  // observes the call ending in *this* session; if the agent
+  // refreshes the tab mid-wrap-up, we miss the transition and
+  // the modal never appears, leaving the intent in OPEN state
+  // (visible in iter-99's per-campaign dispo card). Sticky
+  // recovery: on mount, ask the server if there's an undisposed
+  // intent with hangup_at set — that's a wrap-up we should
+  // surface again.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/agent/intents/wrap-up', {
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const j = (await res.json()) as { intent: WrapUpIntent | null };
+        // Only surface if the call has actually ended — otherwise
+        // we'd open the modal during a live call. The wrap-up API
+        // doesn't filter for hangup so we gate on it here.
+        if (cancelled || !j.intent || !j.intent.hangup_at) return;
+        // Re-pause if the agent had resumed manually since the
+        // original wrap-up was opened — otherwise the pacer would
+        // bridge a fresh call while this modal is up. Mirror the
+        // call-end path: only auto-pause if currently AVAILABLE
+        // so we don't overwrite a Break / Lunch / etc. reason the
+        // agent picked themselves.
+        const statusRes = await fetch('/api/agent/status', {
+          cache: 'no-store',
+        });
+        const statusJson = statusRes.ok
+          ? ((await statusRes.json()) as { status: string })
+          : { status: 'AVAILABLE' };
+        if (statusJson.status === 'AVAILABLE') {
+          await fetch('/api/agent/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'PAUSED', reason: 'wrap-up' }),
+          });
+          pausedByUsRef.current = true;
+        }
+        setIntent(j.intent);
+        setChosen(null);
+        setNote('');
+        setError(null);
+        setCallbackAt(defaultCallbackLocal());
+      } catch {
+        /* network blip — wait for next call-end transition */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Iter 102 — tick the elapsed-time display each second while the
+  // modal is open. Stops as soon as the modal closes to avoid the
+  // setState-while-unmounted footgun.
+  useEffect(() => {
+    if (!intent) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [intent]);
 
   // Detect end-of-call transition.
   useEffect(() => {
@@ -165,20 +241,65 @@ export function WrapUpOverlay() {
 
   if (!intent) return null;
 
+  // Iter 102 — elapsed time since the call hung up. We anchor on
+  // hangup_at when present (sticky-recovery case after a refresh
+  // can be many minutes in) and fall back to "modal first opened"
+  // for the natural call-end path so the counter still starts at
+  // 0s instead of jumping mid-call.
+  const hangupMs = intent.hangup_at ? Date.parse(intent.hangup_at) : nowMs;
+  const elapsedSec = Math.max(0, Math.floor((nowMs - hangupMs) / 1000));
+  const escalationTone =
+    elapsedSec >= WRAP_UP_ESCALATE_SECONDS
+      ? 'error'
+      : elapsedSec >= WRAP_UP_WARN_SECONDS
+        ? 'warn'
+        : 'neutral';
+  const borderClass =
+    escalationTone === 'error'
+      ? 'border-error/70 ring-1 ring-error/40'
+      : escalationTone === 'warn'
+        ? 'border-warn/60'
+        : 'border-border';
+  const timerClass =
+    escalationTone === 'error'
+      ? 'text-error'
+      : escalationTone === 'warn'
+        ? 'text-warn'
+        : 'text-fg-muted';
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-card border border-border rounded-lg shadow-2xl w-full max-w-lg p-6 mx-4">
-        <header className="mb-4">
-          <h2 className="text-lg font-semibold">Wrap-up — disposition required</h2>
-          <p className="text-fg-subtle text-sm mt-1">
-            Dial intent {intent.id}. Pick a disposition to end wrap-up
-            and resume taking calls.
-          </p>
+      <div
+        className={`bg-card border rounded-lg shadow-2xl w-full max-w-lg p-6 mx-4 ${borderClass}`}
+      >
+        <header className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">
+              Wrap-up — disposition required
+            </h2>
+            <p className="text-fg-subtle text-sm mt-1">
+              Dial intent {intent.id}. Pick a disposition to end wrap-up
+              and resume taking calls.
+            </p>
+          </div>
+          <div
+            className={`tabular-nums font-mono text-lg ${timerClass}`}
+            title="Elapsed wrap-up time since call hangup"
+          >
+            {formatElapsed(elapsedSec)}
+          </div>
         </header>
+        {escalationTone === 'error' && (
+          <p className="bg-error/10 text-error border border-error/40 rounded px-3 py-2 text-xs mb-4">
+            Wrap-up exceeding {WRAP_UP_ESCALATE_SECONDS}s — your campaign
+            throughput is paused while this is open. Pick a disposition
+            now or your supervisor will see this in the OPEN bucket.
+          </p>
+        )}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mb-4 border border-border rounded p-3 bg-bg">
           <Detail label="Campaign" value={intent.campaign_name} mono />
@@ -349,4 +470,14 @@ function formatDuration(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
+function formatElapsed(sec: number): string {
+  if (sec < 60) return `0:${String(sec).padStart(2, '0')}`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return `${m}:${String(s).padStart(2, '0')}`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return `${h}:${String(mm).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }

@@ -33,6 +33,11 @@ const RESETTABLE_STATUSES = new Set([
   'DNC_TEMP',
   'BAD_NUMBER',
   'DIALING',
+  // Iter 107 — VM_PLAYED / SURVEYED carry positive signal; the
+  // operator typically wants to re-engage them on a different
+  // cadence rather than treating them as terminal.
+  'VM_PLAYED',
+  'SURVEYED',
 ]);
 
 // Iter 80 — map FS hangup causes onto SIP response codes for the
@@ -72,6 +77,8 @@ const STATUS_TONE: Record<string, string> = {
   DNC: 'text-error',
   DNC_TEMP: 'text-warn',
   BAD_NUMBER: 'text-error',
+  VM_PLAYED: 'text-info',
+  SURVEYED: 'text-success',
 };
 
 function statusTone(status: string): string {

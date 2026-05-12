@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import {
+  floorDispositionMixToday,
   floorThroughputSnapshot,
   listCampaigns,
   listCarriers,
@@ -22,6 +23,7 @@ export default async function Home() {
   }
   const floor = floorThroughputSnapshot();
   const campaignsToday = topCampaignsToday(8);
+  const dispoMix = floorDispositionMixToday();
   const agents = liveAgentSnapshot();
   const agentsAvailable = agents.filter(
     (a) => a.status === 'AVAILABLE' && a.call_intent_id === null,
@@ -49,6 +51,7 @@ export default async function Home() {
       generated_at: new Date().toISOString(),
       floor,
       campaigns_today: campaignsToday,
+      dispo_mix: dispoMix,
       agents: {
         total: agents.length,
         available: agentsAvailable,

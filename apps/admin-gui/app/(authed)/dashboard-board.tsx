@@ -23,10 +23,16 @@ interface CampaignTodayRow {
   last_1m: number;
 }
 
+interface DispoRow {
+  disposition: string;
+  count: number;
+}
+
 interface Snapshot {
   generated_at: string;
   floor: FloorSnap;
   campaigns_today: CampaignTodayRow[];
+  dispo_mix: DispoRow[];
   agents: {
     total: number;
     available: number;
@@ -184,6 +190,16 @@ export function DashboardBoard({ initial }: { initial: Snapshot }) {
         </div>
       </section>
 
+      {/* Iter 103 — floor-wide disposition mix. Same 8-cell strip
+          shape as the per-campaign card on /campaigns/[id] so the
+          operator's eye locks onto identical layout in two places. */}
+      <section>
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
+          Today&apos;s outcomes
+        </h2>
+        <DispositionStrip rows={snap.dispo_mix} />
+      </section>
+
       {/* Top campaigns today */}
       <section>
         <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-2">
@@ -315,6 +331,75 @@ function Stat({
         {label}
       </div>
       <div className={`text-2xl mt-1 tabular-nums ${colour}`}>{value}</div>
+    </div>
+  );
+}
+
+// Iter 103 — same dot+tone palette as the per-campaign card in
+// iter 99 so the operator's mental model carries between the two
+// surfaces. Zero-count cells dim to 50%.
+const DISPO_TONES: Record<string, { dot: string; text: string }> = {
+  SALE: { dot: 'bg-success', text: 'text-success' },
+  CALLBACK: { dot: 'bg-info', text: 'text-info' },
+  SURVEYED: { dot: 'bg-success', text: 'text-success' },
+  VOICEMAIL_DROPPED: { dot: 'bg-info', text: 'text-info' },
+  NO_INTEREST: { dot: 'bg-fg-muted', text: 'text-fg-muted' },
+  ANSWERING_MACHINE: { dot: 'bg-fg-muted', text: 'text-fg-muted' },
+  WRONG_NUMBER: { dot: 'bg-warn', text: 'text-warn' },
+  BAD_NUMBER: { dot: 'bg-error', text: 'text-error' },
+  DNC: { dot: 'bg-error', text: 'text-error' },
+  OPEN: { dot: 'bg-accent', text: 'text-accent' },
+};
+function DispositionStrip({ rows }: { rows: DispoRow[] }) {
+  const total = rows.reduce(
+    (a, r) => (r.disposition === 'OPEN' ? a : a + r.count),
+    0,
+  );
+  const open = rows.find((r) => r.disposition === 'OPEN')?.count ?? 0;
+  return (
+    <div>
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 max-w-6xl">
+        {rows.map((r) => {
+          const tone = DISPO_TONES[r.disposition] ?? {
+            dot: 'bg-fg-muted',
+            text: 'text-fg-muted',
+          };
+          const dim = r.count === 0;
+          return (
+            <div
+              key={r.disposition}
+              className={`border border-border rounded px-2 py-1.5 ${
+                dim ? 'opacity-50' : ''
+              }`}
+              title={
+                r.disposition === 'OPEN'
+                  ? 'Connected calls today with no agent outcome yet (wrap-up backlog)'
+                  : r.disposition
+              }
+            >
+              <div className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+                <span className="text-[10px] uppercase tracking-wide text-fg-subtle truncate">
+                  {r.disposition.replace(/_/g, ' ')}
+                </span>
+              </div>
+              <div className={`text-lg mt-0.5 tabular-nums ${tone.text}`}>
+                {r.count.toLocaleString()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-fg-subtle mt-2">
+        {total.toLocaleString()} logged today
+        {open > 0 && (
+          <>
+            {' · '}
+            <span className="text-accent">{open} open</span>
+            {' — agents in wrap-up'}
+          </>
+        )}
+      </p>
     </div>
   );
 }

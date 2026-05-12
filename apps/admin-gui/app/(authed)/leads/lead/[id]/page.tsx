@@ -7,6 +7,7 @@ import {
 } from '@dialeros/control-plane';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteLeadButton } from './delete-button';
+import { PlayRecording } from './play-recording';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,8 @@ const STATUS_TONE: Record<string, string> = {
   DNC: 'text-error',
   DNC_TEMP: 'text-warn',
   BAD_NUMBER: 'text-error',
+  VM_PLAYED: 'text-info',
+  SURVEYED: 'text-success',
 };
 
 // Iter 92 — same SIP-code map the list page uses. Kept inline so
@@ -140,6 +143,8 @@ export default async function LeadDetail({
                 { value: 'BUSY', label: 'BUSY' },
                 { value: 'CALLBACK_SCHEDULED', label: 'CALLBACK_SCHEDULED' },
                 { value: 'CONVERTED', label: 'CONVERTED' },
+                { value: 'VM_PLAYED', label: 'VM_PLAYED' },
+                { value: 'SURVEYED', label: 'SURVEYED' },
                 { value: 'DNC', label: 'DNC' },
                 { value: 'DNC_TEMP', label: 'DNC_TEMP' },
                 { value: 'BAD_NUMBER', label: 'BAD_NUMBER' },
@@ -194,6 +199,7 @@ export default async function LeadDetail({
                 <th className="font-medium">CID used</th>
                 <th className="font-medium">Outcome</th>
                 <th className="font-medium text-right">Duration</th>
+                <th className="font-medium">Recording</th>
               </tr>
             </thead>
             <tbody>
@@ -272,6 +278,12 @@ export default async function LeadDetail({
                     </td>
                     <td className="text-right tabular-nums text-fg-muted">
                       {formatDuration(h.duration_ms)}
+                    </td>
+                    <td>
+                      <PlayRecording
+                        intentId={h.id}
+                        available={Boolean(h.recording_path)}
+                      />
                     </td>
                   </tr>
                 );

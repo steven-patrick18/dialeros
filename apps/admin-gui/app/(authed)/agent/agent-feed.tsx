@@ -22,8 +22,10 @@ interface AgentIntent {
 const DISPOSITIONS: Array<{ code: string; label: string; tone: string }> = [
   { code: 'SALE', label: 'Sale', tone: 'text-success' },
   { code: 'CALLBACK', label: 'Callback', tone: 'text-warn' },
+  { code: 'SURVEYED', label: 'Surveyed', tone: 'text-success' },
+  { code: 'VOICEMAIL_DROPPED', label: 'VM dropped', tone: 'text-warn' },
   { code: 'NO_INTEREST', label: 'No interest', tone: 'text-fg-muted' },
-  { code: 'ANSWERING_MACHINE', label: 'Voicemail', tone: 'text-fg-muted' },
+  { code: 'ANSWERING_MACHINE', label: 'Hit AM', tone: 'text-fg-muted' },
   { code: 'WRONG_NUMBER', label: 'Wrong #', tone: 'text-fg-muted' },
   { code: 'BAD_NUMBER', label: 'Bad #', tone: 'text-fg-muted' },
   { code: 'DNC', label: 'DNC', tone: 'text-error' },

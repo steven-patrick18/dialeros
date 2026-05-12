@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import {
+  agentLeaderboardToday,
   auditCountsByAction,
   dialIntentsByHour,
   globalLeadStatusBreakdown,
@@ -23,6 +24,7 @@ export default async function ReportsPage() {
   const auditCounts = auditCountsByAction(since24);
   const loginActivity = loginActivityRollup(since24);
   const leadLists = listLeadLists();
+  const leaderboard = agentLeaderboardToday();
 
   return (
     <div>
@@ -52,6 +54,24 @@ export default async function ReportsPage() {
             .reduce((acc, s) => acc + s.count, 0)
             .toLocaleString()}
         />
+      </div>
+
+      <div className="border border-border rounded p-4 mb-6 max-w-5xl">
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+            Today&apos;s agent leaderboard
+          </h2>
+          <span className="text-xs text-fg-subtle">
+            UTC midnight — now · sorted by talk time
+          </span>
+        </div>
+        {leaderboard.length === 0 ? (
+          <p className="text-fg-subtle text-sm">
+            No active agents on staff yet.
+          </p>
+        ) : (
+          <AgentLeaderboard rows={leaderboard} />
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-5xl">
@@ -245,6 +265,94 @@ function HourlyBars({
         </div>
       ))}
     </div>
+  );
+}
+
+// Iter 100 — agent leaderboard sorted by talk-time. Each row
+// gets a Talk % so supervisors can spot agents pushing through
+// vs. the ones who connect-but-don't-talk. Inactive rows (zero
+// calls) dim to half so they don't drown out the productive
+// agents on a big team.
+function AgentLeaderboard({
+  rows,
+}: {
+  rows: ReturnType<typeof agentLeaderboardToday>;
+}) {
+  function fmtTalk(ms: number): string {
+    if (ms <= 0) return '—';
+    const total = Math.floor(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}h${m.toString().padStart(2, '0')}m`;
+    if (m > 0) return `${m}m${s.toString().padStart(2, '0')}s`;
+    return `${s}s`;
+  }
+  return (
+    <table className="w-full text-sm">
+      <thead className="text-left text-fg-subtle border-b border-border">
+        <tr>
+          <th className="py-2 font-medium">Agent</th>
+          <th className="font-medium">Role</th>
+          <th className="font-medium tabular-nums text-right">Calls</th>
+          <th className="font-medium tabular-nums text-right">Talked</th>
+          <th className="font-medium tabular-nums text-right">Talk %</th>
+          <th className="font-medium tabular-nums text-right">Talk time</th>
+          <th className="font-medium tabular-nums text-right">Dispos</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => {
+          const idle = r.calls_today === 0;
+          const talkPct =
+            r.calls_today > 0
+              ? `${((r.talked_today / r.calls_today) * 100).toFixed(0)}%`
+              : '—';
+          return (
+            <tr
+              key={r.user_id}
+              className={`border-b border-border/40 ${idle ? 'opacity-50' : ''}`}
+            >
+              <td className="py-2">
+                <Link
+                  href={`/users/${r.user_id}`}
+                  className="hover:underline"
+                >
+                  {r.display_name || r.username}
+                </Link>
+                {r.display_name && (
+                  <span className="text-fg-subtle text-xs font-mono ml-2">
+                    @{r.username}
+                  </span>
+                )}
+              </td>
+              <td className="text-fg-muted text-xs uppercase">{r.role}</td>
+              <td className="tabular-nums text-right">{r.calls_today}</td>
+              <td
+                className={`tabular-nums text-right ${
+                  r.talked_today > 0 ? 'text-success' : 'text-fg-subtle'
+                }`}
+              >
+                {r.talked_today}
+              </td>
+              <td className="tabular-nums text-right text-fg-muted">
+                {talkPct}
+              </td>
+              <td className="tabular-nums text-right text-fg">
+                {fmtTalk(r.talk_time_ms_today)}
+              </td>
+              <td
+                className={`tabular-nums text-right ${
+                  r.dispositions_today > 0 ? 'text-success' : 'text-fg-subtle'
+                }`}
+              >
+                {r.dispositions_today}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
