@@ -429,6 +429,15 @@ export const COLUMN_MIGRATIONS: string[] = [
   "CREATE INDEX IF NOT EXISTS idx_leads_timezone ON leads(timezone)",
   // Iter 94: per-campaign dialable_statuses whitelist (JSON array).
   "ALTER TABLE campaigns ADD COLUMN dialable_statuses TEXT NOT NULL DEFAULT '[\"NEW\",\"CALLED_NO_ANSWER\",\"BUSY\"]'",
+  // Iter 125: per-lead preferred CID. When set, the pacer + the
+  // manual-dial path use this caller-ID for this lead's outbound
+  // calls instead of the route plan's cid_strategy. Useful for:
+  //   - leads that prefer recognising a specific number from a
+  //     prior conversation
+  //   - imported leads that ship with their own preferred CID
+  //   - per-state DIDs without going through a full CID group
+  // NULL keeps the existing route-plan-driven behaviour.
+  "ALTER TABLE leads ADD COLUMN preferred_cid TEXT",
   // Iter 122: AMD result column. dialplan dialeros-amd-route sets
   // a channel var dialeros_amd_result = HUMAN | MACHINE | NOTSURE
   // | UNKNOWN once amd_v2 runs at answer. fs-events extracts that

@@ -10,6 +10,7 @@ import {
   findMatchingDialPlanRule,
   findOrCreateLeadForManualDial,
   getCarrier,
+  getLead,
   getPrimaryPhone,
   getRoutePlan,
   getUser,
@@ -154,6 +155,24 @@ export async function POST(req: NextRequest) {
   // through normalizePhone for canonical form; reject obviously bad
   // input early instead of confusing the carrier with garbage in
   // From/PAI.
+
+  // Iter 93 — pre-insert the dial_intent so the manual call shows
+  // up on the campaign Real-time panel and in /realtime live calls.
+  // findOrCreateLeadForManualDial: if a lead with this phone exists
+  // in one of the campaign's lists, attribute the call to that lead
+  // (so it lands on the lead detail page's call history too). Else
+  // synthesize a "Manual dial" lead in the first attached list.
+  // When the campaign has zero lists, leadId is null — we degrade
+  // gracefully by skipping the dial_intent insert (still
+  // originating + auditing) so manual calls don't break on
+  // list-less campaigns.
+  //
+  // Iter 125 — resolve the lead BEFORE the CID so a matched lead's
+  // preferred_cid can win over the route plan strategy. Agent's
+  // explicit override on the modal still trumps everything.
+  const leadId = findOrCreateLeadForManualDial(dest, campaign.id);
+  const matchedLead = leadId ? getLead(leadId) : undefined;
+
   let cid: string | null = null;
   if (parsed.data.cid && parsed.data.cid.trim().length > 0) {
     const overrideCid = normalizePhone(parsed.data.cid);
@@ -164,6 +183,11 @@ export async function POST(req: NextRequest) {
       );
     }
     cid = overrideCid;
+  } else if (
+    matchedLead?.preferred_cid &&
+    matchedLead.preferred_cid.length > 0
+  ) {
+    cid = matchedLead.preferred_cid;
   } else if (route.cid_strategy === 'single') {
     cid = route.cid_single;
   } else if (route.cid_strategy === 'rotate') {
@@ -184,18 +208,6 @@ export async function POST(req: NextRequest) {
   // The agent's softphone extension — primary phone if any, else hash.
   const primary = getPrimaryPhone(me.id);
   const agentExtension = primary?.extension ?? extensionForUser(me.id);
-
-  // Iter 93 — pre-insert the dial_intent so the manual call shows
-  // up on the campaign Real-time panel and in /realtime live calls.
-  // findOrCreateLeadForManualDial: if a lead with this phone exists
-  // in one of the campaign's lists, attribute the call to that lead
-  // (so it lands on the lead detail page's call history too). Else
-  // synthesize a "Manual dial" lead in the first attached list.
-  // When the campaign has zero lists, leadId is null — we degrade
-  // gracefully by skipping the dial_intent insert (still
-  // originating + auditing) so manual calls don't break on
-  // list-less campaigns.
-  const leadId = findOrCreateLeadForManualDial(dest, campaign.id);
   const correlationId = randomUUID();
 
   const gateway = gatewayNameFor(carrier);

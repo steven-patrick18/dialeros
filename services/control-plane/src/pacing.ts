@@ -592,15 +592,22 @@ export async function paceCampaignOnce(
     plan.transform_strip_prefix,
     plan.transform_add_prefix,
   );
-  const cid = pickCid(
-    campaignId,
-    plan.cid_strategy,
-    plan.cid_single,
-    parseCidPool(plan),
-    parseCidGroupIds(plan),
-    plan.id,
-    transformed,
-  );
+  // Iter 125 — per-lead preferred CID wins over the route plan's
+  // cid_strategy when set. Lets a lead carry "always call from
+  // this number" through CSV imports, prior-call stickiness, etc.
+  // NULL fall-through is the existing route-plan path.
+  const cid =
+    lead.preferred_cid && lead.preferred_cid.length > 0
+      ? lead.preferred_cid
+      : pickCid(
+          campaignId,
+          plan.cid_strategy,
+          plan.cid_single,
+          parseCidPool(plan),
+          parseCidGroupIds(plan),
+          plan.id,
+          transformed,
+        );
 
   // Iter 32 — when dial_mode='live', issue a real bgapi originate. We
   // do this BEFORE inserting the dial_intent so we can capture the job

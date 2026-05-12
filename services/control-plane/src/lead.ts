@@ -426,6 +426,15 @@ const LeadUpdateInputSchema = z.object({
     .max(64)
     .optional()
     .or(z.literal('').transform(() => null)),
+  // Iter 125 — per-lead caller-ID override. Empty string clears
+  // the value (falls back to route plan). Loose validation —
+  // operators paste E.164 / domestic / with-or-without-+ formats
+  // and we let the carrier normalise.
+  preferred_cid: z
+    .string()
+    .max(40)
+    .optional()
+    .or(z.literal('').transform(() => null)),
 });
 export type LeadUpdateInput = z.infer<typeof LeadUpdateInputSchema>;
 export { LeadUpdateInputSchema };

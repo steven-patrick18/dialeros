@@ -1137,6 +1137,9 @@ export interface LeadRecord {
   /** Iter 91 — inferred timezone from phone area code. NULL until
    * the backfill pass (or CSV ingest) populates it. */
   timezone: string | null;
+  /** Iter 125 — per-lead caller-ID override. NULL falls through
+   * to the route plan's cid_strategy. */
+  preferred_cid: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1361,6 +1364,7 @@ export function updateLeadFields(
     status: string;
     callback_at: string | null;
     timezone: string | null;
+    preferred_cid: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];
@@ -4336,7 +4340,13 @@ export function listLeadTimezonesForCampaign(campaignId: string): string[] {
 export function popHopperLead(
   campaignId: string,
 ):
-  | { lead_id: string; list_id: string; phone: string; name: string | null }
+  | {
+      lead_id: string;
+      list_id: string;
+      phone: string;
+      name: string | null;
+      preferred_cid: string | null;
+    }
   | undefined {
   const d = db();
   const row = d
@@ -4353,12 +4363,21 @@ export function popHopperLead(
     .get(campaignId) as { lead_id: string } | undefined;
   if (!row) return undefined;
 
+  // Iter 125 — surface preferred_cid alongside the rest of the
+  // picked-lead fields. NULL = use route plan strategy.
   const lead = d
     .prepare(
-      `SELECT id AS lead_id, list_id, phone, name FROM leads WHERE id = ?`,
+      `SELECT id AS lead_id, list_id, phone, name, preferred_cid
+         FROM leads WHERE id = ?`,
     )
     .get(row.lead_id) as
-    | { lead_id: string; list_id: string; phone: string; name: string | null }
+    | {
+        lead_id: string;
+        list_id: string;
+        phone: string;
+        name: string | null;
+        preferred_cid: string | null;
+      }
     | undefined;
   return lead;
 }

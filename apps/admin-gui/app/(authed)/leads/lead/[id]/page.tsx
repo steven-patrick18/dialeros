@@ -159,6 +159,14 @@ export default async function LeadDetail({
               maxLength: 64,
               hint: 'IANA TZ identifier like America/New_York. Inferred from phone area code at ingest; override here if the inference is wrong.',
             },
+            {
+              type: 'text',
+              name: 'preferred_cid',
+              label: 'Preferred caller ID',
+              value: lead.preferred_cid,
+              maxLength: 40,
+              hint: 'Iter 125 — when set, the pacer + manual dial use this caller-ID for this lead instead of the route plan strategy. Useful for stickiness with a number the prospect already recognises. Leave blank to fall back to the route plan.',
+            },
           ]}
           helpText="Phone is intentionally locked — it's the key for DNC matching + call-history correlation. To change a phone, delete this lead and add a new one."
         />
