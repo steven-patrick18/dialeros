@@ -2421,6 +2421,111 @@ export function listCampaignCallHistoryForExport(
     .all(...(values as never[])) as unknown as CampaignCallHistoryRow[];
 }
 
+/* Iter 142 — Floor-wide call history with filters. Powers the
+ * /supervisor/calls page: filter by campaign, agent, disposition,
+ * AMD result, and recording-presence; returns rows newest-first with
+ * a hard cap. JOINs in campaign + agent + carrier names so the
+ * client doesn't need a second round trip to render labels.
+ *
+ * Excludes simulated rows for the same reason
+ * listCampaignCallHistoryForExport does — they're noise in any
+ * QA/compliance context. */
+export interface FloorCallHistoryRow {
+  id: number;
+  ts: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  lead_id: string;
+  lead_phone: string;
+  lead_name: string | null;
+  transformed_phone: string;
+  cid_used: string | null;
+  kind: string;
+  assigned_user_id: string | null;
+  assigned_username: string | null;
+  carrier_id: string | null;
+  carrier_name: string | null;
+  answered_at: string | null;
+  hangup_at: string | null;
+  hangup_cause: string | null;
+  duration_ms: number | null;
+  disposition: string | null;
+  dispositioned_at: string | null;
+  amd_result: string | null;
+  recording_path: string | null;
+  originate_error: string | null;
+}
+
+export interface FloorCallHistoryFilters {
+  sinceIso?: string | null;
+  untilIso?: string | null;
+  campaignId?: string | null;
+  agentUserId?: string | null;
+  disposition?: string | null;
+  amdResult?: string | null;
+  onlyWithRecording?: boolean;
+  /** Hard-capped at 500 server-side regardless of caller input. */
+  limit?: number;
+}
+
+export function listFloorCallHistory(
+  f: FloorCallHistoryFilters,
+): FloorCallHistoryRow[] {
+  const where: string[] = ["di.kind != 'simulated'"];
+  const values: unknown[] = [];
+  if (f.sinceIso) {
+    where.push('di.ts >= ?');
+    values.push(f.sinceIso);
+  }
+  if (f.untilIso) {
+    where.push('di.ts < ?');
+    values.push(f.untilIso);
+  }
+  if (f.campaignId) {
+    where.push('di.campaign_id = ?');
+    values.push(f.campaignId);
+  }
+  if (f.agentUserId) {
+    where.push('di.assigned_user_id = ?');
+    values.push(f.agentUserId);
+  }
+  if (f.disposition) {
+    where.push('di.disposition = ?');
+    values.push(f.disposition);
+  }
+  if (f.amdResult) {
+    where.push('di.amd_result = ?');
+    values.push(f.amdResult);
+  }
+  if (f.onlyWithRecording) {
+    where.push('di.recording_path IS NOT NULL');
+  }
+  const limit = Math.max(1, Math.min(500, f.limit ?? 200));
+  return db()
+    .prepare(
+      `SELECT di.id, di.ts,
+              di.campaign_id, cm.name AS campaign_name,
+              di.lead_id, l.phone AS lead_phone, l.name AS lead_name,
+              di.transformed_phone, di.cid_used, di.kind,
+              di.assigned_user_id, u.username AS assigned_username,
+              di.carrier_id, c.name AS carrier_name,
+              di.answered_at, di.hangup_at, di.hangup_cause,
+              di.duration_ms,
+              di.disposition, di.dispositioned_at,
+              di.amd_result,
+              di.recording_path, di.originate_error
+         FROM dial_intents di
+         JOIN leads l ON l.id = di.lead_id
+         LEFT JOIN campaigns cm ON cm.id = di.campaign_id
+         LEFT JOIN users u ON u.id = di.assigned_user_id
+         LEFT JOIN carriers c ON c.id = di.carrier_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY di.id DESC
+        LIMIT ?`,
+    )
+    .all(...(values as never[]), limit) as unknown as FloorCallHistoryRow[];
+}
+
 export function countDialIntentsForCampaign(campaignId: string): number {
   const row = db()
     .prepare(

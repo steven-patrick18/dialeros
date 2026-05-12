@@ -29,6 +29,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/realtime', label: 'Real-time' },
       { href: '/agent', label: 'Agent console' },
       { href: '/supervisor', label: 'Supervisor floor' },
+      { href: '/supervisor/calls', label: 'Floor calls' },
       { href: '/callbacks', label: 'Callbacks' },
       { href: '/search/transcripts', label: 'Search transcripts' },
       { href: '/reports', label: 'Reports' },

@@ -181,9 +181,14 @@ export type { DailySummary } from './reports';
 // CSV exports (iter 126)
 export {
   listCampaignCallHistoryForExport,
+  listFloorCallHistory,
   listLeadsInList,
 } from './db';
 export type { CampaignCallHistoryRow } from './db';
+export type {
+  FloorCallHistoryRow,
+  FloorCallHistoryFilters,
+} from './db';
 
 // Floor disposition mix (iter 103)
 export { floorDispositionMixToday } from './db';
