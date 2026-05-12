@@ -43,6 +43,10 @@ export const APP_SETTING_KEYS = {
   // every other app_setting, even though it's not secret — keeps the
   // table shape uniform.
   recordingRetentionDays: 'recording.retention_days',
+  // Iter 134 — predictive-pacing recommendation curve.
+  // JSON-encoded PacingThresholds object. Admin-tunable
+  // via /settings/pacing; defaults applied when unset.
+  pacingThresholds: 'pacing.recommendation_thresholds',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -56,3 +60,98 @@ export function getRecordingRetentionDays(): number {
   }
   return n;
 }
+
+// Iter 134 — admin-tunable predictive-pacing recommendation curve.
+//
+// Stored as a JSON array of {min_rate, dial_level} steps sorted by
+// min_rate DESC. recommendDialLevel picks the FIRST step whose
+// min_rate ≤ the supplied answer rate. The default curve matches
+// the iter-132 hardcoded thresholds so existing deploys see no
+// behavior change until an admin opts in.
+//
+// Validation rules enforced at write time (see /api/settings/pacing):
+//   - 2..10 steps
+//   - min_rate strictly decreasing
+//   - dial_level > 0 and < 100
+//   - exactly one step with min_rate = 0 (catch-all bottom)
+
+export interface PacingThresholdStep {
+  /** Answer rate (0..1) — INCLUSIVE lower bound for this step. */
+  min_rate: number;
+  /** dial_level recommended at this step. */
+  dial_level: number;
+}
+
+export const PACING_THRESHOLDS_DEFAULT: PacingThresholdStep[] = [
+  { min_rate: 0.5, dial_level: 1.0 },
+  { min_rate: 0.25, dial_level: 1.5 },
+  { min_rate: 0.15, dial_level: 2.0 },
+  { min_rate: 0.05, dial_level: 3.0 },
+  { min_rate: 0, dial_level: 4.0 },
+];
+
+export function getPacingThresholds(): PacingThresholdStep[] {
+  const raw = getAppSetting(APP_SETTING_KEYS.pacingThresholds);
+  if (!raw) return PACING_THRESHOLDS_DEFAULT;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return PACING_THRESHOLDS_DEFAULT;
+    const out: PacingThresholdStep[] = [];
+    for (const v of parsed) {
+      if (typeof v !== 'object' || v === null) continue;
+      const o = v as Record<string, unknown>;
+      const min_rate = Number(o.min_rate);
+      const dial_level = Number(o.dial_level);
+      if (
+        !Number.isFinite(min_rate) ||
+        !Number.isFinite(dial_level) ||
+        min_rate < 0 ||
+        min_rate > 1 ||
+        dial_level <= 0
+      )
+        continue;
+      out.push({ min_rate, dial_level });
+    }
+    if (out.length === 0) return PACING_THRESHOLDS_DEFAULT;
+    out.sort((a, b) => b.min_rate - a.min_rate);
+    return out;
+  } catch {
+    return PACING_THRESHOLDS_DEFAULT;
+  }
+}
+
+export function setPacingThresholds(steps: PacingThresholdStep[]): void {
+  if (steps.length < 2 || steps.length > 10) {
+    throw new Error('Pacing thresholds must have between 2 and 10 steps.');
+  }
+  const sorted = [...steps].sort((a, b) => b.min_rate - a.min_rate);
+  // Validate strict decreasing min_rate.
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i]!.min_rate >= sorted[i - 1]!.min_rate) {
+      throw new Error(
+        'Each step\'s min_rate must be strictly lower than the previous.',
+      );
+    }
+  }
+  if (sorted[sorted.length - 1]!.min_rate !== 0) {
+    throw new Error(
+      'The lowest step must have min_rate=0 (catch-all bottom).',
+    );
+  }
+  for (const s of sorted) {
+    if (s.dial_level <= 0 || s.dial_level >= 100) {
+      throw new Error(
+        'dial_level for each step must be > 0 and < 100.',
+      );
+    }
+    if (s.min_rate < 0 || s.min_rate > 1) {
+      throw new Error('min_rate for each step must be in 0..1.');
+    }
+  }
+  setAppSetting(APP_SETTING_KEYS.pacingThresholds, JSON.stringify(sorted));
+}
+
+export function clearPacingThresholds(): void {
+  clearAppSetting(APP_SETTING_KEYS.pacingThresholds);
+}
+

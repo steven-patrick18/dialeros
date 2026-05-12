@@ -3,6 +3,8 @@ import { mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 import type { NodeRecord, NodeRole, NodeStatus } from './schema';
 import { COLUMN_MIGRATIONS, CREATE_TABLES_SQL } from './db-schema';
+// iter 134 — recommendDialLevel reads admin-tunable thresholds.
+import { getPacingThresholds } from './app-settings';
 
 // iter 130 webpack workaround: node:sqlite has no bare-name
 // equivalent (the builtin only exists under the node: scheme),
@@ -2913,12 +2915,17 @@ export function answerRateForCurrentBucket(
  *
  * Pass -1 (no data) for the conservative default. */
 export function recommendDialLevel(answerRate: number): number {
+  // Iter 134 — consult app_settings curve. The fallback default
+  // mirrors the iter-132 hardcoded steps so deploys that never
+  // open /settings/pacing keep the same behavior.
   if (answerRate < 0) return 1.0;
-  if (answerRate >= 0.5) return 1.0;
-  if (answerRate >= 0.25) return 1.5;
-  if (answerRate >= 0.15) return 2.0;
-  if (answerRate >= 0.05) return 3.0;
-  return 4.0;
+  const steps = getPacingThresholds();
+  for (const s of steps) {
+    if (answerRate >= s.min_rate) return s.dial_level;
+  }
+  // Should be unreachable because the lowest step is min_rate=0
+  // (validated at write time), but be defensive.
+  return steps[steps.length - 1]?.dial_level ?? 1.0;
 }
 /** Iter 99 — disposition breakdown for a single campaign since UTC
  * midnight. Driven by dial_intents.disposition (set when the agent

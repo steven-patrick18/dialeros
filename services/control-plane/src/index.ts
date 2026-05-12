@@ -221,7 +221,13 @@ export {
   APP_SETTING_KEYS,
   RECORDING_RETENTION_DEFAULT_DAYS,
   getRecordingRetentionDays,
+  // Iter 134 — pacing-recommendation curve
+  PACING_THRESHOLDS_DEFAULT,
+  getPacingThresholds,
+  setPacingThresholds,
+  clearPacingThresholds,
 } from './app-settings';
+export type { PacingThresholdStep } from './app-settings';
 
 // Recording retention (iter 56)
 export {
