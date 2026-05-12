@@ -474,4 +474,18 @@ export const COLUMN_MIGRATIONS: string[] = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_inbound_queue_active ON inbound_queue(in_group_id, enqueued_at) WHERE expired_at IS NULL",
   "CREATE INDEX IF NOT EXISTS idx_inbound_queue_pending ON inbound_queue(call_id, dispatched_at, expired_at)",
+  // Iter 135 — post-call AI pipeline. Filled by an operator-
+  // configured worker that polls /api/internal/ai-pending,
+  // downloads the recording, runs it through their chosen STT
+  // + LLM, and POSTs the result back via
+  // /api/internal/ai-process. ai_processed_at is the latch —
+  // pending list excludes rows where it's non-NULL so the
+  // worker doesn't loop on the same recording.
+  "ALTER TABLE dial_intents ADD COLUMN transcript_text TEXT",
+  "ALTER TABLE dial_intents ADD COLUMN ai_summary TEXT",
+  "ALTER TABLE dial_intents ADD COLUMN ai_processed_at TEXT",
+  // Partial index — only the small set of "answered + recorded
+  // + not yet AI'd" rows. Worker query stays sub-millisecond
+  // even on multi-million-row dial_intents tables.
+  "CREATE INDEX IF NOT EXISTS idx_dial_intents_ai_pending ON dial_intents(ai_processed_at, hangup_at) WHERE recording_path IS NOT NULL AND ai_processed_at IS NULL",
 ];

@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Fragment } from 'react';
 import { notFound } from 'next/navigation';
 import {
   getLead,
@@ -244,7 +245,8 @@ export default async function LeadDetail({
                       : 'text-fg-muted';
                 }
                 return (
-                  <tr key={h.id} className="border-b border-border/40">
+                  <Fragment key={h.id}>
+                  <tr className="border-b border-border/40">
                     <td className="py-2 text-fg-subtle text-xs whitespace-nowrap">
                       {new Date(h.ts).toLocaleString()}
                     </td>
@@ -294,6 +296,35 @@ export default async function LeadDetail({
                       />
                     </td>
                   </tr>
+                  {(h.ai_summary || h.transcript_text) && (
+                    <tr className="border-b border-border/40">
+                      <td colSpan={7} className="py-2 px-3 bg-card-hover/20">
+                        <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">
+                          AI summary
+                        </div>
+                        {h.ai_summary ? (
+                          <p className="text-sm text-fg whitespace-pre-wrap">
+                            {h.ai_summary}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-fg-subtle italic">
+                            (Summary not produced — transcript only)
+                          </p>
+                        )}
+                        {h.transcript_text && (
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-fg-subtle hover:text-fg-muted">
+                              Transcript ({h.transcript_text.length.toLocaleString()} chars)
+                            </summary>
+                            <p className="text-xs text-fg-muted whitespace-pre-wrap mt-1 max-h-64 overflow-y-auto">
+                              {h.transcript_text}
+                            </p>
+                          </details>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>

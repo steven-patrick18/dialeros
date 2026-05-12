@@ -1356,6 +1356,12 @@ export interface LeadCallHistoryRow {
   duration_ms: number | null;
   originate_error: string | null;
   recording_path: string | null;
+  // Iter 135 — AI-pipeline outputs (populated by the operator's
+  // worker that polls /api/internal/ai-pending). NULL until the
+  // worker writes back through /api/internal/ai-process.
+  transcript_text: string | null;
+  ai_summary: string | null;
+  ai_processed_at: string | null;
 }
 
 export function listCallHistoryForLead(
@@ -1371,7 +1377,8 @@ export function listCallHistoryForLead(
          di.carrier_id, ca.name AS carrier_name,
          di.cid_used, di.kind,
          di.answered_at, di.hangup_at, di.hangup_cause,
-         di.duration_ms, di.originate_error, di.recording_path
+         di.duration_ms, di.originate_error, di.recording_path,
+         di.transcript_text, di.ai_summary, di.ai_processed_at
        FROM dial_intents di
        JOIN campaigns c ON c.id = di.campaign_id
        LEFT JOIN route_plans rp ON rp.id = di.route_plan_id
@@ -2786,6 +2793,75 @@ export function agentLeaderboardToday(): AgentLeaderboardRow[] {
     .all(since, since, since, since) as unknown as AgentLeaderboardRow[];
 }
 
+
+/** Iter 135 — list dial_intents waiting for AI processing.
+ * Filters: not simulated, actually answered (transcribing a
+ * busy/no-answer recording is wasted spend), has a recording_path
+ * (FS wrote a wav), and hangup_at IS NOT NULL (call is over so
+ * the wav is fully flushed to disk). ai_processed_at IS NULL is
+ * the dedupe — once the worker POSTs back we stamp this and the
+ * row drops off the pending list.
+ *
+ * Limit defaults to 10 so an operator running a serial worker
+ * doesn't grab the entire backlog in one tick. Worker can pass
+ * a higher limit when running parallel.
+ */
+export interface AiPendingIntent {
+  id: number;
+  ts: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  lead_id: string;
+  lead_phone: string;
+  recording_path: string;
+  duration_ms: number | null;
+  answered_at: string;
+  hangup_at: string;
+}
+export function listAiPendingIntents(limit = 10): AiPendingIntent[] {
+  return db()
+    .prepare(
+      `SELECT di.id, di.ts,
+              di.campaign_id, c.name AS campaign_name,
+              di.lead_id, l.phone AS lead_phone,
+              di.recording_path,
+              di.duration_ms, di.answered_at, di.hangup_at
+         FROM dial_intents di
+         JOIN leads l ON l.id = di.lead_id
+         LEFT JOIN campaigns c ON c.id = di.campaign_id
+        WHERE di.kind != 'simulated'
+          AND di.recording_path IS NOT NULL
+          AND di.answered_at IS NOT NULL
+          AND di.hangup_at IS NOT NULL
+          AND di.ai_processed_at IS NULL
+        ORDER BY di.id ASC
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as AiPendingIntent[];
+}
+
+/** Iter 135 — store transcript + summary back on a dial_intent.
+ * Either transcript or summary may be NULL (e.g. summary
+ * pipeline failed but transcript landed). ai_processed_at is
+ * always stamped so the row falls off the pending list, even
+ * when both columns are NULL — the operator's worker would
+ * otherwise loop forever on a row that crashes the LLM. */
+export function applyAiResult(args: {
+  id: number;
+  transcript_text: string | null;
+  ai_summary: string | null;
+}): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE dial_intents
+          SET transcript_text = ?,
+              ai_summary = ?,
+              ai_processed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?`,
+    )
+    .run(args.transcript_text, args.ai_summary, args.id);
+  return Number(result.changes) > 0;
+}
 
 /** Iter 132 — predictive pacing data layer: answer-rate buckets
  * by (hour, weekday). Pure SQL aggregate over the last N days

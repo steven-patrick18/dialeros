@@ -619,3 +619,7 @@ export {
   recommendDialLevel,
 } from './db';
 export type { AnswerRateBucket, AnswerRateSummary } from './db';
+
+// AI pipeline (iter 135)
+export { listAiPendingIntents, applyAiResult } from './db';
+export type { AiPendingIntent } from './db';
