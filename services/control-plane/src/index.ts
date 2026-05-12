@@ -186,6 +186,7 @@ export {
   clearRecordingPathsForFiles,
   applyAutoDisposition,
   listAutoDispositionCandidates,
+  getCampaignAbandonRate,
   getCampaignFromDb,
   listLeadsInList,
 } from './db';

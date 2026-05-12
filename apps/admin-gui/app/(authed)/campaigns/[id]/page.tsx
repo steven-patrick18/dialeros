@@ -28,6 +28,7 @@ import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
 import { CloneCampaignButton } from './clone-button';
 import { AnswerRateCard } from './answer-rate-card';
+import { AbandonRateCard } from './abandon-rate-card';
 import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
 import { VoicemailTuningCard } from './voicemail-tuning-card';
@@ -975,6 +976,11 @@ function RealtimeTab({
         campaignId={c.id}
         currentDialLevel={c.dial_level}
       />
+      {/* Iter 147 — TCPA-safe abandon-rate guardrail card.
+          Shows the rolling rate from the last 100 dispositioned
+          calls + the campaign cap; flags THROTTLED when the
+          pacer is currently skipping ticks to honor it. */}
+      <AbandonRateCard campaignId={c.id} />
       {c.amd_action === 'detect' && (
         <AmdBreakdownCard rows={amdBreakdownForCampaignToday(c.id)} />
       )}

@@ -15,6 +15,7 @@ import {
   getRoutePlanFromDb,
   hopperSize,
   inFlightForCampaign,
+  getCampaignAbandonRate,
   inFlightForCarrier,
   insertDialIntent,
   listCampaignsFromDb,
@@ -952,7 +953,35 @@ export function startPacer(campaignId: string): boolean {
         remoteLinesTotal > 0 ? remoteLinesTotal : localAgents.length;
       if (poolSize === 0) return;
       const inFlight = inFlightForCampaign(campaignId);
-      const target = computeDialTarget(poolSize, c.dial_level || 1, inFlight);
+      let target = computeDialTarget(
+        poolSize,
+        c.dial_level || 1,
+        inFlight,
+      );
+      // Iter 147 — TCPA-safe abandon-rate guardrail. Once we've
+      // seen at least MIN_ABANDON_SAMPLE dispositioned calls AND
+      // the rolling abandon rate is at or above the campaign's
+      // configured max_abandon_pct, clamp target=0 so this tick
+      // doesn't add to the abandoned pile. In-flight calls finish
+      // organically; the next tick re-evaluates as those dispose.
+      //
+      // The minimum sample dodges the "one A on the first three
+      // calls = 33% abandon rate, pause everything" false alarm
+      // typical on freshly-started campaigns.
+      const MIN_ABANDON_SAMPLE = 50;
+      if ((c.max_abandon_pct ?? 0) > 0) {
+        const arate = getCampaignAbandonRate(campaignId, 100);
+        if (
+          arate.total >= MIN_ABANDON_SAMPLE &&
+          arate.rate_pct >= c.max_abandon_pct
+        ) {
+          console.warn(
+            `[pacing] ${campaignId} throttled: abandon ${arate.rate_pct.toFixed(2)}% ` +
+              `>= cap ${c.max_abandon_pct}% (sample n=${arate.total}, abandoned=${arate.abandoned})`,
+          );
+          target = 0;
+        }
+      }
       for (let i = 0; i < target; i++) {
         const result = await paceCampaignOnce(campaignId);
         if (result.outcome !== 'dialed') break;

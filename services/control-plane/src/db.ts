@@ -2674,6 +2674,50 @@ export function clearRecordingPathsForFiles(paths: string[]): number {
   return total;
 }
 
+/* Iter 147 — rolling abandon-rate for a campaign. Used by the
+ * pacer to self-throttle when the FCC 3% cap (or whichever
+ * campaign-configured max_abandon_pct) would be breached, and
+ * by the UI card on the campaign detail page.
+ *
+ * Sample is the last N dispositioned non-simulated calls. We
+ * count rows with disposition='A' (the iter-146 auto-disposition
+ * code for "answered but no agent on bridge"). Manual agent
+ * dispositions aren't 'A' so they're naturally excluded.
+ *
+ * Returning rate_pct as a percentage (0..100) matches the
+ * campaign.max_abandon_pct column which is stored the same way.
+ */
+export interface CampaignAbandonRate {
+  abandoned: number;
+  total: number;
+  rate_pct: number;
+  sample_size: number;
+}
+export function getCampaignAbandonRate(
+  campaignId: string,
+  sampleSize = 100,
+): CampaignAbandonRate {
+  const rows = db()
+    .prepare(
+      `SELECT disposition
+         FROM dial_intents
+        WHERE campaign_id = ?
+          AND disposition IS NOT NULL
+          AND dispositioned_at IS NOT NULL
+          AND kind != 'simulated'
+        ORDER BY id DESC
+        LIMIT ?`,
+    )
+    .all(campaignId, sampleSize) as Array<{ disposition: string }>;
+  const total = rows.length;
+  const abandoned = rows.reduce(
+    (n, r) => n + (r.disposition === 'A' ? 1 : 0),
+    0,
+  );
+  const rate_pct = total > 0 ? (abandoned / total) * 100 : 0;
+  return { abandoned, total, rate_pct, sample_size: sampleSize };
+}
+
 export function getCallDetail(id: number): CallDetailRow | undefined {
   return db()
     .prepare(
