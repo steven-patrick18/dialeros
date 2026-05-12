@@ -9,6 +9,7 @@ import {
   getInGroup,
   normalizePhone,
   pickAvailableAgentForInGroup,
+  pickAvailableAgentsForInGroup,
 } from '@dialeros/control-plane';
 
 export const runtime = 'nodejs';
@@ -158,9 +159,8 @@ interface ForwardArgs {
 
 function forwardOrQueue(args: ForwardArgs): NextResponse {
   // Iter 115 — honor each in-group's configured routing_strategy.
-  // ring_all isn't true fork-ring yet (iter 117) so it degrades to
-  // longest_idle inside the picker. Default to longest_idle for
-  // unknown / new strategies.
+  // Iter 117 — ring_all now returns multiple targets so Kamailio
+  // can fork-ring every available agent simultaneously.
   const ig = getInGroup(args.inGroupId);
   const strategy =
     ig?.routing_strategy === 'ring_all' ||
@@ -168,7 +168,18 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
     ig?.routing_strategy === 'longest_idle'
       ? ig.routing_strategy
       : 'longest_idle';
-  const agent = pickAvailableAgentForInGroup(args.inGroupId, strategy);
+
+  // ring_all → up to 8 targets simultaneously; everything else
+  // picks a single agent. Both paths share the same downstream
+  // dispatch / queue logic — `agents` is just always-an-array.
+  const agents =
+    strategy === 'ring_all'
+      ? pickAvailableAgentsForInGroup(args.inGroupId, strategy, 8)
+      : (() => {
+          const a = pickAvailableAgentForInGroup(args.inGroupId, strategy);
+          return a ? [a] : [];
+        })();
+  const agent = agents[0];
   if (!agent) {
     // Iter 116 — persist the parked caller so the FS queue
     // extension can poll for an agent assignment + so the
@@ -212,6 +223,15 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
     });
   }
 
+  // Iter 117 — for ring_all return the full target list so
+  // Kamailio's append_branch loop can fork to each. Single-agent
+  // path leaves `targets` undefined and Kamailio uses target_uri.
+  const targets = agents.map((a) => ({
+    agent_id: a.user_id,
+    agent_extension: a.extension,
+    target_uri: `sip:${a.extension}@${FS_INTERNAL_HOST}:${FS_INTERNAL_PORT}`,
+  }));
+
   appendAudit({
     actorUserId: agent.user_id,
     actorIp: null,
@@ -224,12 +244,14 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
       reason: args.reason,
       lead_id: args.lead_id,
       agent_extension: agent.extension,
+      fork_count: agents.length,
     },
   });
 
   return NextResponse.json({
     action: 'forward',
-    target_uri: `sip:${agent.extension}@${FS_INTERNAL_HOST}:${FS_INTERNAL_PORT}`,
+    target_uri: targets[0]!.target_uri,
+    targets: targets.length > 1 ? targets : undefined,
     in_group_id: args.inGroupId,
     agent_id: agent.user_id,
     agent_extension: agent.extension,

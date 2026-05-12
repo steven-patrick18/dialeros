@@ -3437,6 +3437,50 @@ export function expireStaleQueuedCalls(maxAgeSeconds = 600): number {
   return Number(result.changes);
 }
 
+/** Iter 117 — plural picker for true ring_all fork-ringing.
+ * Returns up to `limit` available agents in the in-group, ordered
+ * by strategy. Kamailio's dialplan loops over the result and
+ * append_branch()es each target so the customer's INVITE forks
+ * to every agent simultaneously; first to answer wins, the rest
+ * get a CANCEL. ring_all should keep limit < ~10 — beyond that
+ * carriers start refusing the forked SDP and FS RAM grows quickly.
+ *
+ * Returns [] when no agent is available — caller falls back to
+ * the queue branch same as the singular picker. */
+export function pickAvailableAgentsForInGroup(
+  inGroupId: string,
+  strategy: 'ring_all' | 'longest_idle' | 'random',
+  limit = 8,
+): InGroupAgentPick[] {
+  const orderClause =
+    strategy === 'random'
+      ? 'ORDER BY RANDOM()'
+      : "ORDER BY COALESCE(s.updated_at, '1970-01-01') ASC";
+  return db()
+    .prepare(
+      `SELECT u.id   AS user_id,
+              u.username,
+              p.extension
+         FROM user_in_groups uig
+         JOIN users u ON u.id = uig.user_id
+         JOIN phones p ON p.user_id = u.id AND p.is_primary = 1
+         LEFT JOIN agent_status s ON s.user_id = u.id
+        WHERE uig.in_group_id = ?
+          AND u.is_active = 1
+          AND COALESCE(s.status, 'AVAILABLE') = 'AVAILABLE'
+          AND NOT EXISTS (
+            SELECT 1 FROM dial_intents di
+             WHERE di.assigned_user_id = u.id
+               AND di.answered_at IS NOT NULL
+               AND di.hangup_at IS NULL
+               AND di.kind != 'simulated'
+          )
+        ${orderClause}
+        LIMIT ?`,
+    )
+    .all(inGroupId, limit) as unknown as InGroupAgentPick[];
+}
+
 /** Iter 115 — supervisor inbound monitor. Reads audit_events for
  * the inbound.forwarded / inbound.queued / inbound.rejected
  * actions (the inbound-route endpoint writes these on every
