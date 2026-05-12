@@ -169,7 +169,19 @@ export default async function LeadListDetail({
           ← Lead Lists
         </Link>
       </div>
-      <h1 className="text-2xl font-semibold">{list.name}</h1>
+      <div className="flex items-baseline justify-between max-w-4xl">
+        <h1 className="text-2xl font-semibold">{list.name}</h1>
+        {/* Iter 126 — CSV export. Plain <a> with download attr so
+            the browser handles the streamed response and shows
+            the file save dialog. Admin / supervisor only — the
+            endpoint enforces same check server-side. */}
+        <a
+          href={`/api/lead-lists/${list.id}/export`}
+          className="text-xs px-3 py-1 rounded border border-border text-fg-muted hover:text-fg hover:bg-card-hover/40"
+        >
+          Export CSV
+        </a>
+      </div>
       <p className="text-fg-subtle text-xs mb-6">
         {total.toLocaleString()} leads · created{' '}
         {new Date(list.created_at).toLocaleString()}

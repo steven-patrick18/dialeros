@@ -165,6 +165,13 @@ export type { CampaignDispositionRow } from './db';
 export { amdBreakdownForCampaignToday } from './db';
 export type { AmdBreakdownRow } from './db';
 
+// CSV exports (iter 126)
+export {
+  listCampaignCallHistoryForExport,
+  listLeadsInList,
+} from './db';
+export type { CampaignCallHistoryRow } from './db';
+
 // Floor disposition mix (iter 103)
 export { floorDispositionMixToday } from './db';
 

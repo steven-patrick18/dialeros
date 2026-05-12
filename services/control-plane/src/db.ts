@@ -2303,6 +2303,71 @@ export function listDialIntentsForCampaign(
     .all(campaignId, sinceId, limit) as unknown as DialIntentRecord[];
 }
 
+/** Iter 126 — campaign-scoped call history for CSV export. Joins
+ * dial_intents × leads × carriers so the CSV is self-contained
+ * (lead phone/name + carrier name, not just FKs). Excludes
+ * simulated rows since exports almost always go to billing /
+ * compliance / CRM where simulated calls are noise. Optional
+ * sinceIso clamps to a date range — supports "calls in May" or
+ * "last 24h" exports without sucking the whole campaign down. */
+export interface CampaignCallHistoryRow {
+  id: number;
+  ts: string;
+  campaign_id: string;
+  lead_id: string;
+  lead_phone: string;
+  lead_name: string | null;
+  transformed_phone: string;
+  cid_used: string | null;
+  kind: string;
+  assigned_user_id: string | null;
+  carrier_id: string | null;
+  carrier_name: string | null;
+  answered_at: string | null;
+  hangup_at: string | null;
+  hangup_cause: string | null;
+  duration_ms: number | null;
+  disposition: string | null;
+  dispositioned_at: string | null;
+  amd_result: string | null;
+  recording_path: string | null;
+  originate_error: string | null;
+}
+export function listCampaignCallHistoryForExport(
+  campaignId: string,
+  sinceIso: string | null,
+): CampaignCallHistoryRow[] {
+  const where: string[] = [
+    'di.campaign_id = ?',
+    "di.kind != 'simulated'",
+  ];
+  const values: unknown[] = [campaignId];
+  if (sinceIso) {
+    where.push('di.ts >= ?');
+    values.push(sinceIso);
+  }
+  return db()
+    .prepare(
+      `SELECT di.id, di.ts,
+              di.campaign_id, di.lead_id,
+              l.phone AS lead_phone, l.name AS lead_name,
+              di.transformed_phone, di.cid_used, di.kind,
+              di.assigned_user_id,
+              di.carrier_id, c.name AS carrier_name,
+              di.answered_at, di.hangup_at, di.hangup_cause,
+              di.duration_ms,
+              di.disposition, di.dispositioned_at,
+              di.amd_result,
+              di.recording_path, di.originate_error
+         FROM dial_intents di
+         JOIN leads l ON l.id = di.lead_id
+         LEFT JOIN carriers c ON c.id = di.carrier_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY di.id ASC`,
+    )
+    .all(...(values as never[])) as unknown as CampaignCallHistoryRow[];
+}
+
 export function countDialIntentsForCampaign(campaignId: string): number {
   const row = db()
     .prepare(

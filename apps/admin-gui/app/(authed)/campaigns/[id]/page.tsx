@@ -928,6 +928,24 @@ function RealtimeTab({
           </Link>
           .
         </p>
+        {/* Iter 126 — CSV export of this campaign's call history.
+            Lifetime by default; the endpoint accepts ?since=ISO
+            for a date-bounded slice (no UI for it yet — power
+            users can craft the URL directly). */}
+        <div className="mt-3 flex items-center gap-3">
+          <a
+            href={`/api/campaigns/${c.id}/call-history-export`}
+            className="text-xs px-3 py-1 rounded border border-border text-fg-muted hover:text-fg hover:bg-card-hover/40"
+          >
+            Export call history (CSV)
+          </a>
+          <a
+            href={`/api/campaigns/${c.id}/call-history-export?since=${new Date(Date.now() - 24 * 3600_000).toISOString()}`}
+            className="text-xs px-3 py-1 rounded border border-border text-fg-muted hover:text-fg hover:bg-card-hover/40"
+          >
+            Last 24h only
+          </a>
+        </div>
       </div>
 
       {/* Iter 122 — AMD breakdown is only meaningful when the
