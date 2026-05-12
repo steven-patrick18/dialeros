@@ -30,6 +30,19 @@ export function AgentSoftphoneBadge() {
       </span>
     );
   }
+  // Iter 124 — transportConnected went false but we're not in
+  // an error state and we've previously been ready: the WS dropped
+  // (browser sleep / network blip) and we're auto-reconnecting.
+  if (sp.ready && !sp.transportConnected) {
+    return (
+      <span
+        className="text-[10px] uppercase px-1.5 py-0.5 rounded border bg-warn/15 text-warn border-warn/50"
+        title="WebSocket dropped — reconnecting. Inbound calls cannot reach you while this is amber."
+      >
+        Softphone reconnecting…
+      </span>
+    );
+  }
   if (sp.ready) {
     return (
       <span className="text-[10px] uppercase px-1.5 py-0.5 rounded border bg-warn/10 text-warn border-warn/40">

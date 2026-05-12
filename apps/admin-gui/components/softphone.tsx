@@ -18,6 +18,7 @@ import {
   UserAgent,
   type Session,
 } from 'sip.js';
+import { TransportState } from 'sip.js/lib/api/transport-state';
 
 /**
  * Iter 35b — browser-side softphone via sip.js + WebRTC.
@@ -47,6 +48,14 @@ export interface SoftphoneState {
   remoteIdentity: string | null;
   error: string | null;
   extension: string | null;
+  /** Iter 124 — WS transport state separate from `registered`.
+   * Browser-sleep / network-drop disconnects the transport
+   * BEFORE the REGISTER refresh window fires, so a stale
+   * `registered=true` would mislead the agent into thinking
+   * inbound calls will land. transportState surfaces the
+   * underlying WS status so the panel can render an explicit
+   * "reconnecting" indicator. */
+  transportConnected: boolean;
   /** Iter 50 — instantaneous level 0..1 sampled by Web Audio Analysers
    * on the mic sender and remote receiver. Driven by RAF, so consumers
    * can render VU bars without managing AudioContext themselves. */
@@ -105,6 +114,7 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
     rxPackets: 0,
     txPackets: 0,
     iceState: '—',
+    transportConnected: false,
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -188,6 +198,33 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
         });
         uaRef.current = ua;
 
+        // Iter 124 — track the WS transport state separately
+        // from REGISTER state. A backgrounded browser tab or a
+        // network drop kills the WS but REGISTER is cached at
+        // FS until expires; the agent still shows "REG" green
+        // even though new inbound INVITEs would fail to land.
+        // Surfacing transportConnected lets the panel render
+        // an explicit reconnecting indicator and lets the
+        // visibility/online handlers below decide when to
+        // ua.reconnect().
+        const transportStateChange = (s: TransportState) => {
+          const connected = s === TransportState.Connected;
+          setState((prev) => ({
+            ...prev,
+            transportConnected: connected,
+            // When the transport drops, REGISTER is logically
+            // stale even though the registerer hasn't fired its
+            // own state change yet. Clear it pre-emptively so the
+            // panel doesn't lie for the ~75% × expires window
+            // until the next refresh attempt fails.
+            registered: connected ? prev.registered : false,
+          }));
+        };
+        ua.transport.stateChange.addListener(transportStateChange);
+        cleanupFns.push(() =>
+          ua.transport.stateChange.removeListener(transportStateChange),
+        );
+
         await ua.start();
         if (cancelled) {
           await ua.stop();
@@ -248,6 +285,78 @@ export function SoftphoneProvider({ children }: { children: React.ReactNode }) {
           /* ignore */
         });
       }
+    };
+  }, []);
+
+  // Iter 124 — auto-reconnect on browser sleep / network drop.
+  //
+  // Three trigger paths:
+  //   visibilitychange  — tab comes back to foreground after the
+  //                       browser throttled / suspended the WS.
+  //                       Most common cause of "I had REG green but
+  //                       calls weren't reaching me" complaints.
+  //   online            — navigator network state flipped back to
+  //                       online (wifi reconnect, suspend resume,
+  //                       VPN reconnect).
+  //   periodic backstop — 30s interval that re-checks if the
+  //                       transport is disconnected and triggers
+  //                       reconnect with single-flight guard. Last
+  //                       defence in case neither event fires (some
+  //                       browsers don't emit `online` reliably).
+  //
+  // ua.reconnect() is single-flight inside sip.js — calling it
+  // while already reconnecting is a no-op. After the transport
+  // comes back, the Registerer re-registers automatically.
+  useEffect(() => {
+    let reconnecting = false;
+    async function tryReconnect(reason: string) {
+      const ua = uaRef.current;
+      const reg = registererRef.current;
+      if (!ua) return;
+      if (reconnecting) return;
+      if (ua.transport.state === TransportState.Connected) return;
+      reconnecting = true;
+      try {
+        // eslint-disable-next-line no-console
+        console.info(`[softphone] reconnect attempt (${reason})`);
+        await ua.reconnect();
+        // Re-register once the transport is back; the Registerer
+        // doesn't always fire its own refresh on transport flap.
+        if (reg) {
+          try {
+            await reg.register();
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.warn('[softphone] register after reconnect failed', e);
+          }
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[softphone] reconnect failed', e);
+      } finally {
+        reconnecting = false;
+      }
+    }
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void tryReconnect('visibilitychange');
+      }
+    };
+    const onOnline = () => {
+      void tryReconnect('online');
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+
+    const backstop = setInterval(() => {
+      void tryReconnect('backstop');
+    }, 30_000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+      clearInterval(backstop);
     };
   }, []);
 
