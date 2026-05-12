@@ -1,0 +1,23 @@
+# Iter 136 — fires the AI worker. Driven by
+# dialeros-ai-worker.timer (every 5 minutes by default;
+# override OnCalendar there if you want hourly batches or
+# faster turnaround).
+
+[Unit]
+Description=DialerOS AI post-call worker (Whisper + GPT)
+After=network.target dialeros-admin.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/dialeros/admin.env
+ExecStart=/usr/bin/python3 /opt/dialeros/scripts/ai-worker.py
+StandardOutput=journal
+StandardError=journal
+User=dialeros
+Group=dialeros
+# Hardening — worker only needs to read /var/lib/dialeros/recordings
+# and reach localhost (the admin-gui) + api.openai.com.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/dialeros/recordings

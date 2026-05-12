@@ -1,0 +1,17 @@
+# Iter 136 — runs the AI worker every 5 minutes. Persistent=true
+# catches missed runs after a host outage so the backlog drains.
+# RandomizedDelaySec spreads load across multi-box deploys + keeps
+# us off the OpenAI rate-limit boundary at minute zero.
+
+[Unit]
+Description=DialerOS AI worker timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+RandomizedDelaySec=30s
+Unit=dialeros-ai-worker.service
+
+[Install]
+WantedBy=timers.target
