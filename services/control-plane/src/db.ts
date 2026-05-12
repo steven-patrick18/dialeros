@@ -1795,6 +1795,18 @@ export interface DialIntentRecord {
   duration_ms: number | null;
   recording_path: string | null;
   remote_agent_id: string | null;
+  // Iter 122 — amd_v2 verdict (HUMAN/MACHINE/NOTSURE/UNKNOWN)
+  amd_result: string | null;
+  // Iter 135 — AI worker outputs
+  transcript_text: string | null;
+  ai_summary: string | null;
+  ai_processed_at: string | null;
+  ai_sentiment: string | null;
+  ai_flags: string | null;
+  // Iter 124 — carrier the call routed through
+  carrier_id: string | null;
+  // Iter 146 — auto vs agent disposition
+  disposition_origin: string | null;
 }
 
 export function insertDialIntent(rec: {
@@ -2451,6 +2463,7 @@ export interface FloorCallHistoryRow {
   duration_ms: number | null;
   disposition: string | null;
   dispositioned_at: string | null;
+  disposition_origin: string | null;
   amd_result: string | null;
   recording_path: string | null;
   originate_error: string | null;
@@ -2511,7 +2524,7 @@ export function listFloorCallHistory(
               di.carrier_id, c.name AS carrier_name,
               di.answered_at, di.hangup_at, di.hangup_cause,
               di.duration_ms,
-              di.disposition, di.dispositioned_at,
+              di.disposition, di.dispositioned_at, di.disposition_origin,
               di.amd_result,
               di.recording_path, di.originate_error
          FROM dial_intents di
@@ -2561,6 +2574,7 @@ export interface CallDetailRow {
   duration_ms: number | null;
   disposition: string | null;
   dispositioned_at: string | null;
+  disposition_origin: string | null;
   amd_result: string | null;
   recording_path: string | null;
   originate_error: string | null;
@@ -2569,6 +2583,67 @@ export interface CallDetailRow {
   ai_sentiment: string | null;
   ai_flags: string | null;
   ai_processed_at: string | null;
+}
+
+/* Iter 146 — apply a system-inferred disposition. Idempotent:
+ * a row that already has a disposition (set by an agent or by a
+ * prior auto-tag run) is left alone. The WHERE clause enforces
+ * that at SQL level so concurrent fs-events + backfill calls
+ * can't race into a double-write.
+ *
+ * Returns the updated row, or undefined when no row matched
+ * (already dispositioned, or correlation_id unknown). */
+export function applyAutoDisposition(
+  correlationId: string,
+  disposition: string,
+): DialIntentRecord | undefined {
+  const result = db()
+    .prepare(
+      `UPDATE dial_intents
+          SET disposition = ?,
+              dispositioned_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+              disposition_origin = 'auto'
+        WHERE correlation_id = ?
+          AND disposition IS NULL`,
+    )
+    .run(disposition, correlationId);
+  if (Number(result.changes) === 0) return undefined;
+  return db()
+    .prepare(`SELECT * FROM dial_intents WHERE correlation_id = ?`)
+    .get(correlationId) as unknown as DialIntentRecord;
+}
+
+/* Iter 146 — list rows that are candidates for the auto-dispose
+ * backfill: hangup is final, no disposition yet, not simulated.
+ * Oldest-first so chunked re-runs naturally advance. Pulls only
+ * the fields inferAutoDisposition + the route handler need. */
+export interface AutoDispositionCandidate {
+  id: number;
+  campaign_id: string;
+  correlation_id: string | null;
+  disposition: string | null;
+  originate_error: string | null;
+  answered_at: string | null;
+  assigned_user_id: string | null;
+  hangup_cause: string | null;
+  amd_result: string | null;
+}
+export function listAutoDispositionCandidates(
+  limit: number,
+): AutoDispositionCandidate[] {
+  return db()
+    .prepare(
+      `SELECT id, campaign_id, correlation_id, disposition,
+              originate_error, answered_at, assigned_user_id,
+              hangup_cause, amd_result
+         FROM dial_intents
+        WHERE disposition IS NULL
+          AND hangup_at IS NOT NULL
+          AND kind != 'simulated'
+        ORDER BY id ASC
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as AutoDispositionCandidate[];
 }
 
 /* Iter 144 — bulk-NULL recording_path on rows whose .wav file
@@ -2613,7 +2688,7 @@ export function getCallDetail(id: number): CallDetailRow | undefined {
               di.carrier_id, c.name AS carrier_name,
               di.answered_at, di.hangup_at, di.hangup_cause,
               di.duration_ms,
-              di.disposition, di.dispositioned_at,
+              di.disposition, di.dispositioned_at, di.disposition_origin,
               di.amd_result,
               di.recording_path, di.originate_error,
               di.transcript_text, di.ai_summary,
@@ -2899,7 +2974,9 @@ export function disposeIntent(args: {
   try {
     d.prepare(
       `UPDATE dial_intents
-         SET disposition = ?, dispositioned_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         SET disposition = ?,
+             dispositioned_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+             disposition_origin = 'agent',
              callback_at = ?
        WHERE id = ?`,
     ).run(args.disposition, args.callbackAt, args.intentId);

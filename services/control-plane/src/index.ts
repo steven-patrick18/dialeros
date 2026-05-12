@@ -184,6 +184,9 @@ export {
   listFloorCallHistory,
   getCallDetail,
   clearRecordingPathsForFiles,
+  applyAutoDisposition,
+  listAutoDispositionCandidates,
+  getCampaignFromDb,
   listLeadsInList,
 } from './db';
 export type { CampaignCallHistoryRow } from './db';
@@ -646,3 +649,11 @@ export {
   VoicemailConfigSchema,
 } from './campaign';
 export type { VoicemailConfig } from './campaign';
+
+// Iter 146 — auto-disposition
+export { inferAutoDisposition } from './auto-disposition';
+export type {
+  AutoDispoIntent,
+  AutoDispoCampaign,
+} from './auto-disposition';
+export type { AutoDispositionCandidate } from './db';

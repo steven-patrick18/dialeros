@@ -29,6 +29,7 @@ interface Row {
   hangup_cause: string | null;
   duration_ms: number | null;
   disposition: string | null;
+  disposition_origin: string | null;
   amd_result: string | null;
   recording_path: string | null;
   originate_error: string | null;
@@ -354,6 +355,12 @@ export function CallsList({
                   </td>
                   <td className="px-3 py-2">
                     {r.disposition ?? '—'}
+                    {r.disposition_origin === 'auto' &&
+                    r.disposition ? (
+                      <span className="ml-1 text-[10px] text-fg-subtle">
+                        (auto)
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2">
                     {r.recording_path ? (

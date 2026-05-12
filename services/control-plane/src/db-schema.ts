@@ -366,6 +366,10 @@ export const COLUMN_MIGRATIONS: string[] = [
   "ALTER TABLE dial_intents ADD COLUMN assigned_user_id TEXT",
   // iter 18: agent dispositions. NULL = not yet dispositioned.
   "ALTER TABLE dial_intents ADD COLUMN disposition TEXT",
+  // Iter 146 — origin of the disposition: 'agent' (manual wrap-up),
+  // 'auto' (system-inferred at hangup/backfill), or NULL (legacy
+  // pre-iter-146 row that was never re-tagged).
+  "ALTER TABLE dial_intents ADD COLUMN disposition_origin TEXT",
   "ALTER TABLE dial_intents ADD COLUMN dispositioned_at TEXT",
   "ALTER TABLE dial_intents ADD COLUMN callback_at TEXT",
   // iter 19: schedule-aware picker. Mirrors callback_at onto the lead

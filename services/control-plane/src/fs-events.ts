@@ -2,9 +2,12 @@ import net from 'net';
 import {
   applyDialIntentAnswered,
   applyDialIntentHangup,
+  applyAutoDisposition,
+  getCampaignFromDb,
   getLeadIdForCorrelation,
   setLeadStatusIfIn,
 } from './db';
+import { inferAutoDisposition } from './auto-disposition';
 import {
   IN_FLIGHT_STATUSES,
   leadStatusFromHangup,
@@ -302,8 +305,9 @@ function handleEventBody(
     const amdResult =
       amdResultRaw && amdResultRaw.length > 0 ? amdResultRaw : undefined;
 
+    let updated: ReturnType<typeof applyDialIntentHangup> = undefined;
     try {
-      const updated = applyDialIntentHangup({
+      updated = applyDialIntentHangup({
         correlation_id: correlationId,
         hangup_cause: cause,
         hangup_at: hangupAt,
@@ -318,6 +322,41 @@ function handleEventBody(
       if (updated) emitIntentUpdate(updated);
     } catch (e) {
       console.error('[fs-events] applyDialIntentHangup failed:', e);
+    }
+
+    // Iter 146 — system-set a disposition for the row IF no agent
+    // is going to fill one in (machine drops, no-answers, abandons,
+    // originate errors). For answered + agent-assigned calls,
+    // inferAutoDisposition returns null and we let the wrap-up
+    // screen handle it. Errors here don't fail the rest of the
+    // hangup path; we still want lead status to update even if
+    // the auto-dispo lookup hiccups.
+    try {
+      if (updated && !updated.disposition) {
+        const campaign = getCampaignFromDb(updated.campaign_id);
+        const auto = inferAutoDisposition(
+          {
+            disposition: updated.disposition,
+            originate_error: updated.originate_error,
+            answered_at: updated.answered_at,
+            assigned_user_id: updated.assigned_user_id,
+            hangup_cause: updated.hangup_cause,
+            amd_result: updated.amd_result,
+          },
+          campaign
+            ? {
+                amd_action: campaign.amd_action,
+                voicemail_path: campaign.voicemail_path,
+              }
+            : null,
+        );
+        if (auto) {
+          const dispoUpdated = applyAutoDisposition(correlationId, auto);
+          if (dispoUpdated) emitIntentUpdate(dispoUpdated);
+        }
+      }
+    } catch (e) {
+      console.error('[fs-events] auto-disposition failed:', e);
     }
 
     // Iter 34 — also update the lead's status from the carrier

@@ -209,6 +209,11 @@ export default async function CallDetailPage({
               <span className="text-fg-subtle">dispositioned </span>
               {fmtTs(call.dispositioned_at)} ·{' '}
               <span className="text-fg">{call.disposition ?? '—'}</span>
+              {call.disposition_origin === 'auto' ? (
+                <span className="ml-1 text-xs text-fg-subtle">(auto)</span>
+              ) : call.disposition_origin === 'agent' ? (
+                <span className="ml-1 text-xs text-fg-subtle">(agent)</span>
+              ) : null}
             </div>
           ) : null}
           {call.hangup_at ? (
