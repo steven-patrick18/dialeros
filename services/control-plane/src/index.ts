@@ -396,6 +396,7 @@ export {
   CampaignInputSchema,
   CampaignUpdateInputSchema,
   createCampaign,
+  cloneCampaign,
   listCampaigns,
   getCampaign,
   getCampaignLeadLists,

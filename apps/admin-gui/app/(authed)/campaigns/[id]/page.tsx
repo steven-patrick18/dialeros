@@ -24,6 +24,7 @@ import {
 } from '@dialeros/control-plane';
 import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
+import { CloneCampaignButton } from './clone-button';
 import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
 import { HopperResetButton } from './hopper-reset-button';
@@ -128,11 +129,14 @@ export default async function CampaignDetail({
       </div>
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold">{c.name}</h1>
-        <span
-          className={`${STATUS_STYLES[c.status] ?? STATUS_STYLES.archived} border px-2 py-0.5 rounded text-xs uppercase`}
-        >
-          {c.status}
-        </span>
+        <div className="flex items-center gap-3">
+          <CloneCampaignButton campaignId={c.id} defaultName={c.name} />
+          <span
+            className={`${STATUS_STYLES[c.status] ?? STATUS_STYLES.archived} border px-2 py-0.5 rounded text-xs uppercase`}
+          >
+            {c.status}
+          </span>
+        </div>
       </div>
       <p className="text-fg-subtle text-sm font-mono mb-4">{c.type}</p>
 

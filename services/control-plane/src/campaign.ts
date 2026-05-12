@@ -167,6 +167,87 @@ export function getCampaignInGroups(campaignId: string): string[] {
   return getCampaignInGroupIds(campaignId);
 }
 
+/** Iter 128 — clone a campaign. Carries over every operator-
+ * configurable field (route plan, pacing, AMD, dial windows,
+ * list order, dialable statuses, voicemail path, in-group
+ * attachments) so the new campaign is ready to tune rather than
+ * built from scratch.
+ *
+ * Deliberately does NOT carry:
+ *   - status — clone is created paused; operator unpauses when
+ *              ready (matches createCampaign default).
+ *   - lead_list_ids — separate flag because attaching the same
+ *              lists doubles the dialing pressure on those leads
+ *              (both campaigns paced against the same pool).
+ *              Default false; operator opts in when they want a
+ *              second pass with different routing on the same
+ *              leads.
+ *   - dial_intents — call history doesn't carry; the new
+ *              campaign starts at zero.
+ *
+ * The new name must be unique; campaigns.name is UNIQUE in the
+ * schema and we surface the conflict as a clear error. */
+export function cloneCampaign(
+  sourceId: string,
+  newName: string,
+  opts: { include_lead_lists?: boolean } = {},
+): CreateCampaignResult {
+  const src = getCampaignFromDb(sourceId);
+  if (!src) {
+    throw new Error(`Source campaign ${sourceId} not found.`);
+  }
+  if (!newName || newName.trim().length === 0) {
+    throw new Error('New campaign name is required.');
+  }
+  if (listCampaignsFromDb().some((c) => c.name === newName)) {
+    throw new Error(`A campaign named "${newName}" already exists.`);
+  }
+
+  const id = randomUUID();
+  insertCampaign({
+    id,
+    name: newName,
+    description: src.description,
+    type: src.type,
+    route_plan_id: src.route_plan_id,
+    base_ratio: src.base_ratio,
+    call_window_start: src.call_window_start,
+    call_window_end: src.call_window_end,
+    max_abandon_pct: src.max_abandon_pct,
+    dial_mode: src.dial_mode,
+  });
+
+  // ALTER-only columns (iter 49 hopper, iter 66 AMD, iter 70
+  // list_order, iter 94 dialable_statuses) live in the same
+  // row but aren't part of insertCampaign's signature. Fold
+  // them in via the partial-update helper so the clone is a
+  // faithful copy.
+  updateCampaignFields(id, {
+    hopper_level: src.hopper_level,
+    dial_level: src.dial_level,
+    amd_action: src.amd_action,
+    voicemail_path: src.voicemail_path,
+    list_order: src.list_order,
+    dialable_statuses: src.dialable_statuses,
+  });
+
+  // In-groups always carry — inbound queues aren't a dialing
+  // pool, attaching the same in-group to a clone just means both
+  // campaigns route inbound from the same DIDs.
+  const inGroups = getCampaignInGroupIds(sourceId);
+  attachCampaignInGroups(id, inGroups);
+
+  // Lead lists are opt-in to avoid accidentally double-pacing the
+  // same leads. When opted in we re-attach every list the source
+  // had.
+  if (opts.include_lead_lists) {
+    const listIds = getCampaignLeadListIds(sourceId);
+    attachCampaignLeadLists(id, listIds);
+  }
+
+  return { id };
+}
+
 /**
  * Iter 21 — replace the campaign's in-group attachment with the given
  * set. Validates each id exists. Use this from edit forms; the create
