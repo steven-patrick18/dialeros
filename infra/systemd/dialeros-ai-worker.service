@@ -1,11 +1,11 @@
-# Iter 136 — fires the AI worker. Driven by
-# dialeros-ai-worker.timer (every 5 minutes by default;
-# override OnCalendar there if you want hourly batches or
-# faster turnaround).
+# Iter 137 — local AI worker. Replaces iter-136's OpenAI variant
+# with whisper.cpp + Ollama, both running on this host. No
+# external network access at runtime.
 
 [Unit]
-Description=DialerOS AI post-call worker (Whisper + GPT)
-After=network.target dialeros-admin.service
+Description=DialerOS local AI post-call worker (whisper.cpp + Ollama)
+After=network.target dialeros-admin.service ollama.service
+Wants=ollama.service
 
 [Service]
 Type=oneshot
@@ -15,9 +15,13 @@ StandardOutput=journal
 StandardError=journal
 User=dialeros
 Group=dialeros
-# Hardening — worker only needs to read /var/lib/dialeros/recordings
-# and reach localhost (the admin-gui) + api.openai.com.
 NoNewPrivileges=true
 PrivateTmp=true
+# Read access only to recording WAVs + the local model dir;
+# write only to a per-run /tmp via PrivateTmp.
 ProtectSystem=strict
-ReadOnlyPaths=/var/lib/dialeros/recordings
+ReadOnlyPaths=/var/lib/dialeros/recordings /var/lib/dialeros/ai
+# whisper.cpp + ollama can chew through CPU on long calls.
+# Soft-cap so the worker doesn't starve the rest of the box.
+CPUQuota=300%
+Nice=10
