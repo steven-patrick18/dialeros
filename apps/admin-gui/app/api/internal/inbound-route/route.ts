@@ -156,7 +156,18 @@ interface ForwardArgs {
 }
 
 function forwardOrQueue(args: ForwardArgs): NextResponse {
-  const agent = pickAvailableAgentForInGroup(args.inGroupId);
+  // Iter 115 — honor each in-group's configured routing_strategy.
+  // ring_all isn't true fork-ring yet (iter 116) so it degrades to
+  // longest_idle inside the picker. Default to longest_idle for
+  // unknown / new strategies.
+  const ig = getInGroup(args.inGroupId);
+  const strategy =
+    ig?.routing_strategy === 'ring_all' ||
+    ig?.routing_strategy === 'random' ||
+    ig?.routing_strategy === 'longest_idle'
+      ? ig.routing_strategy
+      : 'longest_idle';
+  const agent = pickAvailableAgentForInGroup(args.inGroupId, strategy);
   if (!agent) {
     // No-one to route to right this second. Kamailio's dialplan
     // can park the call (mod_park) or play hold music + ringback

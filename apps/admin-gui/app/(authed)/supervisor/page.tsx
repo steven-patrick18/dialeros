@@ -1,7 +1,11 @@
 import { redirect } from 'next/navigation';
-import { listActiveCalls } from '@dialeros/control-plane';
+import {
+  listActiveCalls,
+  listRecentInboundDecisions,
+} from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { SupervisorBoard } from './board';
+import { InboundMonitor } from './inbound-monitor';
 import { SoftphoneProvider } from '@/components/softphone';
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +23,12 @@ export default async function SupervisorPage() {
   }
 
   const initial = listActiveCalls();
+  // Iter 115 — recent inbound decisions for the new monitor card.
+  // JSON-roundtripped because node:sqlite returns null-prototype
+  // rows that React 19 RSC refuses to serialize (iter 85 dance).
+  const inboundDecisions = JSON.parse(
+    JSON.stringify(listRecentInboundDecisions(50)),
+  );
 
   return (
     <SoftphoneProvider>
@@ -42,6 +52,8 @@ export default async function SupervisorPage() {
             answered_at: c.answered_at,
           }))}
         />
+
+        <InboundMonitor initial={inboundDecisions} />
       </div>
     </SoftphoneProvider>
   );

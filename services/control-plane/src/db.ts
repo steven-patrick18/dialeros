@@ -3225,18 +3225,22 @@ export function deleteDid(did: string): boolean {
   return Number(result.changes) > 0;
 }
 
-/** Iter 114 — pick a single available agent attached to an in-group
- * so Kamailio's inbound-route hook can produce a concrete bridge
- * target. Joins user_in_groups × users × agent_status × phones and
- * filters to active + AVAILABLE + not currently in a live call (no
- * undisposed intent with hangup_at IS NULL). Returns the agent's
- * primary phone extension when present — that's what FS bridges
- * to via user/<ext>. Returns undefined when no agent is reachable;
- * caller decides whether to fall back to a queue / fast-busy.
+/** Iter 114 + iter 115 — pick a single available agent for an in-
+ * group's inbound call. Joins user_in_groups × users × phones +
+ * filters to active, AVAILABLE, not bridged. iter 115 added per-
+ * strategy ordering:
+ *   - longest_idle: ORDER BY agent_status.updated_at ASC. Best
+ *     fairness — the agent who's been idle longest gets the call.
+ *   - random:       ORDER BY RANDOM(). Useful for QA / load
+ *     balancing without sticky bias.
+ *   - ring_all:     Kamailio's true fork-ringing path needs a
+ *     list of every available extension. iter 116 implements
+ *     that by returning an array; for now the picker degrades
+ *     to longest_idle so the existing single-target wire still
+ *     works.
  *
- * iter 115 will replace this with ring-strategy support
- * (longest-idle, round-robin, ring-all). For now it's "first
- * available wins" — enough to wire the inbound path end-to-end. */
+ * Returns undefined when no agent is reachable; caller decides
+ * whether to queue, fast-busy, or park. */
 export interface InGroupAgentPick {
   user_id: string;
   username: string;
@@ -3244,7 +3248,17 @@ export interface InGroupAgentPick {
 }
 export function pickAvailableAgentForInGroup(
   inGroupId: string,
+  strategy: 'ring_all' | 'longest_idle' | 'random' = 'longest_idle',
 ): InGroupAgentPick | undefined {
+  const orderClause =
+    strategy === 'random'
+      ? 'ORDER BY RANDOM()'
+      : // ring_all (degrades) + longest_idle both use updated_at ASC.
+        // NULL updated_at (never set a status) sorts oldest so a
+        // freshly-signed-in agent gets priority over a stale
+        // PAUSED→AVAILABLE cycle from earlier.
+        "ORDER BY COALESCE(s.updated_at, '1970-01-01') ASC";
+
   return db()
     .prepare(
       `SELECT u.id   AS user_id,
@@ -3264,10 +3278,65 @@ export function pickAvailableAgentForInGroup(
                AND di.hangup_at IS NULL
                AND di.kind != 'simulated'
           )
-        ORDER BY COALESCE(s.updated_at, '1970-01-01') ASC
+        ${orderClause}
         LIMIT 1`,
     )
     .get(inGroupId) as InGroupAgentPick | undefined;
+}
+
+/** Iter 115 — supervisor inbound monitor. Reads audit_events for
+ * the inbound.forwarded / inbound.queued / inbound.rejected
+ * actions (the inbound-route endpoint writes these on every
+ * Kamailio decision). Returns the most-recent `limit` decisions
+ * with their JSON payload parsed for the supervisor /supervisor
+ * card. Cheap — audit_events is indexed by ts DESC. */
+export interface InboundDecisionRow {
+  ts: string;
+  action: string;
+  target_in_group_id: string | null;
+  from_phone: string | null;
+  to_phone: string | null;
+  classification: string | null;
+  agent_extension: string | null;
+  lead_id: string | null;
+}
+export function listRecentInboundDecisions(
+  limit = 50,
+): InboundDecisionRow[] {
+  const rows = db()
+    .prepare(
+      `SELECT ts, action, target_id, payload_json
+         FROM audit_events
+        WHERE action IN ('inbound.forwarded', 'inbound.queued')
+        ORDER BY ts DESC
+        LIMIT ?`,
+    )
+    .all(limit) as Array<{
+    ts: string;
+    action: string;
+    target_id: string | null;
+    payload_json: string | null;
+  }>;
+  return rows.map((r) => {
+    let payload: Record<string, unknown> = {};
+    if (r.payload_json) {
+      try {
+        payload = JSON.parse(r.payload_json) as Record<string, unknown>;
+      } catch {
+        /* drop malformed payloads silently — surface ts + action */
+      }
+    }
+    return {
+      ts: r.ts,
+      action: r.action,
+      target_in_group_id: r.target_id,
+      from_phone: (payload.from as string) ?? null,
+      to_phone: (payload.to as string) ?? null,
+      classification: (payload.reason as string) ?? null,
+      agent_extension: (payload.agent_extension as string) ?? null,
+      lead_id: (payload.lead_id as string) ?? null,
+    };
+  });
 }
 
 export function findDidOwner(did: string): string | undefined {
