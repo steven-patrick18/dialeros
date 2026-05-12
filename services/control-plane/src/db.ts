@@ -2208,6 +2208,11 @@ export function applyDialIntentHangup(args: {
   hangup_at: string;
   duration_ms: number;
   answered_at?: string | null;
+  // Iter 122 — captured from variable_dialeros_amd_result on
+  // CHANNEL_HANGUP_COMPLETE for campaigns with amd_action=detect.
+  // Undefined when no AMD ran (skip the column update); null is
+  // a deliberate "ran but couldn't classify" override.
+  amd_result?: string | null;
 }): DialIntentRecord | undefined {
   const sets: string[] = [
     'hangup_cause = ?',
@@ -2222,6 +2227,10 @@ export function applyDialIntentHangup(args: {
   if (args.answered_at !== undefined) {
     sets.push('answered_at = ?');
     vals.push(args.answered_at);
+  }
+  if (args.amd_result !== undefined) {
+    sets.push('amd_result = ?');
+    vals.push(args.amd_result);
   }
   vals.push(args.correlation_id);
   const result = db()
@@ -3435,6 +3444,74 @@ export function expireStaleQueuedCalls(maxAgeSeconds = 600): number {
     )
     .run(cutoff);
   return Number(result.changes);
+}
+
+/** Iter 122 — AMD result breakdown for a campaign since UTC
+ * midnight. Only counts non-simulated rows that actually ran AMD
+ * (amd_result IS NOT NULL). The four expected codes match
+ * mod_amd_v2's output:
+ *   HUMAN     — connected, voice detected
+ *   MACHINE   — connected, answering-machine detected
+ *   NOTSURE   — ambiguous; pacer treats as HUMAN to avoid
+ *               dropping real callers
+ *   UNKNOWN   — amd_v2 finished without a verdict (rare)
+ * Plus a synthetic NO_AMD bucket counting answered calls on the
+ * campaign that did NOT run AMD — useful for spotting a
+ * misconfigured amd_action mid-shift. Zero counts are included so
+ * the realtime card renders a stable 5-cell strip. */
+export interface AmdBreakdownRow {
+  amd_result: string;
+  count: number;
+}
+const AMD_CODES = ['HUMAN', 'MACHINE', 'NOTSURE', 'UNKNOWN'] as const;
+export function amdBreakdownForCampaignToday(
+  campaignId: string,
+): AmdBreakdownRow[] {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const since = dayStart.toISOString();
+
+  const counted = db()
+    .prepare(
+      `SELECT amd_result AS r, COUNT(*) AS n
+         FROM dial_intents
+        WHERE campaign_id = ?
+          AND kind != 'simulated'
+          AND amd_result IS NOT NULL
+          AND ts >= ?
+        GROUP BY amd_result`,
+    )
+    .all(campaignId, since) as Array<{ r: string; n: number }>;
+
+  const noAmd = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dial_intents
+        WHERE campaign_id = ?
+          AND kind != 'simulated'
+          AND answered_at IS NOT NULL
+          AND amd_result IS NULL
+          AND ts >= ?`,
+    )
+    .get(campaignId, since) as { n: number };
+
+  const byKey = new Map<string, number>();
+  for (const r of counted) byKey.set(r.r, r.n);
+
+  const rows: AmdBreakdownRow[] = AMD_CODES.map((k) => ({
+    amd_result: k,
+    count: byKey.get(k) ?? 0,
+  }));
+  // Surface unknown / custom amd_result strings that don't match
+  // the four we know about — avoids silent data loss if mod_amd_v2
+  // ever introduces a new code or the dialplan starts writing one.
+  for (const [r, n] of byKey) {
+    if (!AMD_CODES.includes(r as (typeof AMD_CODES)[number])) {
+      rows.push({ amd_result: r, count: n });
+    }
+  }
+  rows.push({ amd_result: 'NO_AMD', count: noAmd.n ?? 0 });
+  return rows;
 }
 
 /** Iter 117 — plural picker for true ring_all fork-ringing.

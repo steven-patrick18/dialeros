@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
+  amdBreakdownForCampaignToday,
   campaignDispositionMix,
   getActiveAgentsForCampaign,
   getCampaign,
@@ -928,7 +929,95 @@ function RealtimeTab({
           .
         </p>
       </div>
+
+      {/* Iter 122 — AMD breakdown is only meaningful when the
+          campaign actually runs amd_v2 (amd_action='detect'). Hide
+          the card otherwise; surfaces a stable 5-bucket strip when
+          enabled. */}
+      {c.amd_action === 'detect' && (
+        <AmdBreakdownCard rows={amdBreakdownForCampaignToday(c.id)} />
+      )}
     </>
+  );
+}
+
+// Iter 122 — AMD result card. Renders the 4 known amd_v2 codes
+// (HUMAN / MACHINE / NOTSURE / UNKNOWN) + a synthetic NO_AMD
+// bucket counting answered calls that didn't run AMD — useful
+// for spotting a misconfigured amd_action mid-shift.
+const AMD_TONES: Record<string, { dot: string; text: string }> = {
+  HUMAN: { dot: 'bg-success', text: 'text-success' },
+  MACHINE: { dot: 'bg-info', text: 'text-info' },
+  NOTSURE: { dot: 'bg-warn', text: 'text-warn' },
+  UNKNOWN: { dot: 'bg-fg-muted', text: 'text-fg-muted' },
+  NO_AMD: { dot: 'bg-error', text: 'text-error' },
+};
+function AmdBreakdownCard({
+  rows,
+}: {
+  rows: ReturnType<typeof amdBreakdownForCampaignToday>;
+}) {
+  const total = rows.reduce(
+    (a, r) => (r.amd_result === 'NO_AMD' ? a : a + r.count),
+    0,
+  );
+  const noAmd = rows.find((r) => r.amd_result === 'NO_AMD')?.count ?? 0;
+  return (
+    <div className="border border-border rounded p-4 mb-6 max-w-4xl">
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+          AMD detection today
+        </h2>
+        <span className="text-xs text-fg-subtle tabular-nums">
+          {total.toLocaleString()} classified
+          {noAmd > 0 && (
+            <>
+              {' · '}
+              <span className="text-error">{noAmd} no-AMD</span>
+            </>
+          )}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        {rows.map((r) => {
+          const tone = AMD_TONES[r.amd_result] ?? {
+            dot: 'bg-fg-muted',
+            text: 'text-fg-muted',
+          };
+          const dim = r.count === 0;
+          return (
+            <div
+              key={r.amd_result}
+              className={`border border-border rounded px-2 py-1.5 ${
+                dim ? 'opacity-50' : ''
+              }`}
+              title={
+                r.amd_result === 'NO_AMD'
+                  ? 'Answered calls today that did NOT run AMD — campaign config drift?'
+                  : r.amd_result
+              }
+            >
+              <div className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+                <span className="text-[10px] uppercase tracking-wide text-fg-subtle truncate">
+                  {r.amd_result.replace(/_/g, ' ')}
+                </span>
+              </div>
+              <div className={`text-lg mt-0.5 tabular-nums ${tone.text}`}>
+                {r.count.toLocaleString()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-fg-subtle mt-3">
+        amd_v2 classifies the destination at answer time. NOTSURE /
+        UNKNOWN are treated as HUMAN by the dialeros-amd dispatch
+        extension so we never drop a real caller. NO_AMD &gt; 0 means
+        some answered calls bypassed AMD — check the dialplan or the
+        amd_action setting.
+      </p>
+    </div>
   );
 }
 

@@ -292,6 +292,16 @@ function handleEventBody(
     const answered = epochToIso(ev['caller-channel-answered-time']);
     if (answered) answeredAt = answered;
 
+    // Iter 122 — capture AMD verdict when amd_action=detect ran
+    // amd_v2 inline. The dialplan stamps dialeros_amd_result on
+    // the channel right after amd_v2 returns; FS surfaces it on
+    // every event as variable_dialeros_amd_result. Pass undefined
+    // (don't touch the column) when the var isn't present so
+    // existing non-AMD campaigns stay NULL.
+    const amdResultRaw = ev['variable_dialeros_amd_result'];
+    const amdResult =
+      amdResultRaw && amdResultRaw.length > 0 ? amdResultRaw : undefined;
+
     try {
       const updated = applyDialIntentHangup({
         correlation_id: correlationId,
@@ -299,6 +309,7 @@ function handleEventBody(
         hangup_at: hangupAt,
         duration_ms: durationMs,
         answered_at: answeredAt,
+        amd_result: amdResult,
       });
       // Iter 78 — push the terminal state out to the SSE bus so the
       // live campaign panel transitions the row to its final label

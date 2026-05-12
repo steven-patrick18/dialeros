@@ -161,6 +161,10 @@ export type { AgentTodayScoreboard } from './db';
 export { campaignDispositionMix } from './db';
 export type { CampaignDispositionRow } from './db';
 
+// AMD breakdown (iter 122)
+export { amdBreakdownForCampaignToday } from './db';
+export type { AmdBreakdownRow } from './db';
+
 // Floor disposition mix (iter 103)
 export { floorDispositionMixToday } from './db';
 

@@ -29,11 +29,18 @@
       <action application="log" data="INFO [dialeros-amd] start uuid=${uuid} cid=${dialeros_correlation_id}"/>
       <action application="amd_v2" data="async:false"/>
       <action application="log" data="INFO [dialeros-amd] result=${amd_result} uuid=${uuid}"/>
+      <!-- Iter 122 — copy the amd_v2 verdict onto our own var
+           so fs-events.ts can read variable_dialeros_amd_result
+           on CHANNEL_HANGUP_COMPLETE without depending on FS's
+           internal channel-var namespace surviving the dispatch
+           branches below. -->
+      <action application="set" data="dialeros_amd_result=${amd_result}"/>
       <action application="execute_extension" data="dialeros-amd-dispatch XML default"/>
     </condition>
     <condition>
       <!-- fall-through when execute_extension didn't match -->
       <action application="amd_v2" data="async:false"/>
+      <action application="set" data="dialeros_amd_result=${amd_result}"/>
       <action application="execute_extension" data="dialeros-amd-dispatch XML default"/>
     </condition>
   </extension>

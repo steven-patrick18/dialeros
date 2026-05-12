@@ -429,6 +429,16 @@ export const COLUMN_MIGRATIONS: string[] = [
   "CREATE INDEX IF NOT EXISTS idx_leads_timezone ON leads(timezone)",
   // Iter 94: per-campaign dialable_statuses whitelist (JSON array).
   "ALTER TABLE campaigns ADD COLUMN dialable_statuses TEXT NOT NULL DEFAULT '[\"NEW\",\"CALLED_NO_ANSWER\",\"BUSY\"]'",
+  // Iter 122: AMD result column. dialplan dialeros-amd-route sets
+  // a channel var dialeros_amd_result = HUMAN | MACHINE | NOTSURE
+  // | UNKNOWN once amd_v2 runs at answer. fs-events extracts that
+  // on CHANNEL_HANGUP_COMPLETE and writes it here so we can:
+  //   - break down per-campaign AMD success in real time
+  //   - audit voicemail-drop vs bridge-to-agent decisions
+  //   - feed an ML model later if we ever predict-pace on AMD rate
+  // NULL when the campaign didn't use amd_action=detect.
+  "ALTER TABLE dial_intents ADD COLUMN amd_result TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_dial_intents_amd_result ON dial_intents(amd_result, campaign_id)",
   // Iter 116: inbound call queue. When the inbound-route hook says
   // "queue" (no available agent), we persist the parked caller
   // here so the FS queue extension can poll for an agent + so the
