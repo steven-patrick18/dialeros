@@ -605,3 +605,11 @@ export type {
   AnsibleRunnerInput,
   AnsibleRunnerResult,
 } from './runner';
+
+// Predictive pacing data layer (iter 132)
+export {
+  answerRateByHourWeekday,
+  answerRateForCurrentBucket,
+  recommendDialLevel,
+} from './db';
+export type { AnswerRateBucket, AnswerRateSummary } from './db';

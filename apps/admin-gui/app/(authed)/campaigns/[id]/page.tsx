@@ -25,6 +25,7 @@ import {
 import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
 import { CloneCampaignButton } from './clone-button';
+import { AnswerRateCard } from './answer-rate-card';
 import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
 import { HopperResetButton } from './hopper-reset-button';
@@ -956,6 +957,10 @@ function RealtimeTab({
           campaign actually runs amd_v2 (amd_action='detect'). Hide
           the card otherwise; surfaces a stable 5-bucket strip when
           enabled. */}
+      <AnswerRateCard
+        campaignId={c.id}
+        currentDialLevel={c.dial_level}
+      />
       {c.amd_action === 'detect' && (
         <AmdBreakdownCard rows={amdBreakdownForCampaignToday(c.id)} />
       )}

@@ -2784,6 +2784,142 @@ export function agentLeaderboardToday(): AgentLeaderboardRow[] {
     .all(since, since, since, since) as unknown as AgentLeaderboardRow[];
 }
 
+
+/** Iter 132 — predictive pacing data layer: answer-rate buckets
+ * by (hour, weekday). Pure SQL aggregate over the last N days
+ * of non-simulated, non-originate-failed dial intents. The
+ * `kind != 'originate_failed'` filter matters because failed
+ * originates never had a chance to be answered and would skew
+ * the denominator downward, making it look like the destination
+ * pool is dialing dead. */
+export interface AnswerRateBucket {
+  hour: number;
+  weekday: number;
+  total: number;
+  answered: number;
+  /** Fraction 0..1. -1 sentinel when total = 0. */
+  answer_rate: number;
+}
+export interface AnswerRateSummary {
+  since_iso: string;
+  total_calls: number;
+  total_answered: number;
+  overall_rate: number;
+  buckets: AnswerRateBucket[];
+}
+export function answerRateByHourWeekday(
+  campaignId: string,
+  days = 30,
+): AnswerRateSummary {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const sinceIso = since.toISOString();
+  const rows = db()
+    .prepare(
+      `SELECT
+         CAST(strftime('%H', ts, 'localtime') AS INTEGER) AS hour,
+         CAST(strftime('%w', ts, 'localtime') AS INTEGER) AS weekday,
+         COUNT(*) AS total,
+         SUM(CASE WHEN answered_at IS NOT NULL THEN 1 ELSE 0 END) AS answered
+       FROM dial_intents
+      WHERE campaign_id = ?
+        AND kind != 'simulated'
+        AND kind != 'originate_failed'
+        AND ts >= ?
+      GROUP BY hour, weekday
+      ORDER BY weekday ASC, hour ASC`,
+    )
+    .all(campaignId, sinceIso) as Array<{
+    hour: number;
+    weekday: number;
+    total: number;
+    answered: number;
+  }>;
+
+  let totalCalls = 0;
+  let totalAnswered = 0;
+  const buckets: AnswerRateBucket[] = [];
+  for (const r of rows) {
+    totalCalls += r.total;
+    totalAnswered += r.answered;
+    buckets.push({
+      hour: r.hour,
+      weekday: r.weekday,
+      total: r.total,
+      answered: r.answered,
+      answer_rate: r.total > 0 ? r.answered / r.total : -1,
+    });
+  }
+  return {
+    since_iso: sinceIso,
+    total_calls: totalCalls,
+    total_answered: totalAnswered,
+    overall_rate: totalCalls > 0 ? totalAnswered / totalCalls : -1,
+    buckets,
+  };
+}
+
+/** Iter 132 — current-bucket lookup. The campaign-detail page
+ * uses this to render "your dial_level may be {too high | too
+ * low}" — comparing the recommended level (recommendDialLevel
+ * below) to the campaign's configured level. Returns null when
+ * the current (hour, weekday) bucket has zero recorded calls,
+ * which a freshly-launched campaign will hit. */
+export function answerRateForCurrentBucket(
+  campaignId: string,
+  days = 30,
+  when: Date = new Date(),
+): AnswerRateBucket | null {
+  const hour = when.getHours();
+  const weekday = when.getDay();
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const row = db()
+    .prepare(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN answered_at IS NOT NULL THEN 1 ELSE 0 END) AS answered
+       FROM dial_intents
+      WHERE campaign_id = ?
+        AND kind != 'simulated'
+        AND kind != 'originate_failed'
+        AND ts >= ?
+        AND CAST(strftime('%H', ts, 'localtime') AS INTEGER) = ?
+        AND CAST(strftime('%w', ts, 'localtime') AS INTEGER) = ?`,
+    )
+    .get(campaignId, since.toISOString(), hour, weekday) as {
+    total: number;
+    answered: number;
+  };
+  if (!row || row.total === 0) return null;
+  return {
+    hour,
+    weekday,
+    total: row.total,
+    answered: row.answered,
+    answer_rate: row.answered / row.total,
+  };
+}
+
+/** Iter 132 — recommended dial_level given an answer rate.
+ * Inverse curve matching ViciDial conventional wisdom: low
+ * answer rate → dial harder to keep agents fed; high answer
+ * rate → conservative to avoid abandons. Thresholds are
+ * baked-in for v1; iter 133 makes them operator-tunable.
+ *
+ *   ≥ 50%   → 1.0  (1:1 power dial)
+ *   25-50%  → 1.5
+ *   15-25%  → 2.0
+ *    5-15%  → 3.0
+ *   < 5%    → 4.0  (aggressive predictive)
+ *
+ * Pass -1 (no data) for the conservative default. */
+export function recommendDialLevel(answerRate: number): number {
+  if (answerRate < 0) return 1.0;
+  if (answerRate >= 0.5) return 1.0;
+  if (answerRate >= 0.25) return 1.5;
+  if (answerRate >= 0.15) return 2.0;
+  if (answerRate >= 0.05) return 3.0;
+  return 4.0;
+}
 /** Iter 99 — disposition breakdown for a single campaign since UTC
  * midnight. Driven by dial_intents.disposition (set when the agent
  * logs an outcome). Returns rows for the 7 ViciDial-style codes
