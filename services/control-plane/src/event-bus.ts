@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter } from 'events';
 
 // In-process pub/sub for provisioning events.
 // One bus per Node process. Survives Next.js HMR via globalThis cache.

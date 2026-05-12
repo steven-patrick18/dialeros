@@ -1,9 +1,39 @@
-import { DatabaseSync } from 'node:sqlite';
-import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { randomUUID } from 'crypto';
+import { mkdirSync } from 'fs';
+import { dirname, resolve } from 'path';
 import type { NodeRecord, NodeRole, NodeStatus } from './schema';
 import { COLUMN_MIGRATIONS, CREATE_TABLES_SQL } from './db-schema';
+
+// iter 130 webpack workaround: node:sqlite has no bare-name
+// equivalent (the builtin only exists under the node: scheme),
+// and webpack 5 errors on the node: prefix when transpiling
+// this file for non-Node targets (edge bundle that Next builds
+// for middleware, client bundle that gets pulled in via
+// transpilePackages). Using createRequire from the standard
+// 'module' builtin sidesteps webpack's static analysis of
+// import specifiers: createRequire(...)('node:sqlite') is a
+// runtime call webpack treats as opaque.
+//
+// On Node server (the only place this file actually executes),
+// createRequire from 'module' works in both CJS and ESM
+// emission modes. For the client + edge bundles, next.config's
+// resolve.fallback maps 'module' → false so the build doesn't
+// try to follow this import.
+import { createRequire } from 'module';
+type SqliteRow = Record<string, unknown>;
+type SqliteStmt = {
+  run: (...args: unknown[]) => { changes: number | bigint; lastInsertRowid: number | bigint };
+  get: (...args: unknown[]) => SqliteRow | undefined;
+  all: (...args: unknown[]) => SqliteRow[];
+};
+interface DatabaseSync {
+  prepare(sql: string): SqliteStmt;
+  exec(sql: string): void;
+}
+const _require = createRequire(import.meta.url) as (
+  m: string,
+) => { DatabaseSync: new (path: string) => DatabaseSync };
+const { DatabaseSync } = _require('node:sqlite');
 
 const DB_PATH =
   process.env.DIALEROS_DB ?? resolve(process.cwd(), 'data', 'dialeros.db');

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { z } from 'zod';
 import {
   deleteRemoteAgentFromDb,

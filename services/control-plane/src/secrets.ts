@@ -2,15 +2,15 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
-} from 'node:crypto';
+} from 'crypto';
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
-} from 'node:fs';
-import { dirname, resolve } from 'node:path';
+} from 'fs';
+import { dirname, resolve } from 'path';
 
 // Envelope encryption for at-rest secrets (SIP digest passwords, etc.)
 //

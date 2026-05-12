@@ -3,7 +3,7 @@ import {
   randomUUID,
   scryptSync,
   timingSafeEqual,
-} from 'node:crypto';
+} from 'crypto';
 import { z } from 'zod';
 import {
   countActiveAdmins,

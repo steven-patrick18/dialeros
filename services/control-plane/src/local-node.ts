@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { hostname, networkInterfaces } from 'node:os';
+import { randomUUID } from 'crypto';
+import { hostname, networkInterfaces } from 'os';
 import {
   findNodeByHost,
   getPrimaryPhoneForUser,
