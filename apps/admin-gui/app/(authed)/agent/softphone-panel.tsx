@@ -137,38 +137,74 @@ export function AgentSoftphonePanel() {
     return () => clearInterval(id);
   }, [sp.inCall]);
 
-  // Iter 95 — BYE-miss watchdog. While the softphone thinks we're
-  // in a call AND we have a correlation_id from the manual dial,
-  // poll /api/agent/call-status every 3 s. If the server says the
-  // dial_intent is hung_up but the softphone still believes it's
-  // connected, sip.js missed the BYE. forceClear() unsticks the
-  // UI. Cleared on natural hangup (when activeCorrelationId is
-  // reset below).
+  // Iter 95 / iter 123 — BYE-miss recovery, two layers.
+  //
+  // PRIMARY (iter 123): subscribe to /api/agent/intents/events SSE.
+  // The fs-events listener in control-plane writes hangup_at onto
+  // the dial_intent the instant CHANNEL_HANGUP_COMPLETE lands at
+  // FS (iter 78's emitIntentUpdate), which pushes through this
+  // SSE within milliseconds. We match by correlation_id; when the
+  // intent for the active call arrives with hangup_at set, force-
+  // clear immediately. This is an application-layer signal that
+  // works even when sip.js misses the SIP BYE over WSS (the iter
+  // 95 root cause was a sip.js 0.21.1 race on fast BYEs through
+  // some carrier configurations — bypassing the SIP signal
+  // entirely fixes the class of bug).
+  //
+  // FALLBACK (iter 95 logic kept, slowed to 15s): if the SSE is
+  // disconnected (proxy timeout, browser tab backgrounded long
+  // enough for the WS to drop), the slower poll catches the
+  // missed event. Without the SSE the iter 95 watchdog still
+  // shipped a 3s loop; with SSE primary we don't need the
+  // chatter.
   useEffect(() => {
     if (!sp.inCall || !activeCorrelationId) return;
     let cancelled = false;
+    const cid = activeCorrelationId;
+
+    // Primary: SSE listener.
+    const es = new EventSource('/api/agent/intents/events');
+    es.onmessage = async (e) => {
+      if (cancelled) return;
+      let parsed: { type?: string; intent?: { correlation_id?: string; hangup_at?: string | null; hangup_cause?: string | null } };
+      try {
+        parsed = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (parsed.type !== 'intent' || !parsed.intent) return;
+      const it = parsed.intent;
+      if (it.correlation_id !== cid) return;
+      if (!it.hangup_at) return;
+      setDialMsg(
+        `hung up: ${it.hangup_cause ?? 'remote'} (FS-event force-cleared)`,
+      );
+      await sp.forceClear();
+      setActiveCorrelationId(null);
+    };
+
+    // Fallback: 15s poll. Catches the SSE-disconnect case +
+    // serves as a sanity check if the iter-78 emitIntentUpdate
+    // hook ever misses (it hasn't, but defense in depth on the
+    // call hangup path is cheap).
     let consecutiveHungUp = 0;
-    async function tick() {
+    async function fallbackTick() {
       try {
         const res = await fetch(
-          `/api/agent/call-status?correlation_id=${encodeURIComponent(activeCorrelationId!)}`,
+          `/api/agent/call-status?correlation_id=${encodeURIComponent(cid)}`,
           { cache: 'no-store' },
         );
         if (!res.ok) return;
         const j = (await res.json()) as {
           hung_up?: boolean;
-          unknown?: boolean;
           cause?: string;
         };
         if (cancelled) return;
         if (j.hung_up) {
-          // Two consecutive hung_up:true responses before clearing
-          // — a tiny dead-band against the very narrow race where
-          // sip.js is mid-BYE-processing.
           consecutiveHungUp++;
           if (consecutiveHungUp >= 2) {
             setDialMsg(
-              `hung up: ${j.cause ?? 'remote'} (sip.js missed the BYE — force-cleared)`,
+              `hung up: ${j.cause ?? 'remote'} (fallback poll force-cleared)`,
             );
             await sp.forceClear();
             setActiveCorrelationId(null);
@@ -180,11 +216,11 @@ export function AgentSoftphonePanel() {
         /* network blip — keep trying */
       }
     }
-    const handle = setInterval(tick, 3000);
-    // Don't fire immediately — sip.js usually processes BYE in
-    // <100ms; only kick in if the call's still showing after 3 s.
+    const handle = setInterval(fallbackTick, 15_000);
+
     return () => {
       cancelled = true;
+      es.close();
       clearInterval(handle);
     };
   }, [sp.inCall, activeCorrelationId, sp]);
