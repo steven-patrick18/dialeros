@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   countDncPhones,
   deleteDncPhone,
+  getDncPhoneRecord,
   insertDncPhone,
   isDncPhone,
   listDncPhonesFromDb,
@@ -100,6 +101,16 @@ export function isDnc(phone: string): boolean {
   const norm = normalizePhone(phone);
   if (!norm) return false;
   return isDncPhone(norm);
+}
+
+/** Iter 106 — lookup the full DNC row for a phone (after the same
+ * normalisation insert/check use) so the manager UI can show
+ * reason + who added + when. Returns undefined when the phone
+ * isn't on the list (or fails to parse). */
+export function lookupDnc(phone: string): DncPhoneRecord | undefined {
+  const norm = normalizePhone(phone);
+  if (!norm) return undefined;
+  return getDncPhoneRecord(norm);
 }
 
 export function listDnc(limit = 500, offset = 0): DncPhoneRecord[] {

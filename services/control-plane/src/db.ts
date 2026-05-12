@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { NodeRecord, NodeRole, NodeStatus } from './schema';
+import { COLUMN_MIGRATIONS, CREATE_TABLES_SQL } from './db-schema';
 
 const DB_PATH =
   process.env.DIALEROS_DB ?? resolve(process.cwd(), 'data', 'dialeros.db');
@@ -15,510 +16,14 @@ function db(): DatabaseSync {
   const d = new DatabaseSync(DB_PATH);
   d.exec('PRAGMA journal_mode = WAL');
   d.exec('PRAGMA foreign_keys = ON');
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS nodes (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      host TEXT NOT NULL,
-      port INTEGER NOT NULL DEFAULT 22,
-      ssh_user TEXT NOT NULL DEFAULT 'root',
-      role TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'PROVISIONING',
-      error_message TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS provisioning_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-      level TEXT NOT NULL,
-      phase TEXT NOT NULL,
-      message TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_provlogs_node
-      ON provisioning_logs (node_id, id);
-
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      email TEXT,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL,
-      display_name TEXT,
-      skill_tier TEXT NOT NULL DEFAULT 'new',
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      expires_at TEXT NOT NULL,
-      ip TEXT,
-      user_agent TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-    CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
-
-    CREATE TABLE IF NOT EXISTS audit_events (
-      id TEXT PRIMARY KEY,
-      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-      actor_user_id TEXT,
-      actor_ip TEXT,
-      action TEXT NOT NULL,
-      target_type TEXT,
-      target_id TEXT,
-      payload_json TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_events(target_type, target_id);
-    CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_events(actor_user_id);
-
-    CREATE TRIGGER IF NOT EXISTS audit_no_update
-    BEFORE UPDATE ON audit_events
-    BEGIN
-      SELECT RAISE(ABORT, 'audit_events is append-only');
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS audit_no_delete
-    BEFORE DELETE ON audit_events
-    BEGIN
-      SELECT RAISE(ABORT, 'audit_events is append-only');
-    END;
-
-    CREATE TABLE IF NOT EXISTS carriers (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      host TEXT NOT NULL,
-      port INTEGER NOT NULL DEFAULT 5060,
-      transport TEXT NOT NULL DEFAULT 'UDP',
-      auth_mode TEXT NOT NULL,
-      digest_username TEXT,
-      digest_password_encrypted TEXT,
-      ip_acl TEXT,
-      codecs TEXT NOT NULL DEFAULT '["PCMU","PCMA"]',
-      max_channels INTEGER NOT NULL DEFAULT 100,
-      max_cps INTEGER NOT NULL DEFAULT 10,
-      mos_threshold REAL NOT NULL DEFAULT 3.5,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_carriers_enabled ON carriers(enabled);
-
-    CREATE TABLE IF NOT EXISTS route_plans (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT,
-      primary_carrier_id TEXT NOT NULL REFERENCES carriers(id),
-      failover_carrier_ids_json TEXT NOT NULL DEFAULT '[]',
-      cid_strategy TEXT NOT NULL DEFAULT 'passthrough',
-      cid_single TEXT,
-      cid_pool_json TEXT NOT NULL DEFAULT '[]',
-      transform_strip_prefix TEXT,
-      transform_add_prefix TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_route_plans_primary ON route_plans(primary_carrier_id);
-    CREATE INDEX IF NOT EXISTS idx_route_plans_enabled ON route_plans(enabled);
-
-    CREATE TABLE IF NOT EXISTS lead_lists (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS leads (
-      id TEXT PRIMARY KEY,
-      list_id TEXT NOT NULL REFERENCES lead_lists(id) ON DELETE CASCADE,
-      phone TEXT NOT NULL,
-      name TEXT,
-      email TEXT,
-      custom_fields_json TEXT NOT NULL DEFAULT '{}',
-      status TEXT NOT NULL DEFAULT 'NEW',
-      last_called_at TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE (list_id, phone)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_leads_list_status ON leads(list_id, status);
-    CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone);
-
-    CREATE TABLE IF NOT EXISTS campaigns (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT,
-      type TEXT NOT NULL DEFAULT 'outbound_manual',
-      status TEXT NOT NULL DEFAULT 'paused',
-      route_plan_id TEXT NOT NULL REFERENCES route_plans(id),
-      base_ratio REAL NOT NULL DEFAULT 1.0,
-      call_window_start TEXT,
-      call_window_end TEXT,
-      max_abandon_pct REAL NOT NULL DEFAULT 3.0,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_campaigns_route_plan ON campaigns(route_plan_id);
-    CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
-
-    CREATE TABLE IF NOT EXISTS campaign_lead_lists (
-      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-      lead_list_id TEXT NOT NULL REFERENCES lead_lists(id) ON DELETE CASCADE,
-      priority INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (campaign_id, lead_list_id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_cll_lead_list ON campaign_lead_lists(lead_list_id);
-
-    CREATE TABLE IF NOT EXISTS in_groups (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT,
-      type TEXT NOT NULL DEFAULT 'inbound_queue',
-      whitelist_mode TEXT NOT NULL DEFAULT 'none',
-      whitelist_static_json TEXT NOT NULL DEFAULT '[]',
-      routing_strategy TEXT NOT NULL DEFAULT 'ring_all',
-      max_wait_seconds INTEGER NOT NULL DEFAULT 60,
-      wrap_up_seconds INTEGER NOT NULL DEFAULT 10,
-      off_list_action TEXT NOT NULL DEFAULT 'reject',
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS in_group_dids (
-      in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
-      did TEXT NOT NULL UNIQUE,
-      PRIMARY KEY (in_group_id, did)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_in_group_dids_did ON in_group_dids(did);
-
-    CREATE TABLE IF NOT EXISTS dial_intents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-      lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-      route_plan_id TEXT NOT NULL,
-      phone TEXT NOT NULL,
-      transformed_phone TEXT NOT NULL,
-      cid_used TEXT,
-      kind TEXT NOT NULL DEFAULT 'simulated'
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_dial_intents_campaign_id
-      ON dial_intents(campaign_id, id);
-
-    CREATE TABLE IF NOT EXISTS user_campaigns (
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-      PRIMARY KEY (user_id, campaign_id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_user_campaigns_campaign
-      ON user_campaigns(campaign_id);
-
-    CREATE TABLE IF NOT EXISTS user_in_groups (
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
-      PRIMARY KEY (user_id, in_group_id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_user_in_groups_in_group
-      ON user_in_groups(in_group_id);
-
-    -- Iter 28: cross-cutting key/value store for admin-managed settings
-    -- (SignalWire token, future telephony bootstrap state, etc.). Values
-    -- are envelope-encrypted at rest via the secrets module — stored as
-    -- the string envelope "v1:iv:tag:ciphertext".
-    CREATE TABLE IF NOT EXISTS app_settings (
-      key TEXT PRIMARY KEY,
-      value_encrypted TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    -- Iter 21: campaign ↔ in-group attachment. Inbound and blended
-    -- campaigns route calls from their attached in-groups to agents
-    -- logged into the campaign.
-    CREATE TABLE IF NOT EXISTS campaign_in_groups (
-      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-      in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
-      PRIMARY KEY (campaign_id, in_group_id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_cig_in_group
-      ON campaign_in_groups(in_group_id);
-
-    CREATE TABLE IF NOT EXISTS lead_hopper (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-      lead_id TEXT NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-      queued_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-      UNIQUE(campaign_id, lead_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS remote_agents (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      sip_uri TEXT NOT NULL,
-      telephony_node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL,
-      lines INTEGER NOT NULL DEFAULT 1,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_remote_agents_enabled
-      ON remote_agents(enabled);
-
-    CREATE INDEX IF NOT EXISTS idx_lead_hopper_campaign
-      ON lead_hopper(campaign_id, id);
-
-    CREATE TABLE IF NOT EXISTS phones (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      extension TEXT NOT NULL,
-      label TEXT,
-      protocol TEXT NOT NULL DEFAULT 'sip',
-      password TEXT NOT NULL,
-      is_primary INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(extension)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_phones_user ON phones(user_id);
-
-    CREATE TABLE IF NOT EXISTS agent_status (
-      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'AVAILABLE',
-      reason TEXT,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS dnc_phones (
-      phone TEXT PRIMARY KEY,
-      reason TEXT,
-      added_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-      added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    -- Iter 72: CID groups — reusable pool of caller-IDs with their own
-    -- rotation logic. Route plans attach one or more groups; pacer
-    -- round-robins across groups per call, then applies the group's
-    -- per-call strategy (rotate / random / sticky_by_area).
-    CREATE TABLE IF NOT EXISTS cid_groups (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT,
-      strategy TEXT NOT NULL DEFAULT 'rotate',
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS cid_group_numbers (
-      id TEXT PRIMARY KEY,
-      group_id TEXT NOT NULL REFERENCES cid_groups(id) ON DELETE CASCADE,
-      number TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(group_id, number)
-    );
-    CREATE INDEX IF NOT EXISTS idx_cid_group_numbers_group ON cid_group_numbers(group_id);
-
-    -- Iter 74: route plan ↔ carriers join table with priority + port
-    -- allocation. Replaces the legacy primary_carrier_id +
-    -- failover_carrier_ids_json model. Same priority across multiple
-    -- carriers means round-robin within that tier (so two carriers at
-    -- priority 1 = 50/50 split). ports is the per-(plan,carrier)
-    -- concurrent-call cap enforced at originate time. Legacy columns
-    -- stay populated for back-compat.
-    CREATE TABLE IF NOT EXISTS route_plan_carriers (
-      id TEXT PRIMARY KEY,
-      route_plan_id TEXT NOT NULL REFERENCES route_plans(id) ON DELETE CASCADE,
-      carrier_id TEXT NOT NULL REFERENCES carriers(id) ON DELETE CASCADE,
-      priority INTEGER NOT NULL DEFAULT 1,
-      ports INTEGER NOT NULL DEFAULT 30,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(route_plan_id, carrier_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_route_plan_carriers_plan
-      ON route_plan_carriers(route_plan_id, priority, created_at);
-    CREATE INDEX IF NOT EXISTS idx_route_plan_carriers_carrier
-      ON route_plan_carriers(carrier_id);
-  `);
+  // Iter 111 — schema declarations live in db-schema.ts.
+  d.exec(CREATE_TABLES_SQL);
 
   // Idempotent ALTERs — sqlite has no IF NOT EXISTS for columns. We
   // try each one; "duplicate column name" errors mean it's already
   // applied (harmless). Any other error gets propagated.
-  const migrations: string[] = [
-    "ALTER TABLE users ADD COLUMN display_name TEXT",
-    "ALTER TABLE users ADD COLUMN skill_tier TEXT NOT NULL DEFAULT 'new'",
-    "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
-    // iter 16: pacing v2 attributes each dial intent to an agent.
-    // Nullable: existing rows + future "no agent" intents stay NULL.
-    "ALTER TABLE dial_intents ADD COLUMN assigned_user_id TEXT",
-    // iter 18: agent dispositions. NULL = not yet dispositioned.
-    "ALTER TABLE dial_intents ADD COLUMN disposition TEXT",
-    "ALTER TABLE dial_intents ADD COLUMN dispositioned_at TEXT",
-    "ALTER TABLE dial_intents ADD COLUMN callback_at TEXT",
-    // iter 19: schedule-aware picker. Mirrors callback_at onto the lead so
-    // pickNextDialableLead can compare without joining to dial_intents.
-    "ALTER TABLE leads ADD COLUMN callback_at TEXT",
-    // iter 23: a lead list now belongs to AT MOST ONE campaign. The join
-    // table campaign_lead_lists stays around (silently ignored) so old
-    // installations migrate cleanly; the new column is the source of truth.
-    "ALTER TABLE lead_lists ADD COLUMN campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL",
-    // Iter 32: per-campaign dial mode. 'simulated' (default, safe) inserts
-    // dial-intent rows only. 'live' issues a real bgapi originate via the
-    // route plan's primary carrier gateway. Default is intentionally safe
-    // so existing campaigns keep their no-cost behavior until an admin
-    // opts in.
-    "ALTER TABLE campaigns ADD COLUMN dial_mode TEXT NOT NULL DEFAULT 'simulated'",
-    // Iter 32: track the FreeSWITCH-side outcome of each live tick.
-    // call_uuid is the channel/job UUID returned by bgapi originate;
-    // originate_error captures the FS error string when the originate
-    // failed. Both NULL on simulated rows.
-    "ALTER TABLE dial_intents ADD COLUMN call_uuid TEXT",
-    "ALTER TABLE dial_intents ADD COLUMN originate_error TEXT",
-    // Iter 33: hangup correlation. We generate a UUID and set it as a
-    // channel variable on originate (dialeros_correlation_id=<uuid>).
-    // The FS event listener picks the variable out of CHANNEL_ANSWER /
-    // CHANNEL_HANGUP_COMPLETE events and writes the call's outcome
-    // back onto the matching dial_intent. Job UUIDs aren't reliable
-    // across event types, but a custom variable always survives.
-    "ALTER TABLE dial_intents ADD COLUMN correlation_id TEXT",
-    "ALTER TABLE dial_intents ADD COLUMN hangup_cause TEXT",
-    "ALTER TABLE dial_intents ADD COLUMN answered_at TEXT",
-    "ALTER TABLE dial_intents ADD COLUMN hangup_at TEXT",
-    "ALTER TABLE dial_intents ADD COLUMN duration_ms INTEGER",
-    "CREATE INDEX IF NOT EXISTS idx_dial_intents_correlation ON dial_intents(correlation_id)",
-    // Iter 40: per-user manual-dial capability. When true, the user's
-    // softphone exposes a CLI/dialer input for placing arbitrary
-    // outbound calls. Default false — most agents only auto-answer
-    // pacer-bridged calls.
-    "ALTER TABLE users ADD COLUMN manual_dial INTEGER NOT NULL DEFAULT 0",
-    // Iter 43: fine-grained ACL. JSON array of permission slugs the
-    // user has been granted. NULL → fall back to the role's defaults
-    // (defaultPermissionsForRole in user-mgmt). Admins implicitly
-    // have every permission regardless of this column.
-    "ALTER TABLE users ADD COLUMN permissions TEXT",
-    // Iter 44: carrier-level dial-plan prefix list. JSON array of
-    // destination prefixes this carrier accepts (e.g. ["310","311",
-    // "312"]). NULL or empty array means the carrier accepts every
-    // destination (existing behavior, backward compatible).
-    "ALTER TABLE carriers ADD COLUMN dial_prefixes TEXT",
-    // Iter 45: ViciDial-style carrier dial-plan rewrite rules. JSON
-    // array of { match_prefix, replacements[] } objects. When the
-    // destination starts with match_prefix the rule strips it and
-    // rotates through `replacements` to prepend a different one each
-    // call (e.g. spread 0805XXXX traffic across 310/311/312/...).
-    // NULL or empty array means no rewrite — destination dialed as-is.
-    "ALTER TABLE carriers ADD COLUMN dial_plan_rules TEXT",
-    // Iter 49: per-campaign hopper + dial level. hopper_level is the
-    // target queue depth (number of leads to keep pre-loaded);
-    // dial_level scales how many calls the pacer originates per tick
-    // relative to the active-agent count (1.0 = 1:1 power dial,
-    // 1.5 = predictive 1.5x, etc.).
-    "ALTER TABLE campaigns ADD COLUMN hopper_level INTEGER NOT NULL DEFAULT 100",
-    "ALTER TABLE campaigns ADD COLUMN dial_level REAL NOT NULL DEFAULT 1.0",
-    // Iter 55: call recording. Absolute path on the FS box (relative
-    // to the configured recordings dir if you want to host on
-    // remote storage later). NULL means this intent wasn't recorded.
-    "ALTER TABLE dial_intents ADD COLUMN recording_path TEXT",
-    // Iter 66: per-campaign AMD / voicemail-drop behaviour.
-    //   bridge    — default; original behavior, always bridge to agent.
-    //   drop      — hang up at answer (probing / opt-out flows).
-    //   voicemail — play the campaigns uploaded voicemail file and
-    //               hang up. Voice-blast mode. The path is the absolute
-    //               wav on the FS box (set by the campaign-detail
-    //               upload form).
-    "ALTER TABLE campaigns ADD COLUMN amd_action TEXT NOT NULL DEFAULT 'bridge'",
-    "ALTER TABLE campaigns ADD COLUMN voicemail_path TEXT",
-    // Iter 70: ViciDial-style list-order strategy. Drives how the
-    // hopper refill picks dialable leads:
-    //   RANDOM    — ORDER BY RANDOM() (default).
-    //   UP_TIME   — oldest created_at first (clear legacy backlog).
-    //   DOWN_TIME — newest created_at first (work fresh imports).
-    // Callback-due leads are always priority-1 regardless of strategy.
-    "ALTER TABLE campaigns ADD COLUMN list_order TEXT NOT NULL DEFAULT 'RANDOM'",
-    // Iter 58: remote-agent bridging. When the pacer bridges to a
-    // remote agent (SIP URI) instead of a local user/<ext>, this
-    // column holds the remote_agents.id so we can roll up in-flight
-    // calls per remote agent for capacity checks. NULL when the
-    // bridge target was a local agent.
-    "ALTER TABLE dial_intents ADD COLUMN remote_agent_id TEXT",
-    "CREATE INDEX IF NOT EXISTS idx_dial_intents_remote_agent ON dial_intents(remote_agent_id, hangup_at)",
-    // Iter 59: per-campaign scoping for remote agents + structured
-    // extension storage so the create form can be a node-dropdown +
-    // extension input instead of raw sip:user@host. NULL campaign
-    // = available to every campaign (shared pool, existing behavior).
-    // extension is nullable for back-compat with iter-57 agents whose
-    // raw sip_uri was hand-entered.
-    "ALTER TABLE remote_agents ADD COLUMN campaign_id TEXT REFERENCES campaigns(id) ON DELETE SET NULL",
-    "ALTER TABLE remote_agents ADD COLUMN extension TEXT",
-    "CREATE INDEX IF NOT EXISTS idx_remote_agents_campaign ON remote_agents(campaign_id)",
-    // Iter 61: nodes wear multiple roles. Legacy single-role column
-    // stays around; `roles` is JSON-encoded NodeRole[] and is the
-    // new source of truth. `is_self` flags the auto-registered
-    // local-host row so destructive ops are blocked on it.
-    "ALTER TABLE nodes ADD COLUMN roles TEXT",
-    "ALTER TABLE nodes ADD COLUMN is_self INTEGER NOT NULL DEFAULT 0",
-    // Iter 62: pin each phone to the telephony node that hosts it.
-    // softphone-config returns the bound node's host so the
-    // browser registers to the correct FS instance even in a
-    // multi-node cluster. NULL = auto-pick the only available
-    // telephony node (single-box deploys never have to touch
-    // this column).
-    "ALTER TABLE phones ADD COLUMN telephony_node_id TEXT REFERENCES nodes(id) ON DELETE SET NULL",
-    "CREATE INDEX IF NOT EXISTS idx_phones_telephony_node ON phones(telephony_node_id)",
-    // Iter 72: route plans can attach 0..N CID groups. When
-    // cid_strategy='groups', the pacer rotates across these groups
-    // per call and applies each group's own strategy. Default '[]'
-    // keeps every existing plan a no-op.
-    "ALTER TABLE route_plans ADD COLUMN cid_group_ids_json TEXT NOT NULL DEFAULT '[]'",
-    // Iter 74: per-call carrier attribution. Pacer writes the carrier
-    // actually picked for each originate so we can count in-flight per
-    // carrier for the port-cap gate, plus break down reports by
-    // carrier. NULL on old rows + simulated calls.
-    "ALTER TABLE dial_intents ADD COLUMN carrier_id TEXT",
-    "CREATE INDEX IF NOT EXISTS idx_dial_intents_carrier ON dial_intents(carrier_id, hangup_at)",
-    // Iter 90: each Remote Agent can be backed by a real User + Phone
-    // identity. The User can sign in via browser / hard phone / SIP
-    // device and become a regular bridge target. NULL until the
-    // operator provisions one from the Remote Agent detail page.
-    "ALTER TABLE remote_agents ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE SET NULL",
-    "CREATE INDEX IF NOT EXISTS idx_remote_agents_user ON remote_agents(user_id)",
-    // Iter 91: cache lead's inferred timezone so the TZ-aware list
-    // orders can filter cheaply in SQL. Inferred from the phone's
-    // area code / country code at insert time (and backfilled for
-    // existing rows on the next boot pass below). NULL when the
-    // phone shape doesn't map to a known TZ.
-    "ALTER TABLE leads ADD COLUMN timezone TEXT",
-    "CREATE INDEX IF NOT EXISTS idx_leads_timezone ON leads(timezone)",
-    // Iter 94: per-campaign whitelist of lead statuses the pacer is
-    // allowed to dial. Default preserves the previous hardcoded
-    // behavior (NEW + CALLED_NO_ANSWER + BUSY) so existing
-    // campaigns keep dialing the same set. Operator can tighten
-    // (e.g. NEW only) or loosen (add BAD_NUMBER for re-validation
-    // sweeps) per-campaign from the UI.
-    "ALTER TABLE campaigns ADD COLUMN dialable_statuses TEXT NOT NULL DEFAULT '[\"NEW\",\"CALLED_NO_ANSWER\",\"BUSY\"]'",
-  ];
+  // Iter 111 — migrations list lives in db-schema.ts.
+  const migrations = COLUMN_MIGRATIONS;
   for (const sql of migrations) {
     try {
       d.exec(sql);
@@ -2567,6 +2072,28 @@ export function carrierLiveSnapshot(): CarrierLiveRow[] {
     .all() as unknown as CarrierLiveRow[];
 }
 
+/** Iter 108 — per-campaign in-flight count. The pacer's tick uses
+ * this to enforce a ceiling on outstanding calls: target this
+ * tick = floor(poolSize × dial_level) − inFlightForCampaign. The
+ * old math fired poolSize × dial_level *per tick* with no
+ * decrement, so with a 3s tick + 30s ringout window a single
+ * 5-line dial_level=1 campaign accumulated up to ~50 in-flight
+ * calls before reaper / hangups caught up. Same `kind != simulated`
+ * + `hangup_at IS NULL` filter the per-agent / per-carrier counters
+ * use. */
+export function inFlightForCampaign(campaignId: string): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dial_intents
+        WHERE campaign_id = ?
+          AND hangup_at IS NULL
+          AND kind != 'simulated'`,
+    )
+    .get(campaignId) as { n: number };
+  return row.n;
+}
+
 export function inFlightForRemoteAgent(remoteAgentId: string): number {
   // Iter 77 — see inFlightForCarrier: only real calls occupy a SIP
   // line on the remote endpoint. Simulated rows would otherwise
@@ -3073,6 +2600,374 @@ export function countDispositionsTodayForUser(userId: string): number {
     )
     .get(userId, since) as { n: number };
   return row.n;
+}
+
+/** Iter 100 — per-agent leaderboard for today. One JOIN aggregate
+ * across users × today's dial_intents. Excludes simulated rows.
+ * Includes every active user with role agent/supervisor (admin
+ * too — admins QA the floor and their stats are legitimate) so
+ * agents who haven't logged a call yet still appear with zeroes
+ * — supervisors can spot "signed in but idle". Sorted by talk
+ * time desc (the closest proxy for productive shift time) with a
+ * call-count tiebreak. */
+export interface AgentLeaderboardRow {
+  user_id: string;
+  username: string;
+  display_name: string | null;
+  role: string;
+  calls_today: number;
+  talked_today: number;
+  talk_time_ms_today: number;
+  dispositions_today: number;
+}
+export function agentLeaderboardToday(): AgentLeaderboardRow[] {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const since = dayStart.toISOString();
+  return db()
+    .prepare(
+      `SELECT u.id   AS user_id,
+              u.username,
+              u.display_name,
+              u.role,
+              COALESCE(SUM(CASE
+                WHEN di.assigned_user_id = u.id
+                 AND di.kind != 'simulated'
+                 AND di.ts >= ?
+                THEN 1 ELSE 0 END), 0) AS calls_today,
+              COALESCE(SUM(CASE
+                WHEN di.assigned_user_id = u.id
+                 AND di.kind != 'simulated'
+                 AND di.ts >= ?
+                 AND di.answered_at IS NOT NULL
+                THEN 1 ELSE 0 END), 0) AS talked_today,
+              COALESCE(SUM(CASE
+                WHEN di.assigned_user_id = u.id
+                 AND di.kind != 'simulated'
+                 AND di.ts >= ?
+                 AND di.answered_at IS NOT NULL
+                THEN di.duration_ms ELSE 0 END), 0) AS talk_time_ms_today,
+              COALESCE(SUM(CASE
+                WHEN di.assigned_user_id = u.id
+                 AND di.kind != 'simulated'
+                 AND di.dispositioned_at IS NOT NULL
+                 AND di.dispositioned_at >= ?
+                THEN 1 ELSE 0 END), 0) AS dispositions_today
+         FROM users u
+         LEFT JOIN dial_intents di ON di.assigned_user_id = u.id
+        WHERE u.is_active = 1
+          AND u.role IN ('agent', 'supervisor', 'admin')
+        GROUP BY u.id, u.username, u.display_name, u.role
+        ORDER BY talk_time_ms_today DESC,
+                 calls_today DESC,
+                 u.username ASC`,
+    )
+    .all(since, since, since, since) as unknown as AgentLeaderboardRow[];
+}
+
+/** Iter 99 — disposition breakdown for a single campaign since UTC
+ * midnight. Driven by dial_intents.disposition (set when the agent
+ * logs an outcome). Returns rows for the 7 ViciDial-style codes
+ * the disposition module emits — zero counts are included so the
+ * UI can render a stable 7-cell strip without filling gaps client-
+ * side. Includes a synthetic "OPEN" bucket for connected calls
+ * the agent hasn't dispositioned yet, so the operator sees the
+ * wrap-up backlog at a glance. */
+export interface CampaignDispositionRow {
+  disposition: string;
+  count: number;
+}
+const KNOWN_DISPOSITIONS = [
+  'SALE',
+  'CALLBACK',
+  'NO_INTEREST',
+  'ANSWERING_MACHINE',
+  'VOICEMAIL_DROPPED',
+  'SURVEYED',
+  'WRONG_NUMBER',
+  'BAD_NUMBER',
+  'DNC',
+] as const;
+/** Iter 107 — inbound-whitelist lookup. When a customer dials our
+ * outbound CID, the Kamailio dialplan calls this to decide if the
+ * inbound is a recognised return-call (and which campaign owns
+ * the context). We only match against leads whose status carries
+ * positive contact signal — they've already heard from us — so a
+ * cold inbound from a NEW lead doesn't get auto-routed to whoever
+ * happens to own a list that contains the number.
+ *
+ * Returns the most-recently-touched matching lead with enough
+ * context for the routing layer to decide:
+ *   - lead_id + list_id + campaign_id of the campaign that last
+ *     dialed this person (via dial_intents)
+ *   - status (so the router can prefer SURVEYED → survey campaign,
+ *     VM_PLAYED → original campaign, etc.)
+ *   - last_called_at so very-stale matches can be ignored. */
+export const INBOUND_WHITELIST_STATUSES = [
+  'CALLBACK_SCHEDULED',
+  'VM_PLAYED',
+  'SURVEYED',
+  'CALLED_NO_ANSWER',
+] as const;
+export interface InboundReturnMatch {
+  lead_id: string;
+  phone: string;
+  list_id: string;
+  status: string;
+  last_called_at: string | null;
+  last_campaign_id: string | null;
+  last_campaign_name: string | null;
+}
+export function findInboundReturnMatch(
+  phone: string,
+): InboundReturnMatch | undefined {
+  // Normalisation is caller-side. Phone here is the canonical
+  // form already (matches the storage shape). Most-recent dial
+  // wins: a number on multiple lists routes by who last spoke.
+  const placeholders = INBOUND_WHITELIST_STATUSES.map(() => '?').join(',');
+  return db()
+    .prepare(
+      `SELECT l.id   AS lead_id,
+              l.phone,
+              l.list_id,
+              l.status,
+              l.last_called_at,
+              di.campaign_id AS last_campaign_id,
+              c.name         AS last_campaign_name
+         FROM leads l
+         LEFT JOIN dial_intents di
+                ON di.id = (
+                  SELECT MAX(id) FROM dial_intents
+                   WHERE lead_id = l.id AND kind != 'simulated'
+                )
+         LEFT JOIN campaigns c ON c.id = di.campaign_id
+        WHERE l.phone = ?
+          AND l.status IN (${placeholders})
+        ORDER BY COALESCE(l.last_called_at, l.created_at) DESC
+        LIMIT 1`,
+    )
+    .get(phone, ...INBOUND_WHITELIST_STATUSES) as
+    | InboundReturnMatch
+    | undefined;
+}
+
+/** Iter 104 — supervisor view of every callback scheduled on the
+ * floor. Iter 19's pacer already picks these in priority order
+ * (overdue first); this is the pure read surface so a supervisor
+ * can see what's queued, what's overdue, and who is due in the
+ * next hour without going through individual lead lists. Returns
+ * up to `limit` rows ordered oldest-first (overdue at the top
+ * matches what the operator actually needs to fix). */
+export interface ScheduledCallbackRow {
+  lead_id: string;
+  phone: string;
+  lead_name: string | null;
+  callback_at: string;
+  list_id: string;
+  list_name: string;
+  timezone: string | null;
+}
+export function listScheduledCallbacks(
+  limit = 200,
+): ScheduledCallbackRow[] {
+  return db()
+    .prepare(
+      `SELECT l.id  AS lead_id,
+              l.phone,
+              l.name AS lead_name,
+              l.callback_at,
+              l.list_id,
+              ll.name AS list_name,
+              l.timezone
+         FROM leads l
+         JOIN lead_lists ll ON ll.id = l.list_id
+        WHERE l.status = 'CALLBACK_SCHEDULED'
+          AND l.callback_at IS NOT NULL
+        ORDER BY l.callback_at ASC, l.created_at ASC
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as ScheduledCallbackRow[];
+}
+
+/** Iter 103 — floor-wide disposition mix. Same shape and zero-fill
+ * semantics as campaignDispositionMix but aggregated across every
+ * campaign. Drives the dashboard's "Today's outcomes" card so an
+ * operator gets a single-glance read on what's actually happening
+ * across the floor without drilling into individual campaigns. */
+export function floorDispositionMixToday(): CampaignDispositionRow[] {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const since = dayStart.toISOString();
+
+  const counted = db()
+    .prepare(
+      `SELECT disposition AS d, COUNT(*) AS n
+         FROM dial_intents
+        WHERE kind != 'simulated'
+          AND dispositioned_at IS NOT NULL
+          AND dispositioned_at >= ?
+        GROUP BY disposition`,
+    )
+    .all(since) as Array<{ d: string; n: number }>;
+
+  const open = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dial_intents
+        WHERE kind != 'simulated'
+          AND answered_at IS NOT NULL
+          AND dispositioned_at IS NULL
+          AND ts >= ?`,
+    )
+    .get(since) as { n: number };
+
+  const byKey = new Map<string, number>();
+  for (const r of counted) byKey.set(r.d, r.n);
+
+  const rows: CampaignDispositionRow[] = KNOWN_DISPOSITIONS.map((k) => ({
+    disposition: k,
+    count: byKey.get(k) ?? 0,
+  }));
+  for (const [d, n] of byKey) {
+    if (!KNOWN_DISPOSITIONS.includes(d as (typeof KNOWN_DISPOSITIONS)[number])) {
+      rows.push({ disposition: d, count: n });
+    }
+  }
+  rows.push({ disposition: 'OPEN', count: open.n ?? 0 });
+  return rows;
+}
+
+export function campaignDispositionMix(
+  campaignId: string,
+): CampaignDispositionRow[] {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const since = dayStart.toISOString();
+
+  const counted = db()
+    .prepare(
+      `SELECT disposition AS d, COUNT(*) AS n
+         FROM dial_intents
+        WHERE campaign_id = ?
+          AND kind != 'simulated'
+          AND dispositioned_at IS NOT NULL
+          AND dispositioned_at >= ?
+        GROUP BY disposition`,
+    )
+    .all(campaignId, since) as Array<{ d: string; n: number }>;
+
+  const open = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM dial_intents
+        WHERE campaign_id = ?
+          AND kind != 'simulated'
+          AND answered_at IS NOT NULL
+          AND dispositioned_at IS NULL
+          AND ts >= ?`,
+    )
+    .get(campaignId, since) as { n: number };
+
+  const byKey = new Map<string, number>();
+  for (const r of counted) byKey.set(r.d, r.n);
+
+  const rows: CampaignDispositionRow[] = KNOWN_DISPOSITIONS.map((k) => ({
+    disposition: k,
+    count: byKey.get(k) ?? 0,
+  }));
+  // Surface anything the schema doesn't know about (custom codes
+  // added later) so the operator still sees them rather than us
+  // silently dropping the bucket.
+  for (const [d, n] of byKey) {
+    if (!KNOWN_DISPOSITIONS.includes(d as (typeof KNOWN_DISPOSITIONS)[number])) {
+      rows.push({ disposition: d, count: n });
+    }
+  }
+  rows.push({ disposition: 'OPEN', count: open.n ?? 0 });
+  return rows;
+}
+
+/** Iter 98 — single-shot scoreboard for the agent's own console.
+ * Bundles today's call/talk/dispo aggregates with the current
+ * live status (AVAILABLE / PAUSED / WRAP-UP) and the in-flight
+ * call (if any) so /agent's stat row can drop the stale "—"
+ * placeholders that read "Bridge from pacer TBD" / "Disposition
+ * flow TBD". One SQL pass for the aggregates + one for the live
+ * call lookup; cheaper than fanning out four separate queries on
+ * every page hit. */
+export interface AgentTodayScoreboard {
+  status: string;
+  pause_reason: string | null;
+  current_intent_id: number | null;
+  current_phone: string | null;
+  current_answered_at: string | null;
+  calls_today: number;
+  talked_today: number;
+  talk_time_ms_today: number;
+  dispositions_today: number;
+}
+export function agentTodayScoreboard(userId: string): AgentTodayScoreboard {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const since = dayStart.toISOString();
+  const d = db();
+
+  const agg = d
+    .prepare(
+      `SELECT
+         COUNT(*) AS calls_today,
+         SUM(CASE WHEN answered_at IS NOT NULL THEN 1 ELSE 0 END) AS talked_today,
+         COALESCE(SUM(CASE WHEN answered_at IS NOT NULL THEN duration_ms ELSE 0 END), 0)
+           AS talk_time_ms_today,
+         SUM(CASE WHEN dispositioned_at IS NOT NULL AND dispositioned_at >= ?
+                  THEN 1 ELSE 0 END) AS dispositions_today
+       FROM dial_intents
+       WHERE assigned_user_id = ?
+         AND kind != 'simulated'
+         AND ts >= ?`,
+    )
+    .get(since, userId, since) as {
+    calls_today: number;
+    talked_today: number;
+    talk_time_ms_today: number;
+    dispositions_today: number;
+  };
+
+  const status = d
+    .prepare(
+      `SELECT COALESCE(s.status, 'AVAILABLE') AS status, s.reason
+         FROM users u
+         LEFT JOIN agent_status s ON s.user_id = u.id
+        WHERE u.id = ?`,
+    )
+    .get(userId) as { status: string; reason: string | null } | undefined;
+
+  const live = d
+    .prepare(
+      `SELECT id, transformed_phone, answered_at
+         FROM dial_intents
+        WHERE assigned_user_id = ?
+          AND answered_at IS NOT NULL
+          AND hangup_at IS NULL
+          AND call_uuid IS NOT NULL
+        ORDER BY id DESC
+        LIMIT 1`,
+    )
+    .get(userId) as
+    | { id: number; transformed_phone: string | null; answered_at: string }
+    | undefined;
+
+  return {
+    status: status?.status ?? 'AVAILABLE',
+    pause_reason: status?.reason ?? null,
+    current_intent_id: live?.id ?? null,
+    current_phone: live?.transformed_phone ?? null,
+    current_answered_at: live?.answered_at ?? null,
+    calls_today: agg.calls_today ?? 0,
+    talked_today: agg.talked_today ?? 0,
+    talk_time_ms_today: agg.talk_time_ms_today ?? 0,
+    dispositions_today: agg.dispositions_today ?? 0,
+  };
 }
 
 /**
@@ -4305,6 +4200,15 @@ export function isDncPhone(phone: string): boolean {
     .prepare(`SELECT 1 FROM dnc_phones WHERE phone = ?`)
     .get(phone);
   return !!row;
+}
+
+/** Iter 106 — full-record lookup for the manager's "Check DNC
+ * status" card. Returns the row when present so the operator
+ * sees not just yes/no but reason + when + who added it. */
+export function getDncPhoneRecord(phone: string): DncPhoneRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM dnc_phones WHERE phone = ?`)
+    .get(phone) as DncPhoneRecord | undefined;
 }
 
 export function listDncPhonesFromDb(

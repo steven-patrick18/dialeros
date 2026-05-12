@@ -14,6 +14,7 @@ import {
   getPrimaryPhoneForUser,
   getRoutePlanFromDb,
   hopperSize,
+  inFlightForCampaign,
   inFlightForCarrier,
   insertDialIntent,
   listCampaignsFromDb,
@@ -355,6 +356,23 @@ function isWithinCallWindow(campaign: CampaignRecord, now = new Date()): boolean
   }
   // wraps midnight
   return minutes >= startMin || minutes < endMin;
+}
+
+/** Iter 108 — pure ratio-dial math, exported for tests. The pacer
+ * fires `computeDialTarget(poolSize, dialLevel, inFlight)` originates
+ * per tick. With the iter 108 fix, this is a deficit against a
+ * total in-flight ceiling, NOT a per-tick burst:
+ *   desiredTotal = floor(poolSize × dialLevel)
+ *   target       = max(0, desiredTotal − inFlight)
+ * dial_level<1 floors to 1 (avoid silent zero on tiny pools). */
+export function computeDialTarget(
+  poolSize: number,
+  dialLevel: number,
+  inFlight: number,
+): number {
+  if (poolSize <= 0) return 0;
+  const desiredTotal = Math.max(1, Math.floor(poolSize * (dialLevel || 1)));
+  return Math.max(0, desiredTotal - inFlight);
 }
 
 export const __test__ = { isWithinCallWindow };
@@ -854,10 +872,20 @@ export function startPacer(campaignId: string): boolean {
       // would over-fire on small operator teams. When no remote
       // agents are attached the pool falls back to the local agent
       // count so a 100% local campaign still paces normally.
-      //   poolSize = remoteLinesTotal (if any remotes attached)
-      //            = localAgents      (otherwise)
-      //   target   = floor(poolSize × dial_level)
-      // With 1 remote × 5 lines × dial_level 3 → 15 calls per tick.
+      //
+      // Iter 108 — target is the *ceiling on total in-flight*, not
+      // a per-tick count. The old code fired floor(poolSize × dial_level)
+      // every tick without decrementing in-flight, so a 5-line ×
+      // dial_level=1 campaign with 3s ticks and a 30s no-answer
+      // ringout accumulated up to ~50 in-flight calls before
+      // hangups caught up — user reported "30 dialing" exactly
+      // matching that. ViciDial semantics are 1:1 power dial when
+      // dial_level=1; we now compute the deficit and only fire that
+      // many per tick:
+      //   desiredTotal = floor(poolSize × dial_level)
+      //   target       = max(0, desiredTotal − inFlightForCampaign)
+      // With 1 remote × 5 lines × dial_level 1 → 5 total in flight,
+      // dial_level 3 → 15 total in flight (regardless of tick rate).
       const localAgents = getAvailableAgentsForCampaign(campaignId);
       const remoteSlots = listRemoteAgentsWithCapacity(campaignId);
       const remoteLinesTotal = remoteSlots.reduce(
@@ -867,10 +895,8 @@ export function startPacer(campaignId: string): boolean {
       const poolSize =
         remoteLinesTotal > 0 ? remoteLinesTotal : localAgents.length;
       if (poolSize === 0) return;
-      const target = Math.max(
-        1,
-        Math.floor(poolSize * (c.dial_level || 1)),
-      );
+      const inFlight = inFlightForCampaign(campaignId);
+      const target = computeDialTarget(poolSize, c.dial_level || 1, inFlight);
       for (let i = 0; i < target; i++) {
         const result = await paceCampaignOnce(campaignId);
         if (result.outcome !== 'dialed') break;

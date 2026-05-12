@@ -2,8 +2,18 @@ import { z } from 'zod';
 import { disposeIntent, type DialIntentRecord } from './db';
 import { appendAudit } from './audit';
 
-// ViciDial-style disposition codes. SALE/DNC are terminal; ANSWERING_MACHINE
-// and CALLBACK leave the lead dialable so the pacer can revisit it.
+// ViciDial-style disposition codes. SALE/DNC are terminal;
+// ANSWERING_MACHINE / CALLBACK / VOICEMAIL_DROPPED / SURVEYED
+// leave the lead dialable so the pacer can revisit it.
+//
+// Iter 107 — added VOICEMAIL_DROPPED (we played our VM message)
+// and SURVEYED (survey completed). Both are distinct from
+// ANSWERING_MACHINE: they carry positive signal (the prospect
+// got our content / completed our flow) which matters for
+// dialable_status filtering (re-engage VM recipients on a
+// different cadence than no-answers) and for the inbound
+// whitelist (a return call from a VM_PLAYED lead routes to the
+// campaign that left them the message).
 export const DispositionSchema = z.enum([
   'SALE',
   'DNC',
@@ -12,6 +22,8 @@ export const DispositionSchema = z.enum([
   'BAD_NUMBER',
   'ANSWERING_MACHINE',
   'CALLBACK',
+  'VOICEMAIL_DROPPED',
+  'SURVEYED',
 ]);
 export type Disposition = z.infer<typeof DispositionSchema>;
 
@@ -23,6 +35,8 @@ const DISPOSITION_TO_LEAD_STATUS: Record<Disposition, string> = {
   BAD_NUMBER: 'BAD_NUMBER',
   ANSWERING_MACHINE: 'CALLED_NO_ANSWER',
   CALLBACK: 'CALLBACK_SCHEDULED',
+  VOICEMAIL_DROPPED: 'VM_PLAYED',
+  SURVEYED: 'SURVEYED',
 };
 
 export const DisposeInputSchema = z

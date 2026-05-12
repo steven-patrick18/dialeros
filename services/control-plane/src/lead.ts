@@ -466,8 +466,29 @@ export function findOrCreateLeadForManualDial(
   phone: string,
   campaignId: string,
 ): string | null {
-  const listIds = getCampaignLeadListIds(campaignId);
-  if (listIds.length === 0) return null;
+  let listIds = getCampaignLeadListIds(campaignId);
+  // Iter 105 — if no list is attached, auto-provision a per-
+  // campaign "Manual dials" fallback list so every manual dial
+  // gets a dial_intent. Without this the route would skip the
+  // insert (legacy iter-93 behavior), which meant manual calls
+  // on list-less campaigns silently dropped off the floor: no
+  // wrap-up modal, no disposition, no /realtime row, no count
+  // in iter-99/103 dispo aggregates. Self-healing — the list
+  // shows up under the campaign next page load and admins can
+  // rename / repurpose it.
+  if (listIds.length === 0) {
+    const campaign = getCampaignFromDb(campaignId);
+    const fallbackName = `${campaign?.name ?? 'Campaign'} · Manual dials`;
+    const fallbackId = randomUUID();
+    insertLeadList({
+      id: fallbackId,
+      name: fallbackName,
+      description:
+        'Auto-created so manual dials always get tracked. Add or attach a real list and this can be deleted.',
+      campaign_id: campaignId,
+    });
+    listIds = [fallbackId];
+  }
   const existing = findLeadByPhone(phone, listIds);
   if (existing) return existing.id;
   // No existing lead — synthesize one in the first attached list

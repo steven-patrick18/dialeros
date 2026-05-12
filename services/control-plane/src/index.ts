@@ -152,6 +152,32 @@ export type {
 export {
   countDispositionsTodayForUser,
 } from './db';
+
+// Agent scoreboard (iter 98)
+export { agentTodayScoreboard } from './db';
+export type { AgentTodayScoreboard } from './db';
+
+// Campaign disposition mix (iter 99)
+export { campaignDispositionMix } from './db';
+export type { CampaignDispositionRow } from './db';
+
+// Floor disposition mix (iter 103)
+export { floorDispositionMixToday } from './db';
+
+// Callback queue (iter 104)
+export { listScheduledCallbacks } from './db';
+export type { ScheduledCallbackRow } from './db';
+
+// Inbound whitelist lookup (iter 107)
+export {
+  findInboundReturnMatch,
+  INBOUND_WHITELIST_STATUSES,
+} from './db';
+export type { InboundReturnMatch } from './db';
+
+// Agent leaderboard (iter 100)
+export { agentLeaderboardToday } from './db';
+export type { AgentLeaderboardRow } from './db';
 export {
   DispositionSchema,
   DisposeInputSchema,
@@ -255,6 +281,7 @@ export {
 export type { PlanCarrierRow } from './route-plan';
 export {
   inFlightForCarrier,
+  inFlightForCampaign,
   countRoutePlansPerCarrier,
   reapStaleDialIntents,
   campaignThroughput,
@@ -435,7 +462,7 @@ export type { AgentStatusValue, AgentStatusRecord } from './agent-status';
 // Pacer-helper that filters out paused agents (iter 40)
 export { getAvailableAgentsForCampaign } from './db';
 
-// DNC list (iter 64)
+// DNC list (iter 64; iter 106 added lookupDnc)
 export {
   DncInputSchema,
   addDnc,
@@ -444,6 +471,7 @@ export {
   isDnc,
   listDnc,
   countDnc,
+  lookupDnc,
 } from './dnc';
 export type { DncInput, DncPhoneRecord } from './dnc';
 
