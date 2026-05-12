@@ -5,26 +5,48 @@ import { appendAudit, applyAiResult } from '@dialeros/control-plane';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Iter 135 — AI worker callback. The operator's STT+LLM worker
-// POSTs here once it has a transcript and/or summary for a
-// previously-pending dial_intent.id. Stamping ai_processed_at
-// (always, even when both columns are NULL) is what removes the
-// row from the pending list — operator's worker must POST back
-// even on failure to avoid the same row being re-processed
-// forever. Suggested convention: pass null for whichever field
-// the worker couldn't produce.
-//
-// Token gate is the same as ai-pending.
+// Iter 135 / iter 138 — AI worker callback. Extended in iter 138
+// to accept the structured-classification outputs (ai_sentiment +
+// ai_flags) alongside the free-text transcript + summary from
+// iter 135. All four fields independent; worker may produce some
+// and not others. ai_processed_at is stamped on every POST so the
+// row falls off the pending queue regardless.
 
 const INTERNAL_TOKEN = process.env.KAMAILIO_INBOUND_TOKEN ?? '';
 
+// Vocab pinned in both server-side validator AND in the worker
+// (CLASSIFY_PROMPT lists the same set). Anything outside this
+// list silently drops at write time so a hallucinating LLM
+// can't poison the dataset.
+const ALLOWED_SENTIMENT = [
+  'positive',
+  'neutral',
+  'negative',
+  'mixed',
+] as const;
+const ALLOWED_FLAGS = [
+  'DNC_REQUESTED',
+  'HOSTILE',
+  'WRONG_NUMBER',
+  'RECORDING_OBJECTION',
+  'CALLBACK_PROMISED',
+  'SALE_CONFIRMED',
+  'VOICEMAIL_DROPPED',
+] as const;
+
 const BodySchema = z.object({
   intent_id: z.number().int().positive(),
-  // Transcript can be megabyte-scale on long calls; cap at 200kB
-  // (≈30k words / ≈3hr at 10 wpm) to keep db row sizes sensible.
   transcript_text: z.string().max(200_000).nullable(),
-  // Summary is a paragraph or two — cap at 8kB.
   ai_summary: z.string().max(8_000).nullable(),
+  ai_sentiment: z
+    .enum(ALLOWED_SENTIMENT)
+    .nullable()
+    .optional(),
+  ai_flags: z
+    .array(z.enum(ALLOWED_FLAGS))
+    .max(10)
+    .nullable()
+    .optional(),
 });
 
 function checkToken(req: NextRequest): boolean {
@@ -69,6 +91,8 @@ export async function POST(req: NextRequest) {
     id: parsed.data.intent_id,
     transcript_text: parsed.data.transcript_text,
     ai_summary: parsed.data.ai_summary,
+    ai_sentiment: parsed.data.ai_sentiment,
+    ai_flags: parsed.data.ai_flags,
   });
   if (!ok) {
     return NextResponse.json(
@@ -85,6 +109,8 @@ export async function POST(req: NextRequest) {
     payload: {
       has_transcript: parsed.data.transcript_text !== null,
       has_summary: parsed.data.ai_summary !== null,
+      sentiment: parsed.data.ai_sentiment ?? null,
+      flags: parsed.data.ai_flags ?? null,
       transcript_chars: parsed.data.transcript_text?.length ?? 0,
       summary_chars: parsed.data.ai_summary?.length ?? 0,
     },

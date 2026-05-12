@@ -488,4 +488,53 @@ export const COLUMN_MIGRATIONS: string[] = [
   // + not yet AI'd" rows. Worker query stays sub-millisecond
   // even on multi-million-row dial_intents tables.
   "CREATE INDEX IF NOT EXISTS idx_dial_intents_ai_pending ON dial_intents(ai_processed_at, hangup_at) WHERE recording_path IS NOT NULL AND ai_processed_at IS NULL",
+  // Iter 138 — structured AI outputs alongside the free-text
+  // transcript + summary from iter 135. The worker calls the
+  // local LLM a second time with a JSON-only prompt and posts
+  // these back via the extended /api/internal/ai-process body.
+  //   ai_sentiment: one of 'positive' | 'neutral' | 'negative'
+  //     | 'mixed' | NULL when the LLM couldn't classify.
+  //   ai_flags: JSON-encoded string[] of compliance markers,
+  //     drawn from a fixed vocab (DNC_REQUESTED, HOSTILE,
+  //     WRONG_NUMBER, RECORDING_OBJECTION, CALLBACK_PROMISED,
+  //     SALE_CONFIRMED, VOICEMAIL_DROPPED). Operator can
+  //     filter / report on these in iter 139.
+  "ALTER TABLE dial_intents ADD COLUMN ai_sentiment TEXT",
+  "ALTER TABLE dial_intents ADD COLUMN ai_flags TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_dial_intents_ai_sentiment ON dial_intents(ai_sentiment) WHERE ai_sentiment IS NOT NULL",
+
+  // Iter 138 — FTS5 virtual table mirroring transcript_text +
+  // ai_summary. Lets operators search every recorded call for
+  // a phrase ("my credit card", "remove me from your list",
+  // etc.). content='dial_intents' makes the FTS table a
+  // contentless mirror — the real text only lives in
+  // dial_intents; the FTS table holds just the index.
+  //
+  // Three sync triggers keep the index aligned. FTS5's
+  // 'delete' command takes the OLD values so the index can
+  // remove the right rows even when the source row is gone.
+  `CREATE VIRTUAL TABLE IF NOT EXISTS dial_intents_fts USING fts5(
+    transcript_text,
+    ai_summary,
+    content='dial_intents',
+    content_rowid='id'
+  )`,
+  `CREATE TRIGGER IF NOT EXISTS dial_intents_fts_insert AFTER INSERT ON dial_intents
+   WHEN new.transcript_text IS NOT NULL OR new.ai_summary IS NOT NULL
+   BEGIN
+     INSERT INTO dial_intents_fts(rowid, transcript_text, ai_summary)
+     VALUES (new.id, new.transcript_text, new.ai_summary);
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS dial_intents_fts_update AFTER UPDATE OF transcript_text, ai_summary ON dial_intents
+   BEGIN
+     INSERT INTO dial_intents_fts(dial_intents_fts, rowid, transcript_text, ai_summary)
+     VALUES ('delete', old.id, old.transcript_text, old.ai_summary);
+     INSERT INTO dial_intents_fts(rowid, transcript_text, ai_summary)
+     VALUES (new.id, new.transcript_text, new.ai_summary);
+   END`,
+  `CREATE TRIGGER IF NOT EXISTS dial_intents_fts_delete AFTER DELETE ON dial_intents
+   BEGIN
+     INSERT INTO dial_intents_fts(dial_intents_fts, rowid, transcript_text, ai_summary)
+     VALUES ('delete', old.id, old.transcript_text, old.ai_summary);
+   END`,
 ];

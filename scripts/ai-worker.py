@@ -146,6 +146,80 @@ def transcribe_local(audio_path: Path) -> str:
 # -- Summarisation via Ollama (localhost) ---------------------------------
 
 
+ALLOWED_FLAGS = (
+    'DNC_REQUESTED',
+    'HOSTILE',
+    'WRONG_NUMBER',
+    'RECORDING_OBJECTION',
+    'CALLBACK_PROMISED',
+    'SALE_CONFIRMED',
+    'VOICEMAIL_DROPPED',
+)
+ALLOWED_SENTIMENT = ('positive', 'neutral', 'negative', 'mixed')
+
+CLASSIFY_PROMPT = (
+    "You are classifying a call-centre transcript. Respond with "
+    "ONLY a single JSON object — no preamble, no markdown. Schema:\n"
+    '{\n'
+    '  "sentiment": "positive" | "neutral" | "negative" | "mixed",\n'
+    '  "flags": string[]\n'
+    '}\n'
+    "flags must be a subset of: " + ", ".join(ALLOWED_FLAGS) + "\n"
+    "Examples:\n"
+    "  - Lead asks to be removed → flags includes DNC_REQUESTED.\n"
+    "  - Caller agreed to a follow-up at a specific time → "
+    "CALLBACK_PROMISED.\n"
+    "  - Lead bought / signed up / agreed → SALE_CONFIRMED.\n"
+    "  - Lead was angry, shouted, profanity → HOSTILE.\n"
+    "  - Lead says 'wrong number' → WRONG_NUMBER.\n"
+    "  - Mention of being recorded was objected to → RECORDING_OBJECTION.\n"
+    "  - Hit a voicemail / answering machine → VOICEMAIL_DROPPED.\n"
+    "Empty flags array is fine when nothing applies."
+)
+
+
+def classify_local(transcript: str) -> tuple[str | None, list[str] | None]:
+    """Return (sentiment, flags) from a structured LLM response.
+    Either may be None if the LLM produced unparseable output."""
+    body = {
+        'model': OLLAMA_MODEL,
+        'system': CLASSIFY_PROMPT,
+        'prompt': f'Transcript:\n{transcript}',
+        'format': 'json',
+        'stream': False,
+        'options': {
+            'temperature': 0.0,
+            'num_predict': 200,
+        },
+    }
+    req = urllib.request.Request(
+        f'{OLLAMA_URL}/api/generate',
+        data=json.dumps(body).encode('utf-8'),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        outer = json.loads(resp.read().decode('utf-8'))
+    raw = outer.get('response') or ''
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None, None
+    sentiment = parsed.get('sentiment')
+    if sentiment not in ALLOWED_SENTIMENT:
+        sentiment = None
+    flags_raw = parsed.get('flags') or []
+    if not isinstance(flags_raw, list):
+        flags = None
+    else:
+        seen: list[str] = []
+        for f in flags_raw:
+            if isinstance(f, str) and f in ALLOWED_FLAGS and f not in seen:
+                seen.append(f)
+        flags = seen
+    return sentiment, flags
+
+
 def summarise_local(transcript: str, lead_phone: str, campaign_name: str) -> str:
     user_msg = (
         f'Call placed to {lead_phone} on campaign "{campaign_name}".\n\n'
@@ -177,16 +251,23 @@ def summarise_local(transcript: str, lead_phone: str, campaign_name: str) -> str
 # -- Pipeline --------------------------------------------------------------
 
 
-def post_back(intent_id: int, transcript: str | None, summary: str | None) -> None:
-    http_json(
-        'POST',
-        f'{ADMIN_URL}/api/internal/ai-process',
-        {
-            'intent_id': intent_id,
-            'transcript_text': transcript,
-            'ai_summary': summary,
-        },
-    )
+def post_back(
+    intent_id: int,
+    transcript: str | None,
+    summary: str | None,
+    sentiment: str | None = None,
+    flags: list[str] | None = None,
+) -> None:
+    body: dict = {
+        'intent_id': intent_id,
+        'transcript_text': transcript,
+        'ai_summary': summary,
+    }
+    if sentiment is not None:
+        body['ai_sentiment'] = sentiment
+    if flags is not None:
+        body['ai_flags'] = flags
+    http_json('POST', f'{ADMIN_URL}/api/internal/ai-process', body)
 
 
 def process_one(row: dict[str, Any]) -> None:
@@ -241,15 +322,33 @@ def process_one(row: dict[str, Any]) -> None:
                 f'[ai-worker] intent {iid}: summarise failed: {e}',
                 file=sys.stderr,
             )
+    sentiment: str | None = None
+    flags: list[str] | None = None
+    if transcript:
+        try:
+            sentiment, flags = classify_local(transcript)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')[:400]
+            print(
+                f'[ai-worker] intent {iid}: classify HTTP {e.code}: {body}',
+                file=sys.stderr,
+            )
+        except Exception as e:
+            print(
+                f'[ai-worker] intent {iid}: classify failed: {e}',
+                file=sys.stderr,
+            )
     done_at = time.time()
 
-    post_back(iid, transcript, summary)
+    post_back(iid, transcript, summary, sentiment, flags)
     print(
         f'[ai-worker] intent {iid}: '
         f'transcript={"yes" if transcript else "no"} '
         f'summary={"yes" if summary else "no"} '
+        f'sentiment={sentiment or "n/a"} '
+        f'flags={",".join(flags) if flags else "[]"} '
         f'whisper_s={transcribed_at - started:.1f} '
-        f'summary_s={done_at - transcribed_at:.1f}'
+        f'llm_s={done_at - transcribed_at:.1f}'
     )
 
 

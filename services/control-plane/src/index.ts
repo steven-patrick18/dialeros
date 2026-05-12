@@ -623,3 +623,7 @@ export type { AnswerRateBucket, AnswerRateSummary } from './db';
 // AI pipeline (iter 135)
 export { listAiPendingIntents, applyAiResult } from './db';
 export type { AiPendingIntent } from './db';
+
+// Transcript search (iter 138 — FTS5)
+export { searchTranscripts } from './db';
+export type { TranscriptHit } from './db';

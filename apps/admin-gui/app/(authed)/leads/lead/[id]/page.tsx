@@ -296,9 +296,57 @@ export default async function LeadDetail({
                       />
                     </td>
                   </tr>
-                  {(h.ai_summary || h.transcript_text) && (
+                  {(h.ai_summary || h.transcript_text || h.ai_sentiment || h.ai_flags) && (
                     <tr className="border-b border-border/40">
                       <td colSpan={7} className="py-2 px-3 bg-card-hover/20">
+                        {(h.ai_sentiment || h.ai_flags) && (
+                          <div className="flex items-center gap-2 flex-wrap mb-2 text-[10px] uppercase tracking-wide">
+                            {h.ai_sentiment && (
+                              <span
+                                className={`px-2 py-0.5 rounded border border-border ${
+                                  h.ai_sentiment === 'positive'
+                                    ? 'text-success'
+                                    : h.ai_sentiment === 'negative'
+                                      ? 'text-error'
+                                      : h.ai_sentiment === 'mixed'
+                                        ? 'text-warn'
+                                        : 'text-fg-muted'
+                                }`}
+                                title="LLM sentiment classification"
+                              >
+                                {h.ai_sentiment}
+                              </span>
+                            )}
+                            {(() => {
+                              if (!h.ai_flags) return null;
+                              let flags: string[] = [];
+                              try {
+                                const arr = JSON.parse(h.ai_flags);
+                                if (Array.isArray(arr)) flags = arr as string[];
+                              } catch {
+                                /* ignore */
+                              }
+                              return flags.map((f) => {
+                                const tone =
+                                  f === 'DNC_REQUESTED' || f === 'HOSTILE'
+                                    ? 'text-error'
+                                    : f === 'WRONG_NUMBER' || f === 'RECORDING_OBJECTION'
+                                      ? 'text-warn'
+                                      : f === 'SALE_CONFIRMED'
+                                        ? 'text-success'
+                                        : 'text-info';
+                                return (
+                                  <span
+                                    key={f}
+                                    className={`px-2 py-0.5 rounded border border-border ${tone}`}
+                                  >
+                                    {f.replace(/_/g, ' ')}
+                                  </span>
+                                );
+                              });
+                            })()}
+                          </div>
+                        )}
                         <div className="text-[10px] uppercase tracking-wide text-fg-subtle mb-1">
                           AI summary
                         </div>

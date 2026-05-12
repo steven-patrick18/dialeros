@@ -1362,6 +1362,8 @@ export interface LeadCallHistoryRow {
   transcript_text: string | null;
   ai_summary: string | null;
   ai_processed_at: string | null;
+  ai_sentiment: string | null;
+  ai_flags: string | null;
 }
 
 export function listCallHistoryForLead(
@@ -1378,7 +1380,8 @@ export function listCallHistoryForLead(
          di.cid_used, di.kind,
          di.answered_at, di.hangup_at, di.hangup_cause,
          di.duration_ms, di.originate_error, di.recording_path,
-         di.transcript_text, di.ai_summary, di.ai_processed_at
+         di.transcript_text, di.ai_summary, di.ai_processed_at,
+         di.ai_sentiment, di.ai_flags
        FROM dial_intents di
        JOIN campaigns c ON c.id = di.campaign_id
        LEFT JOIN route_plans rp ON rp.id = di.route_plan_id
@@ -2850,18 +2853,91 @@ export function applyAiResult(args: {
   id: number;
   transcript_text: string | null;
   ai_summary: string | null;
+  ai_sentiment?: string | null;
+  ai_flags?: string[] | null;
 }): boolean {
+  // Iter 138 — sentiment + flags are optional and only landed when
+  // the worker actually classified them. We always stamp
+  // ai_processed_at so the row falls off the pending list even
+  // when only transcript/summary land.
+  const flagsJson =
+    args.ai_flags === null || args.ai_flags === undefined
+      ? null
+      : JSON.stringify(args.ai_flags);
   const result = db()
     .prepare(
       `UPDATE dial_intents
           SET transcript_text = ?,
               ai_summary = ?,
+              ai_sentiment = ?,
+              ai_flags = ?,
               ai_processed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE id = ?`,
     )
-    .run(args.transcript_text, args.ai_summary, args.id);
+    .run(
+      args.transcript_text,
+      args.ai_summary,
+      args.ai_sentiment ?? null,
+      flagsJson,
+      args.id,
+    );
   return Number(result.changes) > 0;
 }
+
+/** Iter 138 — FTS5-backed full-text search over transcripts +
+ * AI summaries. Returns the dial_intent row plus a snippet
+ * containing the match (sqlite's snippet() with 5-token
+ * windows). Results are ranked by BM25; the LIMIT keeps
+ * cross-call grep-style queries fast even on million-row
+ * tables. */
+export interface TranscriptHit {
+  id: number;
+  ts: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  lead_id: string;
+  lead_phone: string;
+  snippet: string;
+  ai_summary: string | null;
+  ai_sentiment: string | null;
+  ai_flags: string | null;
+  duration_ms: number | null;
+}
+export function searchTranscripts(
+  query: string,
+  limit = 50,
+): TranscriptHit[] {
+  // FTS5's MATCH syntax requires the query column or the whole
+  // table — we let the user query both fields by default. We
+  // sanitise the input by escaping double quotes and wrapping
+  // each whitespace-separated token in quotes so phrase
+  // searches work without an operator footgun ("Bob's
+  // mortgage" doesn't trip the FTS5 grammar).
+  const clean = query
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 10) // cap to 10 tokens; longer queries get truncated rather than failing
+    .map((t) => '"' + t.replace(/"/g, '""') + '"')
+    .join(' ');
+  if (!clean) return [];
+  return db()
+    .prepare(
+      `SELECT di.id, di.ts, di.campaign_id, c.name AS campaign_name,
+              di.lead_id, l.phone AS lead_phone,
+              snippet(dial_intents_fts, 0, '<mark>', '</mark>', '…', 12) AS snippet,
+              di.ai_summary, di.ai_sentiment, di.ai_flags, di.duration_ms
+         FROM dial_intents_fts
+         JOIN dial_intents di ON di.id = dial_intents_fts.rowid
+         JOIN leads l ON l.id = di.lead_id
+         LEFT JOIN campaigns c ON c.id = di.campaign_id
+        WHERE dial_intents_fts MATCH ?
+        ORDER BY bm25(dial_intents_fts)
+        LIMIT ?`,
+    )
+    .all(clean, limit) as unknown as TranscriptHit[];
+}
+
+
 
 /** Iter 132 — predictive pacing data layer: answer-rate buckets
  * by (hour, weekday). Pure SQL aggregate over the last N days
