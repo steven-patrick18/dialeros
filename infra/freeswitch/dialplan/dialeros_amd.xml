@@ -1,30 +1,27 @@
 <include>
   <!--
-    Iter 68 — AMD-conditional dispatch for outbound calls.
-    Iter 139 — wait_for_silence before VM drop so we don't
-               talk over the machine's greeting.
-    Iter 140 — five wait-for-beep params are channel-var
-               overridable per campaign.
-    Iter 141 — recording is now started AFTER the beep on the
-               VM-drop path so the saved .wav contains only
-               the dropped message, not the greeting + beep
-               + message overlap. HUMAN branch starts the
-               recording right before bridge so the saved
-               .wav captures only the live conversation.
+    Iter 154 — AMD-conditional dispatch + sub-action routing.
+    Extends iter 141 with per-outcome sub-actions read from
+    channel vars set by the pacer:
+      dialeros_amd_human_action
+          'bridge' | 'call_menu' | 'drop'
+      dialeros_amd_human_call_menu_id
+          UUID, used when amd_human_action='call_menu'
+      dialeros_amd_machine_action
+          'voicemail' | 'audio_drop' | 'call_menu' | 'drop'
+      dialeros_amd_machine_call_menu_id
+          UUID, used when amd_machine_action='call_menu'
+      dialeros_amd_machine_audio_path
+          /var/lib/dialeros/audio/library/<id>.wav,
+          used when amd_machine_action='audio_drop'
 
-    The pacer originates with channel vars:
-      dialeros_bridge_target    = user/1001 OR sofia/internal/...
-      dialeros_voicemail_path   = /var/lib/dialeros/voicemails/<id>.wav
-      dialeros_recording_path   = /var/lib/dialeros/recordings/<corr>.wav
-      dialeros_amd_action       = bridge | detect | voicemail | drop
-      dialeros_vm_*             = wait-for-beep tuning (iter 140)
+    Plus a new dialeros-audio-drop extension used by the
+    top-level amd_action='audio_drop' option (ViciDial 8373).
 
-    For amd_action=bridge the pacer still uses execute_on_answer
-    record_session so the recording captures the full call from
-    answer (same as iter 79 behavior). For amd_action=detect or
-    voicemail the pacer SKIPS execute_on_answer and lets the
-    dialplan branches below start the recording at the right
-    moment.
+    Earlier iters preserved (iter 139 wait_for_silence, iter 140
+    channel-var overridable tuning, iter 141 post-beep recording
+    trim) — those still live in dialeros-vm-drop /
+    dialeros-record-and-bridge / dialeros-record-then-playback.
   -->
 
   <extension name="dialeros-amd-route" continue="false">
@@ -42,34 +39,78 @@
     </condition>
   </extension>
 
+  <!--
+    Iter 154 — dispatch reads dialeros_amd_human_action /
+    dialeros_amd_machine_action and routes accordingly.
+    Defaults if unset (preserves iter-141 behavior):
+       HUMAN   -> bridge
+       MACHINE -> voicemail (existing dialeros-vm-drop path)
+  -->
   <extension name="dialeros-amd-dispatch" continue="false">
-    <condition field="${amd_result}" expression="^MACHINE$">
-      <action application="log" data="INFO [dialeros-amd] machine_path uuid=${uuid} voicemail=${dialeros_voicemail_path}"/>
-      <action application="execute_extension" data="dialeros-vm-drop XML default"/>
+    <!-- MACHINE: pick a sub-action -->
+    <condition field="${amd_result}" expression="^MACHINE$" break="on-true">
+      <action application="log" data="INFO [dialeros-amd] machine_path uuid=${uuid} action=${dialeros_amd_machine_action:-voicemail}"/>
+      <action application="execute_extension" data="dialeros-amd-machine-action XML default"/>
     </condition>
-    <condition field="${amd_result}" expression="^(HUMAN|NOTSURE|UNKNOWN|)$">
-      <action application="log" data="INFO [dialeros-amd] human_path uuid=${uuid} target=${dialeros_bridge_target}"/>
-      <!--
-        Iter 141 — start recording immediately before the bridge
-        so the .wav captures only the live conversation. The
-        pacer skips execute_on_answer record_session when
-        amd_action=detect; this is the substitute.
+    <!-- HUMAN / NOTSURE / UNKNOWN / empty: pick a sub-action -->
+    <condition field="${amd_result}" expression="^(HUMAN|NOTSURE|UNKNOWN|)$" break="on-true">
+      <action application="log" data="INFO [dialeros-amd] human_path uuid=${uuid} action=${dialeros_amd_human_action:-bridge}"/>
+      <action application="execute_extension" data="dialeros-amd-human-action XML default"/>
+    </condition>
+  </extension>
 
-        Recording is best-effort: when dialeros_recording_path is
-        unset (admin disabled call recording in settings), the
-        playback application below would normally treat
-        record_session of an empty path as an error — we guard
-        with a regex condition.
-      -->
+  <!--
+    Iter 154 — HUMAN-branch sub-action dispatch.
+      bridge    (default) -> dialeros-record-and-bridge (iter 141)
+      call_menu           -> execute_extension call_menu_<id>
+      drop                -> hangup
+  -->
+  <extension name="dialeros-amd-human-action" continue="false">
+    <condition field="${dialeros_amd_human_action}" expression="^call_menu$" break="on-true">
+      <action application="log" data="INFO [dialeros-amd] human -> call_menu=${dialeros_amd_human_call_menu_id} uuid=${uuid}"/>
+      <action application="execute_extension" data="call_menu_${dialeros_amd_human_call_menu_id} XML default"/>
+    </condition>
+    <condition field="${dialeros_amd_human_action}" expression="^drop$" break="on-true">
+      <action application="log" data="INFO [dialeros-amd] human -> drop uuid=${uuid}"/>
+      <action application="hangup"/>
+    </condition>
+    <!-- Default (no var set, or 'bridge') -->
+    <condition>
       <action application="execute_extension" data="dialeros-record-and-bridge XML default"/>
+    </condition>
+  </extension>
+
+  <!--
+    Iter 154 — MACHINE-branch sub-action dispatch.
+      voicemail  (default) -> dialeros-vm-drop  (iter 141)
+      audio_drop           -> dialeros-audio-drop with machine_audio_path
+      call_menu            -> execute_extension call_menu_<id>
+      drop                 -> hangup
+  -->
+  <extension name="dialeros-amd-machine-action" continue="false">
+    <condition field="${dialeros_amd_machine_action}" expression="^audio_drop$" break="on-true">
+      <action application="log" data="INFO [dialeros-amd] machine -> audio_drop path=${dialeros_amd_machine_audio_path} uuid=${uuid}"/>
+      <action application="set" data="dialeros_audio_drop_path=${dialeros_amd_machine_audio_path}"/>
+      <action application="execute_extension" data="dialeros-audio-drop XML default"/>
+    </condition>
+    <condition field="${dialeros_amd_machine_action}" expression="^call_menu$" break="on-true">
+      <action application="log" data="INFO [dialeros-amd] machine -> call_menu=${dialeros_amd_machine_call_menu_id} uuid=${uuid}"/>
+      <action application="execute_extension" data="call_menu_${dialeros_amd_machine_call_menu_id} XML default"/>
+    </condition>
+    <condition field="${dialeros_amd_machine_action}" expression="^drop$" break="on-true">
+      <action application="log" data="INFO [dialeros-amd] machine -> drop uuid=${uuid}"/>
+      <action application="hangup"/>
+    </condition>
+    <!-- Default (no var set, or 'voicemail') — existing iter-141 VM-drop path -->
+    <condition>
+      <action application="execute_extension" data="dialeros-vm-drop XML default"/>
     </condition>
   </extension>
 
   <!--
     Iter 141 — common VM-drop machinery used by BOTH
     amd_action=voicemail (direct route) and amd_action=detect
-    (MACHINE branch). One implementation for the
-    silence-wait → grace → record → playback pattern.
+    MACHINE branch when amd_machine_action='voicemail'.
   -->
   <extension name="dialeros-vm-drop" continue="false">
     <condition field="${dialeros_voicemail_path}" expression="^.+$">
@@ -82,12 +123,6 @@
       <action application="wait_for_silence" data="${vm_silence_thresh} ${vm_silence_hits} ${vm_listen_hits} ${vm_silence_timeout}"/>
       <action application="log" data="INFO [dialeros-vm-drop] silence detected, beep-grace sleep uuid=${uuid}"/>
       <action application="sleep" data="${vm_beep_grace_ms}"/>
-      <!--
-        Iter 141 — start recording NOW (post-beep) so the saved
-        .wav holds only the dropped message. Guarded so
-        record_session isn't invoked with an empty path which
-        FS treats as an error.
-      -->
       <action application="execute_extension" data="dialeros-record-then-playback XML default"/>
     </condition>
     <condition>
@@ -97,10 +132,28 @@
   </extension>
 
   <!--
-    Iter 141 — start record_session conditionally + bridge.
-    Split into its own extension because FreeSWITCH actions
-    are sequential and we want the record_session to fire
-    only when dialeros_recording_path is non-empty.
+    Iter 154 — Audio drop. Plays a configured .wav then hangs up.
+    Used by the top-level amd_action='audio_drop' option AND by
+    the detect-mode MACHINE branch when amd_machine_action='audio_drop'.
+    No wait_for_silence — operators picked this when they WANT
+    to talk over the answer (e.g. compliance robocall notifications).
+  -->
+  <extension name="dialeros-audio-drop" continue="false">
+    <condition field="${dialeros_audio_drop_path}" expression="^.+$">
+      <action application="log" data="INFO [dialeros-audio-drop] playing path=${dialeros_audio_drop_path} uuid=${uuid}"/>
+      <action application="playback" data="${dialeros_audio_drop_path}"/>
+      <action application="hangup"/>
+    </condition>
+    <condition>
+      <action application="log" data="WARN [dialeros-audio-drop] no audio path configured uuid=${uuid}"/>
+      <action application="hangup"/>
+    </condition>
+  </extension>
+
+  <!--
+    Iter 141 — HUMAN branch's record-then-bridge body. record_session
+    starts immediately before the bridge so the saved .wav captures
+    only the live conversation, not the AMD ring tone.
   -->
   <extension name="dialeros-record-and-bridge" continue="false">
     <condition field="${dialeros_recording_path}" expression="^.+$">
@@ -110,7 +163,6 @@
       <action application="bridge" data="${dialeros_bridge_target}"/>
     </condition>
     <condition>
-      <!-- No recording configured: just bridge. -->
       <action application="bridge" data="${dialeros_bridge_target}"/>
     </condition>
   </extension>
@@ -124,7 +176,6 @@
       <action application="hangup"/>
     </condition>
     <condition>
-      <!-- No recording configured: play + hangup. -->
       <action application="playback" data="${dialeros_voicemail_path}"/>
       <action application="hangup"/>
     </condition>

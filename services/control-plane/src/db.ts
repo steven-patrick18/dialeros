@@ -2840,6 +2840,14 @@ export interface CampaignLiveRow {
   carrier_name: string | null;
   carrier_enabled: number | null;
   amd_action: string;
+  // Iter 154 — ViciDial-parity on-answer fields
+  on_answer_call_menu_id: string | null;
+  audio_drop_path: string | null;
+  amd_human_action: string | null;
+  amd_human_call_menu_id: string | null;
+  amd_machine_action: string | null;
+  amd_machine_call_menu_id: string | null;
+  amd_machine_audio_path: string | null;
 }
 export function liveCampaignSnapshot(): CampaignLiveRow[] {
   return db()
@@ -4882,6 +4890,14 @@ export interface CampaignRecord {
   hopper_level: number;
   dial_level: number;
   amd_action: string;
+  // Iter 154 — ViciDial-parity on-answer fields
+  on_answer_call_menu_id: string | null;
+  audio_drop_path: string | null;
+  amd_human_action: string | null;
+  amd_human_call_menu_id: string | null;
+  amd_machine_action: string | null;
+  amd_machine_call_menu_id: string | null;
+  amd_machine_audio_path: string | null;
   voicemail_path: string | null;
   list_order: string;
   /** Iter 94 — JSON array of lead statuses the pacer is allowed
@@ -5160,6 +5176,14 @@ export function updateCampaignFields(
     hopper_level: number;
     dial_level: number;
     amd_action: string;
+  // Iter 154 — ViciDial-parity on-answer fields
+  on_answer_call_menu_id: string | null;
+  audio_drop_path: string | null;
+  amd_human_action: string | null;
+  amd_human_call_menu_id: string | null;
+  amd_machine_action: string | null;
+  amd_machine_call_menu_id: string | null;
+  amd_machine_audio_path: string | null;
     voicemail_path: string | null;
     list_order: string;
     dialable_statuses: string;

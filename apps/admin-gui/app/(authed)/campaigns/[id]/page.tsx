@@ -32,6 +32,7 @@ import { AbandonRateCard } from './abandon-rate-card';
 import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
 import { VoicemailTuningCard } from './voicemail-tuning-card';
+import { OnAnswerCard } from './on-answer-card';
 import { HopperResetButton } from './hopper-reset-button';
 import { CampaignTabs, parseCampaignTab } from './campaign-tabs';
 import { AttachmentPicker } from '@/components/attachment-picker';
@@ -717,40 +718,18 @@ function DetailTab({
           helpText="Day-to-day dialing rarely needs base_ratio / abandon%. Dialable statuses is your retry policy — tighten when you want only fresh leads."
         />
 
-        <InlineCardForm
-          title="On answer behaviour"
-          endpoint={`/api/campaigns/${c.id}`}
-          layout="rows"
-          fields={[
-            {
-              type: 'select',
-              name: 'amd_action',
-              label: 'When the lead answers',
-              value: c.amd_action,
-              options: [
-                {
-                  value: 'bridge',
-                  label: 'bridge — connect the lead to an agent (default)',
-                },
-                {
-                  value: 'detect',
-                  label:
-                    'detect — AMD: bridge if human, voicemail/drop if machine',
-                },
-                {
-                  value: 'voicemail',
-                  label:
-                    'voicemail — play the uploaded .wav and hang up (voice-blast)',
-                },
-                {
-                  value: 'drop',
-                  label: 'drop — hang up at answer (connectivity probing only)',
-                },
-              ],
-              hint: 'Detect mode runs amd_v2 at answer; humans bridge to an agent, machines play the voicemail file (if uploaded) and hang up. Voice-blast = always playback. Drop = always hang up.',
-            },
-          ]}
-          helpText="Upload the voicemail .wav in the next card if you pick detect or voicemail."
+        <OnAnswerCard
+          campaignId={c.id}
+          initial={{
+            amd_action: c.amd_action,
+            on_answer_call_menu_id: c.on_answer_call_menu_id,
+            audio_drop_path: c.audio_drop_path,
+            amd_human_action: c.amd_human_action,
+            amd_human_call_menu_id: c.amd_human_call_menu_id,
+            amd_machine_action: c.amd_machine_action,
+            amd_machine_call_menu_id: c.amd_machine_call_menu_id,
+            amd_machine_audio_path: c.amd_machine_audio_path,
+          }}
         />
 
         <VoicemailPanel

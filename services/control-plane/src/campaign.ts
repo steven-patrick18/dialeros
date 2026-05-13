@@ -331,7 +331,41 @@ export const CampaignUpdateInputSchema = z
     //   detect    — run amd_v2 at answer; HUMAN/NOTSURE -> bridge to
     //               agent, MACHINE -> playback voicemail (if set)
     //               then hangup, else just hangup (iter 68).
-    amd_action: z.enum(['bridge', 'drop', 'voicemail', 'detect']).optional(),
+    // Iter 154 — ViciDial-parity on-answer options.
+    //   bridge      — connect lead to agent (default)
+    //   drop        — &hangup at answer
+    //   voicemail   — &playback(<voicemail_path>) + hangup (voice-blast)
+    //   audio_drop  — &playback(<audio_drop_path>) + hangup (compliance ext 8373)
+    //   call_menu   — execute_extension call_menu_<on_answer_call_menu_id> (ext 8366)
+    //   detect      — amd_v2 inline; HUMAN goes to amd_human_action,
+    //                 MACHINE goes to amd_machine_action.
+    amd_action: z
+      .enum([
+        'bridge',
+        'drop',
+        'voicemail',
+        'detect',
+        'call_menu',
+        'audio_drop',
+      ])
+      .optional(),
+    on_answer_call_menu_id: z.string().nullable().optional()
+      .or(z.literal('').transform(() => null)),
+    audio_drop_path: z.string().nullable().optional()
+      .or(z.literal('').transform(() => null)),
+    // detect mode sub-actions
+    amd_human_action: z
+      .enum(['bridge', 'call_menu', 'drop'])
+      .optional(),
+    amd_human_call_menu_id: z.string().nullable().optional()
+      .or(z.literal('').transform(() => null)),
+    amd_machine_action: z
+      .enum(['voicemail', 'audio_drop', 'call_menu', 'drop'])
+      .optional(),
+    amd_machine_call_menu_id: z.string().nullable().optional()
+      .or(z.literal('').transform(() => null)),
+    amd_machine_audio_path: z.string().nullable().optional()
+      .or(z.literal('').transform(() => null)),
     voicemail_path: z
       .string()
       .nullable()
@@ -426,6 +460,20 @@ export function updateCampaign(
   if (input.hopper_level !== undefined) updates.hopper_level = input.hopper_level;
   if (input.dial_level !== undefined) updates.dial_level = input.dial_level;
   if (input.amd_action !== undefined) updates.amd_action = input.amd_action;
+  if (input.on_answer_call_menu_id !== undefined)
+    updates.on_answer_call_menu_id = input.on_answer_call_menu_id;
+  if (input.audio_drop_path !== undefined)
+    updates.audio_drop_path = input.audio_drop_path;
+  if (input.amd_human_action !== undefined)
+    updates.amd_human_action = input.amd_human_action;
+  if (input.amd_human_call_menu_id !== undefined)
+    updates.amd_human_call_menu_id = input.amd_human_call_menu_id;
+  if (input.amd_machine_action !== undefined)
+    updates.amd_machine_action = input.amd_machine_action;
+  if (input.amd_machine_call_menu_id !== undefined)
+    updates.amd_machine_call_menu_id = input.amd_machine_call_menu_id;
+  if (input.amd_machine_audio_path !== undefined)
+    updates.amd_machine_audio_path = input.amd_machine_audio_path;
   if (input.voicemail_path !== undefined) {
     updates.voicemail_path = input.voicemail_path ?? null;
   }

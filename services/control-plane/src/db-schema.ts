@@ -477,6 +477,19 @@ export const COLUMN_MIGRATIONS: string[] = [
   // the queue dispatch attempts an agent pick). Distinct from
   // overflow_call_menu_id (fires only when no agent available).
   "ALTER TABLE in_groups ADD COLUMN entry_call_menu_id TEXT",
+  // Iter 154 — Campaign on-answer behaviors (ViciDial parity).
+  // Adds two new amd_action values ('call_menu' and 'audio_drop')
+  // plus the sub-action knobs that detect mode uses to branch on
+  // amd_v2's HUMAN/MACHINE verdict. Mirrors ViciDial's special
+  // extensions: 8366 (call menu transfer), 8369 (in-group transfer),
+  // 8373 (drop with audio file).
+  "ALTER TABLE campaigns ADD COLUMN on_answer_call_menu_id TEXT",
+  "ALTER TABLE campaigns ADD COLUMN audio_drop_path TEXT",
+  "ALTER TABLE campaigns ADD COLUMN amd_human_action TEXT",
+  "ALTER TABLE campaigns ADD COLUMN amd_human_call_menu_id TEXT",
+  "ALTER TABLE campaigns ADD COLUMN amd_machine_action TEXT",
+  "ALTER TABLE campaigns ADD COLUMN amd_machine_call_menu_id TEXT",
+  "ALTER TABLE campaigns ADD COLUMN amd_machine_audio_path TEXT",
   "ALTER TABLE in_groups ADD COLUMN overflow_call_menu_id TEXT",
   "ALTER TABLE in_groups ADD COLUMN after_hours_call_menu_id TEXT",
   "ALTER TABLE campaigns ADD COLUMN no_agent_call_menu_id TEXT",

@@ -747,6 +747,25 @@ export async function paceCampaignOnce(
     if (campaign.amd_action === 'drop') {
       bridgeApp = '&hangup';
     } else if (
+      campaign.amd_action === 'call_menu' &&
+      campaign.on_answer_call_menu_id
+    ) {
+      // Iter 154 — on answer, route the leg directly into a call
+      // menu (ViciDial ext 8366 parity). The dialplan generator
+      // already emitted call_menu_<id>.xml in iter 152.
+      bridgeApp = `&execute_extension(call_menu_${campaign.on_answer_call_menu_id} XML default)`;
+    } else if (
+      campaign.amd_action === 'audio_drop' &&
+      campaign.audio_drop_path
+    ) {
+      // Iter 154 — on answer, play a configured audio file then
+      // hang up (ViciDial ext 8373 parity). Useful for compliance
+      // notifications + automated drop messages.
+      amdChannelVars.push(
+        `dialeros_audio_drop_path=${campaign.audio_drop_path}`,
+      );
+      bridgeApp = '&execute_extension(dialeros-audio-drop XML default)';
+    } else if (
       campaign.amd_action === 'voicemail' &&
       campaign.voicemail_path
     ) {
@@ -766,6 +785,30 @@ export async function paceCampaignOnce(
       if (campaign.voicemail_path) {
         amdChannelVars.push(
           `dialeros_voicemail_path=${campaign.voicemail_path}`,
+        );
+      }
+      // Iter 154 — detect-mode sub-actions. The dialplan reads
+      // these to decide what to do when amd_v2 returns HUMAN vs
+      // MACHINE. Defaults preserve iter-141 behavior:
+      //   HUMAN   default 'bridge'    (preserves existing flow)
+      //   MACHINE default 'voicemail' (preserves existing flow)
+      const humanAction = campaign.amd_human_action || 'bridge';
+      const machineAction = campaign.amd_machine_action || 'voicemail';
+      amdChannelVars.push(`dialeros_amd_human_action=${humanAction}`);
+      amdChannelVars.push(`dialeros_amd_machine_action=${machineAction}`);
+      if (campaign.amd_human_call_menu_id) {
+        amdChannelVars.push(
+          `dialeros_amd_human_call_menu_id=${campaign.amd_human_call_menu_id}`,
+        );
+      }
+      if (campaign.amd_machine_call_menu_id) {
+        amdChannelVars.push(
+          `dialeros_amd_machine_call_menu_id=${campaign.amd_machine_call_menu_id}`,
+        );
+      }
+      if (campaign.amd_machine_audio_path) {
+        amdChannelVars.push(
+          `dialeros_amd_machine_audio_path=${campaign.amd_machine_audio_path}`,
         );
       }
       bridgeApp = '&execute_extension(dialeros-amd-route XML default)';
