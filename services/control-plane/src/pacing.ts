@@ -816,9 +816,19 @@ export async function paceCampaignOnce(
       // bridge mode. Need a real local target — if none, treat as
       // abandoned (call answers, instantly hangs up). Reports +
       // max_abandon% pick this up via hangup_cause / answered_at.
-      bridgeApp = computedBridgeTarget
-        ? `&bridge(${computedBridgeTarget})`
-        : '&hangup';
+      //
+      // Iter 156 — but if the campaign has a no-agent drop call
+      // menu configured, route the answered leg there instead of
+      // &hangup. Cuts the iter-146 'A' (abandoned) disposition
+      // count when the operator has a "press 1 to leave a message"
+      // menu ready. Recovery rate depends on the menu's flow.
+      if (computedBridgeTarget) {
+        bridgeApp = `&bridge(${computedBridgeTarget})`;
+      } else if (campaign.no_agent_call_menu_id) {
+        bridgeApp = `&execute_extension(call_menu_${campaign.no_agent_call_menu_id} XML default)`;
+      } else {
+        bridgeApp = '&hangup';
+      }
     }
     // Iter 79 — INSERT the dial_intent row BEFORE issuing bgapi.
     // FreeSWITCH rejects bad routes faster than the bgapi await

@@ -38,6 +38,7 @@ interface Props {
     amd_machine_action: string | null;
     amd_machine_call_menu_id: string | null;
     amd_machine_audio_path: string | null;
+    no_agent_call_menu_id: string | null;
   };
 }
 
@@ -64,6 +65,11 @@ export function OnAnswerCard({ campaignId, initial }: Props) {
   );
   const [machineAudioPath, setMachineAudioPath] = useState(
     initial.amd_machine_audio_path ?? '',
+  );
+  // Iter 156 — separate from detect/HUMAN-MACHINE; fires when no
+  // local agent is available at originate time.
+  const [noAgentCallMenuId, setNoAgentCallMenuId] = useState(
+    initial.no_agent_call_menu_id ?? '',
   );
   const [menus, setMenus] = useState<CallMenuOpt[]>([]);
   const [saving, setSaving] = useState(false);
@@ -106,6 +112,7 @@ export function OnAnswerCard({ campaignId, initial }: Props) {
             amdAction === 'detect' && machineAction === 'audio_drop'
               ? machineAudioPath || null
               : null,
+          no_agent_call_menu_id: noAgentCallMenuId || null,
         }),
       });
       if (!res.ok) {
@@ -287,6 +294,24 @@ export function OnAnswerCard({ campaignId, initial }: Props) {
           </div>
         </div>
       ) : null}
+
+      <div className="pt-3 border-t border-border">
+        <h3 className="text-xs uppercase tracking-wide text-fg-subtle mb-2">
+          No-agent drop (independent of amd_action)
+        </h3>
+        <p className="text-xs text-fg-subtle mb-2">
+          If the pacer originates an outbound but every local agent
+          is taken at the moment of answer, this call menu plays
+          instead of an &amp;hangup abandon. Reduces iter-146 &lsquo;A&rsquo;
+          dispositions when an operator-built &ldquo;press 1 to leave a
+          message&rdquo; menu is available.
+        </p>
+        <MenuPicker
+          value={noAgentCallMenuId}
+          onChange={setNoAgentCallMenuId}
+          label="Menu to drop into when no agent available"
+        />
+      </div>
 
       {error ? <div className="text-error text-sm">{error}</div> : null}
       {success ? (

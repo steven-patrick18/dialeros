@@ -2879,6 +2879,11 @@ export interface CampaignLiveRow {
   amd_machine_action: string | null;
   amd_machine_call_menu_id: string | null;
   amd_machine_audio_path: string | null;
+  // Iter 149/156 — campaign no-agent drop target. When the pacer
+  // has no local agent at originate time AND this is set, the
+  // answered leg is routed into the call menu instead of being
+  // silently abandoned (ViciDial drop_call_target parity).
+  no_agent_call_menu_id: string | null;
 }
 export function liveCampaignSnapshot(): CampaignLiveRow[] {
   return db()
@@ -4929,6 +4934,11 @@ export interface CampaignRecord {
   amd_machine_action: string | null;
   amd_machine_call_menu_id: string | null;
   amd_machine_audio_path: string | null;
+  // Iter 149/156 — campaign no-agent drop target. When the pacer
+  // has no local agent at originate time AND this is set, the
+  // answered leg is routed into the call menu instead of being
+  // silently abandoned (ViciDial drop_call_target parity).
+  no_agent_call_menu_id: string | null;
   voicemail_path: string | null;
   list_order: string;
   /** Iter 94 — JSON array of lead statuses the pacer is allowed
@@ -5215,6 +5225,11 @@ export function updateCampaignFields(
   amd_machine_action: string | null;
   amd_machine_call_menu_id: string | null;
   amd_machine_audio_path: string | null;
+  // Iter 149/156 — campaign no-agent drop target. When the pacer
+  // has no local agent at originate time AND this is set, the
+  // answered leg is routed into the call menu instead of being
+  // silently abandoned (ViciDial drop_call_target parity).
+  no_agent_call_menu_id: string | null;
     voicemail_path: string | null;
     list_order: string;
     dialable_statuses: string;

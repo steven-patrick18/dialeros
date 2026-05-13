@@ -366,6 +366,12 @@ export const CampaignUpdateInputSchema = z
       .or(z.literal('').transform(() => null)),
     amd_machine_audio_path: z.string().nullable().optional()
       .or(z.literal('').transform(() => null)),
+    // Iter 156 — no-agent drop target
+    no_agent_call_menu_id: z
+      .string()
+      .nullable()
+      .optional()
+      .or(z.literal('').transform(() => null)),
     voicemail_path: z
       .string()
       .nullable()
@@ -474,6 +480,8 @@ export function updateCampaign(
     updates.amd_machine_call_menu_id = input.amd_machine_call_menu_id;
   if (input.amd_machine_audio_path !== undefined)
     updates.amd_machine_audio_path = input.amd_machine_audio_path;
+  if (input.no_agent_call_menu_id !== undefined)
+    updates.no_agent_call_menu_id = input.no_agent_call_menu_id;
   if (input.voicemail_path !== undefined) {
     updates.voicemail_path = input.voicemail_path ?? null;
   }

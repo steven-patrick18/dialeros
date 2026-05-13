@@ -729,6 +729,7 @@ function DetailTab({
             amd_machine_action: c.amd_machine_action,
             amd_machine_call_menu_id: c.amd_machine_call_menu_id,
             amd_machine_audio_path: c.amd_machine_audio_path,
+            no_agent_call_menu_id: c.no_agent_call_menu_id,
           }}
         />
 
