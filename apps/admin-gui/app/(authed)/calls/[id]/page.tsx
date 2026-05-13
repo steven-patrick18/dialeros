@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getCallDetail } from '@dialeros/control-plane';
+import { CallActionsCard } from './actions-card';
 import { getCurrentUser } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -175,6 +176,13 @@ export default async function CallDetailPage({
           </div>
         </div>
       </section>
+
+      {/* Iter 160 — per-call actions (admin / supervisor). */}
+      <CallActionsCard
+        callId={call.id}
+        leadPhone={call.lead_phone}
+        canAct={isPrivileged}
+      />
 
       {/* Timeline */}
       <section className="border border-border rounded p-4 bg-card">
