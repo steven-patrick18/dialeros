@@ -701,3 +701,14 @@ export type {
   AudioFileMeta,
 } from './audio-library';
 export type { AudioFileRecord } from './db';
+
+// Iter 152 — Call Menu dialplan generator + deploy
+export {
+  buildCallMenuDialplanXml,
+  callMenuDialplanPath,
+} from './call-menu-dialplan';
+export type { DialplanInputs } from './call-menu-dialplan';
+export {
+  deployCallMenuDialplan,
+  removeCallMenuDialplan,
+} from './call-menu-deploy';

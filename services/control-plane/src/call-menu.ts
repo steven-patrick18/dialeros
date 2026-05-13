@@ -35,6 +35,12 @@ import {
   type CallMenuOptionRecord,
   type CallMenuRecord,
 } from './db';
+// Iter 152 — deploy regenerates the FreeSWITCH dialplan + reload
+// after each successful write so menus become callable immediately.
+import {
+  deployCallMenuDialplan,
+  removeCallMenuDialplan,
+} from './call-menu-deploy';
 
 export const CallMenuActionTypeSchema = z.enum([
   'hangup',
@@ -127,7 +133,9 @@ export interface CreateCallMenuResult {
   id: string;
 }
 
-export function createCallMenu(input: CallMenuInput): CreateCallMenuResult {
+export async function createCallMenu(
+  input: CallMenuInput,
+): Promise<CreateCallMenuResult & { deploy: Awaited<ReturnType<typeof deployCallMenuDialplan>> }> {
   const id = randomUUID();
   insertCallMenu({
     id,
@@ -155,7 +163,8 @@ export function createCallMenu(input: CallMenuInput): CreateCallMenuResult {
       tod_end: o.tod_end || null,
     })),
   );
-  return { id };
+  const deploy = await deployCallMenuDialplan(id);
+  return { id, deploy };
 }
 
 export function listCallMenus(): CallMenuRecord[] {
@@ -170,12 +179,12 @@ export function getCallMenuOptions(id: string): CallMenuOptionRecord[] {
   return listCallMenuOptionsFromDb(id);
 }
 
-export function updateCallMenu(
+export async function updateCallMenu(
   id: string,
   input: CallMenuInput,
-): boolean {
+): Promise<{ ok: boolean; deploy?: Awaited<ReturnType<typeof deployCallMenuDialplan>> }> {
   const existing = getCallMenuFromDb(id);
-  if (!existing) return false;
+  if (!existing) return { ok: false };
   updateCallMenuFields(id, {
     name: input.name,
     description: input.description || null,
@@ -201,9 +210,32 @@ export function updateCallMenu(
       tod_end: o.tod_end || null,
     })),
   );
-  return true;
+  const deploy = await deployCallMenuDialplan(id);
+  return { ok: true, deploy };
 }
 
-export function deleteCallMenu(id: string): boolean {
-  return deleteCallMenuFromDb(id);
+export async function deleteCallMenu(
+  id: string,
+): Promise<{
+  ok: boolean;
+  deploy?: Awaited<ReturnType<typeof removeCallMenuDialplan>>;
+}> {
+  const ok = deleteCallMenuFromDb(id);
+  if (!ok) return { ok: false };
+  // Best-effort: leave the file removed even if FS reload fails so
+  // the next reload picks it up. The DB row is already gone — no
+  // way to roll back partially anyway.
+  try {
+    const deploy = await removeCallMenuDialplan(id);
+    return { ok: true, deploy };
+  } catch (e) {
+    return {
+      ok: true,
+      deploy: {
+        removed: false,
+        reloaded: false,
+        reload_error: (e as Error).message,
+      },
+    };
+  }
 }

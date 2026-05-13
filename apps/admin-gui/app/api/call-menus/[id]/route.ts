@@ -69,8 +69,8 @@ export async function PUT(
     );
   }
   try {
-    const ok = updateCallMenu(id, parsed.data);
-    if (!ok) {
+    const result = await updateCallMenu(id, parsed.data);
+    if (!result.ok) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     appendAudit({
@@ -81,7 +81,7 @@ export async function PUT(
       targetId: id,
       payload: { options: parsed.data.options.length },
     });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, deploy: result.deploy });
   } catch (e) {
     return NextResponse.json(
       { error: (e as Error).message },
@@ -105,8 +105,8 @@ export async function DELETE(
     );
   }
   const { id } = await ctx.params;
-  const ok = deleteCallMenu(id);
-  if (!ok) {
+  const result = await deleteCallMenu(id);
+  if (!result.ok) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   appendAudit({
@@ -117,5 +117,5 @@ export async function DELETE(
     targetId: id,
     payload: {},
   });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, deploy: result.deploy });
 }

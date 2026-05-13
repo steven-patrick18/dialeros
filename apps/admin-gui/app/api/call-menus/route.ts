@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     );
   }
   try {
-    const result = createCallMenu(parsed.data);
+    const result = await createCallMenu(parsed.data);
     appendAudit({
       actorUserId: me.id,
       actorIp: clientIp(req),
@@ -66,7 +66,10 @@ export async function POST(req: NextRequest) {
       targetId: result.id,
       payload: { name: parsed.data.name, options: parsed.data.options.length },
     });
-    return NextResponse.json({ id: result.id }, { status: 201 });
+    return NextResponse.json(
+      { id: result.id, deploy: result.deploy },
+      { status: 201 },
+    );
   } catch (e) {
     return NextResponse.json(
       { error: (e as Error).message },
