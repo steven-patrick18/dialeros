@@ -1,0 +1,51 @@
+# Iter 162 — Coqui TTS daemon. Long-running aiohttp server that
+# holds the XTTS-v2 model in RAM so /api/audio-files/tts requests
+# from the admin-gui get sub-RTF response times instead of paying
+# a 30s warmup per call.
+#
+# Resource cap MemoryMax=4G protects the rest of the stack on the
+# 5.8GB box. Model resident ~3GB; tools have a little headroom.
+
+[Unit]
+Description=DialerOS Coqui TTS daemon (XTTS-v2 voice cloning)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dialeros
+Group=dialeros
+WorkingDirectory=/opt/dialeros
+ExecStart=/opt/dialeros/.coqui-venv/bin/python /opt/dialeros/scripts/coqui-tts-daemon.py
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment=TTS_HOME=/var/lib/dialeros/ai/coqui-cache
+Environment=COQUI_TOS_AGREED=1
+Environment=COQUI_DAEMON_PORT=11123
+Environment=COQUI_DAEMON_HOST=127.0.0.1
+# Pin to single-threaded inference so we don't fight torch's
+# automatic thread-pool sizing on a 5-core shared box.
+Environment=OMP_NUM_THREADS=2
+Environment=MKL_NUM_THREADS=2
+
+# Hardening
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dialeros/ai/coqui-cache /tmp
+ReadOnlyPaths=/opt/dialeros /var/lib/dialeros/audio
+
+# Resource caps — the model is ~3GB resident; 4G ceiling stops a
+# memory-leak edge case from OOM'ing the box.
+MemoryMax=4G
+TasksMax=64
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dialeros-coqui-tts
+
+[Install]
+WantedBy=multi-user.target

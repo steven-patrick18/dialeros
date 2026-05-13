@@ -497,12 +497,19 @@ function RecordCard({ onSaved }: { onSaved: () => void }) {
 }
 
 function TtsCard({ onSaved }: { onSaved: () => void }) {
+  const [engine, setEngine] = useState<'piper' | 'coqui'>('piper');
   const [installed, setInstalled] = useState<boolean | null>(null);
   const [installCommand, setInstallCommand] = useState<string>('');
   const [voices, setVoices] = useState<{ name: string; model_path: string }[]>(
     [],
   );
   const [voice, setVoice] = useState<string>('');
+  const [coquiInstalled, setCoquiInstalled] = useState<boolean>(false);
+  const [coquiSupportsClone, setCoquiSupportsClone] = useState<boolean>(false);
+  const [cloneSources, setCloneSources] = useState<
+    { id: string; name: string; description: string | null }[]
+  >([]);
+  const [voiceCloneAudioId, setVoiceCloneAudioId] = useState<string>('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('menu_prompt');
@@ -519,19 +526,36 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
           installed: boolean;
           install_command?: string;
           voices: { name: string; model_path: string }[];
+          engines?: {
+            piper: {
+              installed: boolean;
+              install_command?: string;
+              voices: { name: string; model_path: string }[];
+            };
+            coqui: {
+              installed: boolean;
+              loaded?: boolean;
+              model?: string;
+              supports_clone?: boolean;
+            };
+          };
         }) => {
           if (cancelled) return;
           setInstalled(data.installed);
           setInstallCommand(data.install_command ?? '');
           setVoices(data.voices);
           if (data.voices.length > 0) {
-            // Iter 161 — pick the best-quality voice as default
-            // instead of alphabetical first.
             const sorted = [...data.voices].sort(
               (a, b) =>
                 voiceQualityRank(b.name) - voiceQualityRank(a.name),
             );
             setVoice(sorted[0]!.name);
+          }
+          if (data.engines?.coqui) {
+            setCoquiInstalled(data.engines.coqui.installed);
+            setCoquiSupportsClone(
+              Boolean(data.engines.coqui.supports_clone),
+            );
           }
         },
       )
@@ -543,14 +567,65 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
     };
   }, []);
 
+  // When Coqui engine is selected, load the list of recorded /
+  // uploaded clips an operator could use as a voice-clone source.
+  // XTTS-v2 needs a 6-15 second sample; we don't enforce length
+  // here (recording duration isn't reliably reported pre-ffprobe)
+  // but the UI hint nudges operators.
+  useEffect(() => {
+    if (engine !== 'coqui' || !coquiSupportsClone) return;
+    let cancelled = false;
+    fetch('/api/audio-files', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+      .then(
+        (data: {
+          files: {
+            id: string;
+            name: string;
+            description: string | null;
+            source: string;
+          }[];
+        }) => {
+          if (cancelled) return;
+          // Any non-TTS source is a candidate for cloning — both
+          // 'uploaded' and 'recorded'. Hide TTS-generated rows so
+          // operators don't accidentally feed XTTS its own output.
+          setCloneSources(
+            data.files
+              .filter((f) => f.source !== 'tts')
+              .map((f) => ({
+                id: f.id,
+                name: f.name,
+                description: f.description,
+              })),
+          );
+        },
+      )
+      .catch(() => setCloneSources([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, coquiSupportsClone]);
+
   async function generate() {
     setSubmitting(true);
     setError(null);
     try {
+      const payload: Record<string, unknown> = {
+        engine,
+        text,
+        name,
+        description,
+        category,
+      };
+      if (engine === 'piper') payload.voice = voice;
+      if (engine === 'coqui' && voiceCloneAudioId) {
+        payload.voice_clone_audio_id = voiceCloneAudioId;
+      }
       const res = await fetch('/api/audio-files/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice, name, description, category }),
+        body: JSON.stringify(payload),
         credentials: 'same-origin',
       });
       if (!res.ok) {
@@ -561,6 +636,7 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
       setText('');
       setName('');
       setDescription('');
+      setVoiceCloneAudioId('');
       onSaved();
     } catch (err) {
       setError((err as Error).message);
@@ -574,9 +650,28 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
       <h2 className="text-xs uppercase tracking-wide text-fg-muted">
         Text-to-speech
       </h2>
+      <label className="text-sm flex flex-col gap-1">
+        <span className="text-fg-subtle">Engine</span>
+        <select
+          value={engine}
+          onChange={(e) => setEngine(e.target.value as 'piper' | 'coqui')}
+          className="input"
+        >
+          <option value="piper">
+            piper — fast (RTF 0.15), 5 voices, no cloning
+          </option>
+          <option value="coqui" disabled={!coquiInstalled}>
+            {coquiInstalled
+              ? `coqui XTTS-v2 — voice cloning, RTF ~1.0${
+                  coquiSupportsClone ? '' : ' (no clone support detected)'
+                }`
+              : 'coqui — not installed (run install-coqui-tts.sh)'}
+          </option>
+        </select>
+      </label>
       {installed === null ? (
         <p className="text-fg-subtle text-sm">Checking piper-tts…</p>
-      ) : !installed ? (
+      ) : !installed && engine === 'piper' ? (
         <div className="text-sm space-y-2">
           <p className="text-warn">
             piper-tts not installed yet. Run on the server:
@@ -584,10 +679,14 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
           <pre className="bg-bg-elevated p-2 rounded border border-border text-xs font-mono break-all">
             {installCommand || 'sudo /opt/dialeros/scripts/install-piper-tts.sh'}
           </pre>
-          <p className="text-fg-subtle text-xs">
-            ~100MB download (binary + default voice). Refresh this page
-            once installed.
-          </p>
+        </div>
+      ) : engine === 'coqui' && !coquiInstalled ? (
+        <div className="text-sm space-y-2">
+          <p className="text-warn">Coqui daemon not reachable. Run:</p>
+          <pre className="bg-bg-elevated p-2 rounded border border-border text-xs font-mono break-all">
+            sudo /opt/dialeros/scripts/install-coqui-tts.sh
+            {'\n'}sudo systemctl enable --now dialeros-coqui-tts
+          </pre>
         </div>
       ) : (
         <>
@@ -622,58 +721,96 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
               <option value="other">Other</option>
             </select>
           </label>
-          <label className="text-sm flex flex-col gap-1">
-            <span className="text-fg-subtle">
-              Voice{' '}
-              <span className="text-[10px] text-fg-subtle">
-                (high &gt; medium &gt; low — sorted best-first)
+          {engine === 'piper' ? (
+            <label className="text-sm flex flex-col gap-1">
+              <span className="text-fg-subtle">
+                Voice{' '}
+                <span className="text-[10px] text-fg-subtle">
+                  (high &gt; medium &gt; low — sorted best-first)
+                </span>
               </span>
-            </span>
-            <select
-              value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              className="input"
-              disabled={voices.length === 0}
-            >
-              {voices.length === 0 ? (
-                <option value="">No voices found in piper-voices/</option>
-              ) : (
-                // Iter 161 — sort 'high' tier first, then 'medium', then 'low'
-                // so the default selection on a fresh page lands on the best
-                // available voice.
-                [...voices]
-                  .sort(
-                    (a, b) =>
-                      voiceQualityRank(b.name) - voiceQualityRank(a.name) ||
-                      a.name.localeCompare(b.name),
-                  )
-                  .map((v) => (
-                    <option key={v.name} value={v.name}>
-                      {voiceLabel(v.name)}
-                    </option>
-                  ))
-              )}
-            </select>
-          </label>
+              <select
+                value={voice}
+                onChange={(e) => setVoice(e.target.value)}
+                className="input"
+                disabled={voices.length === 0}
+              >
+                {voices.length === 0 ? (
+                  <option value="">No voices found in piper-voices/</option>
+                ) : (
+                  [...voices]
+                    .sort(
+                      (a, b) =>
+                        voiceQualityRank(b.name) - voiceQualityRank(a.name) ||
+                        a.name.localeCompare(b.name),
+                    )
+                    .map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {voiceLabel(v.name)}
+                      </option>
+                    ))
+                )}
+              </select>
+            </label>
+          ) : (
+            <label className="text-sm flex flex-col gap-1">
+              <span className="text-fg-subtle">
+                Voice clone source{' '}
+                <span className="text-[10px] text-fg-subtle">
+                  (optional — leave blank for the model's default speaker)
+                </span>
+              </span>
+              <select
+                value={voiceCloneAudioId}
+                onChange={(e) => setVoiceCloneAudioId(e.target.value)}
+                className="input"
+              >
+                <option value="">
+                  — default speaker (no cloning) —
+                </option>
+                {cloneSources.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.description ? ` · ${c.description.slice(0, 40)}` : ''}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[10px] text-fg-subtle">
+                For best results, the source clip should be 6-15
+                seconds of a single speaker talking clearly. Record
+                via the "Record in browser" card to the left, then
+                refresh this list.
+              </span>
+            </label>
+          )}
           <label className="text-sm flex flex-col gap-1">
-            <span className="text-fg-subtle">Text to speak (max 1500 chars)</span>
+            <span className="text-fg-subtle">Text to speak (max 2000 chars)</span>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               className="input"
               rows={4}
               placeholder="Welcome to Acme. Press 1 for sales, 2 for support."
-              maxLength={1500}
+              maxLength={2000}
             />
           </label>
           {error ? <div className="text-error text-xs">{error}</div> : null}
           <button
             type="button"
             onClick={generate}
-            disabled={submitting || !text.trim() || !voice || !name}
+            disabled={
+              submitting ||
+              !text.trim() ||
+              !name ||
+              (engine === 'piper' && !voice)
+            }
             className="bg-accent hover:bg-accent-hover text-accent-fg px-3 py-1.5 rounded text-sm disabled:opacity-50 w-full"
           >
-            {submitting ? 'Generating…' : 'Generate & save'}
+            {submitting
+              ? engine === 'coqui'
+                ? 'Generating (XTTS can take 10-30s)…'
+                : 'Generating…'
+              : 'Generate & save'}
           </button>
         </>
       )}
