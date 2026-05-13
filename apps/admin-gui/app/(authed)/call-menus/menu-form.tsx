@@ -21,6 +21,10 @@ interface OptionRow {
   action_type: string;
   action_value: string;
   ordering: number;
+  // Iter 151 ViciDial parity
+  dispo_code: string;
+  tod_start: string;
+  tod_end: string;
 }
 
 interface FormData {
@@ -58,6 +62,8 @@ const ACTION_TYPES = [
   { value: 'extension', label: 'Extension' },
   { value: 'call_menu', label: 'Sub-menu' },
   { value: 'did', label: 'DID (transfer out)' },
+  // Iter 151 — ViciDial parity. Counts toward max_retries.
+  { value: 'repeat', label: 'Repeat menu' },
 ] as const;
 
 export function CallMenuForm({
@@ -101,6 +107,9 @@ export function CallMenuForm({
             action_type: 'hangup',
             action_value: '',
             ordering: s.options.length,
+            dispo_code: '',
+            tod_start: '',
+            tod_end: '',
           },
         ],
       };
@@ -282,6 +291,18 @@ export function CallMenuForm({
                 <th className="py-1.5">Label</th>
                 <th className="py-1.5 w-40">Action</th>
                 <th className="py-1.5">Value</th>
+                <th
+                  className="py-1.5 w-24"
+                  title="Optional disposition code applied when this option is picked (iter 151 ViciDial parity)"
+                >
+                  Dispo
+                </th>
+                <th
+                  className="py-1.5 w-32"
+                  title="Time-of-day window (24h) — outside this window the option is ignored and the default action fires"
+                >
+                  TOD (24h)
+                </th>
                 <th className="py-1.5 w-10"></th>
               </tr>
             </thead>
@@ -348,9 +369,47 @@ export function CallMenuForm({
                                 ? 'sub-menu-id'
                                 : o.action_type === 'voicemail'
                                   ? 'path/to/greeting.wav (optional)'
-                                  : '(ignored)'
+                                  : o.action_type === 'repeat'
+                                    ? '(re-plays prompt)'
+                                    : '(ignored)'
                       }
+                      disabled={o.action_type === 'repeat' || o.action_type === 'hangup'}
                     />
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <input
+                      value={o.dispo_code}
+                      onChange={(e) =>
+                        setOption(idx, 'dispo_code', e.target.value)
+                      }
+                      className="input w-full font-mono text-xs"
+                      placeholder="e.g. DNC"
+                    />
+                  </td>
+                  <td className="py-1.5 pr-2">
+                    <div className="flex gap-1 items-center">
+                      <input
+                        type="text"
+                        value={o.tod_start}
+                        onChange={(e) =>
+                          setOption(idx, 'tod_start', e.target.value)
+                        }
+                        className="input flex-1 text-xs"
+                        placeholder="00:00"
+                        pattern="^(?:|([01][0-9]|2[0-3]):[0-5][0-9])$"
+                      />
+                      <span className="text-fg-subtle text-xs">→</span>
+                      <input
+                        type="text"
+                        value={o.tod_end}
+                        onChange={(e) =>
+                          setOption(idx, 'tod_end', e.target.value)
+                        }
+                        className="input flex-1 text-xs"
+                        placeholder="23:59"
+                        pattern="^(?:|([01][0-9]|2[0-3]):[0-5][0-9])$"
+                      />
+                    </div>
                   </td>
                   <td className="py-1.5">
                     <button

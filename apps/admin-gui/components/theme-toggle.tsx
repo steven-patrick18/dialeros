@@ -5,18 +5,22 @@ import { useEffect, useState } from 'react';
 const COOKIE = 'dialeros_theme';
 const ONE_YEAR = 60 * 60 * 24 * 365;
 
-type Theme = 'light' | 'dark' | 'vicidial';
+type Theme = 'light' | 'dark' | 'vicidial' | 'saas';
 
-const ORDER: Theme[] = ['light', 'vicidial', 'dark'];
+// Iter 151 — order matters: saas is the new default + first in the
+// rotation so a fresh visitor clicking the toggle sees the modern
+// look before bouncing through other themes.
+const ORDER: Theme[] = ['saas', 'light', 'vicidial', 'dark'];
 
 export function ThemeToggle({ initialTheme }: { initialTheme: Theme }) {
   const [theme, setTheme] = useState<Theme>(initialTheme);
 
   useEffect(() => {
     const root = document.documentElement;
-    root.classList.remove('dark', 'vicidial');
+    root.classList.remove('dark', 'vicidial', 'saas');
     if (theme === 'dark') root.classList.add('dark');
     else if (theme === 'vicidial') root.classList.add('vicidial');
+    else if (theme === 'saas') root.classList.add('saas');
     document.cookie = `${COOKIE}=${theme}; path=/; max-age=${ONE_YEAR}; samesite=lax`;
   }, [theme]);
 
@@ -24,9 +28,21 @@ export function ThemeToggle({ initialTheme }: { initialTheme: Theme }) {
   const next = ORDER[(idx + 1) % ORDER.length]!;
 
   const label =
-    theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'ViciDial';
+    theme === 'light'
+      ? 'Light'
+      : theme === 'dark'
+        ? 'Dark'
+        : theme === 'saas'
+          ? 'SaaS'
+          : 'ViciDial';
   const glyph =
-    theme === 'light' ? '◐' : theme === 'dark' ? '◑' : '◕';
+    theme === 'light'
+      ? '◐'
+      : theme === 'dark'
+        ? '◑'
+        : theme === 'saas'
+          ? '✦'
+          : '◕';
 
   return (
     <button

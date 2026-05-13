@@ -3990,6 +3990,12 @@ export interface CallMenuOptionRecord {
   action_type: string;
   action_value: string | null;
   label: string | null;
+  /** Iter 151 — per-option disposition override. */
+  dispo_code: string | null;
+  /** Iter 151 — time-of-day window start (HH:MM, 24h). NULL = always. */
+  tod_start: string | null;
+  /** Iter 151 — time-of-day window end (HH:MM, 24h). NULL = always. */
+  tod_end: string | null;
 }
 
 export function insertCallMenu(rec: {
@@ -4112,6 +4118,9 @@ export function replaceCallMenuOptions(
     action_type: string;
     action_value: string | null;
     label: string | null;
+    dispo_code?: string | null;
+    tod_start?: string | null;
+    tod_end?: string | null;
   }>,
 ): void {
   const conn = db();
@@ -4124,8 +4133,9 @@ export function replaceCallMenuOptions(
     if (options.length > 0) {
       const stmt = conn.prepare(
         `INSERT INTO call_menu_options
-           (call_menu_id, digit, ordering, action_type, action_value, label)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+           (call_menu_id, digit, ordering, action_type, action_value, label,
+            dispo_code, tod_start, tod_end)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const opt of options) {
         stmt.run(
@@ -4135,6 +4145,9 @@ export function replaceCallMenuOptions(
           opt.action_type,
           opt.action_value,
           opt.label,
+          opt.dispo_code ?? null,
+          opt.tod_start ?? null,
+          opt.tod_end ?? null,
         );
       }
     }

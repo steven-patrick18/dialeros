@@ -244,8 +244,47 @@ export const CREATE_TABLES_SQL = `
       action_type TEXT NOT NULL,
       action_value TEXT,
       label TEXT,
+      -- Iter 151 ViciDial parity:
+      -- dispo_code  — optional per-option disposition override. If
+      --               set, callers who pick this digit get the
+      --               dial_intent row stamped with this code, even
+      --               if the option routes to a queue and the agent
+      --               doesn't manually dispose later. Used by ViciDial
+      --               for "press 9 to be removed from list" -> 'DNC'.
+      -- tod_start   — time-of-day window start (HH:MM, 24h).
+      -- tod_end     — time-of-day window end (HH:MM). Options outside
+      --               their TOD window are ignored at dial time and
+      --               the caller falls to the default action. Both
+      --               NULL means "always active".
+      dispo_code TEXT,
+      tod_start TEXT,
+      tod_end TEXT,
       UNIQUE(call_menu_id, digit)
     );
+
+    -- Iter 151 — DTMF press log. Every digit press during a menu
+    -- session is appended here. The iter 153 dialplan generator
+    -- emits a lua send_event after each play_and_get_digits so
+    -- analytics in iter 154 can compute pick rate, timeout rate,
+    -- abandon-during-menu rate.
+    CREATE TABLE IF NOT EXISTS call_menu_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      call_menu_id TEXT NOT NULL REFERENCES call_menus(id) ON DELETE CASCADE,
+      dial_intent_id INTEGER REFERENCES dial_intents(id) ON DELETE SET NULL,
+      call_uuid TEXT,
+      event_type TEXT NOT NULL,  -- 'entered' | 'pressed' | 'timeout' | 'invalid' | 'repeated' | 'completed'
+      digit TEXT,
+      action_taken TEXT,         -- mirrors call_menu_options.action_type when event_type='pressed'
+      retry_count INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_call_menu_log_menu
+      ON call_menu_log(call_menu_id);
+    CREATE INDEX IF NOT EXISTS idx_call_menu_log_intent
+      ON call_menu_log(dial_intent_id);
+    CREATE INDEX IF NOT EXISTS idx_call_menu_log_ts
+      ON call_menu_log(ts);
 
     CREATE INDEX IF NOT EXISTS idx_call_menu_options_menu
       ON call_menu_options(call_menu_id);
@@ -437,6 +476,10 @@ export const COLUMN_MIGRATIONS: string[] = [
   "ALTER TABLE in_groups ADD COLUMN overflow_call_menu_id TEXT",
   "ALTER TABLE in_groups ADD COLUMN after_hours_call_menu_id TEXT",
   "ALTER TABLE campaigns ADD COLUMN no_agent_call_menu_id TEXT",
+  // Iter 151 — ViciDial parity for call menu options.
+  "ALTER TABLE call_menu_options ADD COLUMN dispo_code TEXT",
+  "ALTER TABLE call_menu_options ADD COLUMN tod_start TEXT",
+  "ALTER TABLE call_menu_options ADD COLUMN tod_end TEXT",
   "ALTER TABLE dial_intents ADD COLUMN dispositioned_at TEXT",
   "ALTER TABLE dial_intents ADD COLUMN callback_at TEXT",
   // iter 19: schedule-aware picker. Mirrors callback_at onto the lead

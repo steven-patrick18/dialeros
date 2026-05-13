@@ -47,6 +47,117 @@
   color-scheme: dark;
 }
 
+/*
+ * Iter 151 — SaaS theme. Stripe/Linear-style modern look. Inter font
+ * (with system-ui fallback), indigo accent, generous rounding, subtle
+ * shadows on cards. Default on fresh installs per iter 151's
+ * DEFAULT_THEME change.
+ */
+.saas {
+  --color-bg: 250 250 252;         /* near-white slate-50 */
+  --color-card: 255 255 255;
+  --color-card-hover: 248 250 252;
+  --color-border: 226 232 240;     /* slate-200 */
+  --color-fg: 17 24 39;            /* slate-900 */
+  --color-fg-muted: 75 85 99;
+  --color-fg-subtle: 148 163 184;
+  --color-accent: 79 70 229;       /* indigo-600 */
+  --color-accent-hover: 67 56 202; /* indigo-700 */
+  --color-accent-fg: 255 255 255;
+  --color-success: 5 150 105;
+  --color-warn: 217 119 6;
+  --color-error: 220 38 38;
+  color-scheme: light;
+}
+
+.saas body {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+.saas .input {
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  background: #ffffff;
+}
+.saas .input:focus {
+  outline: none;
+  border-color: rgb(var(--color-accent));
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+.saas .rounded,
+.saas .rounded-md {
+  border-radius: 0.5rem !important;
+}
+.saas .rounded-lg {
+  border-radius: 0.75rem !important;
+}
+.saas .rounded-xl,
+.saas .rounded-2xl {
+  border-radius: 1rem !important;
+}
+
+/* SaaS cards: white background, soft 1px border, very subtle shadow.
+   This catches anything with bg-card class. */
+.saas .bg-card {
+  background: #ffffff !important;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 1px 3px rgba(15, 23, 42, 0.04);
+}
+.saas .bg-card-hover {
+  background: rgb(248 250 252) !important;
+}
+.saas .bg-bg-elevated {
+  background: rgb(248 250 252) !important;
+}
+
+/* Accent buttons get a soft gradient + shadow — Stripe-style. */
+.saas .bg-accent {
+  background: linear-gradient(180deg, rgb(99 102 241) 0%, rgb(79 70 229) 100%) !important;
+  box-shadow:
+    0 1px 2px rgba(79, 70, 229, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  font-weight: 500;
+}
+.saas .hover\:bg-accent-hover:hover {
+  background: linear-gradient(180deg, rgb(79 70 229) 0%, rgb(67 56 202) 100%) !important;
+}
+
+/* SaaS tables: light header, more vertical breathing room, no zebra.
+   Hover row gets a subtle tint instead of yellow highlight. */
+.saas table thead {
+  background: rgb(248 250 252);
+  color: rgb(75 85 99);
+}
+.saas table thead th {
+  font-weight: 500;
+  font-size: 0.75rem;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+.saas tbody tr:hover {
+  background: rgb(248 250 252);
+}
+
+/* Sidebar nav: white surface, soft right border, indigo active state. */
+.saas nav {
+  background: #ffffff !important;
+  border-right: 1px solid rgb(var(--color-border));
+}
+.saas nav a {
+  border-radius: 0.5rem !important;
+  font-weight: 500;
+}
+.saas nav a:hover {
+  background: rgb(238 242 255) !important;  /* indigo-50 */
+  color: rgb(67 56 202);
+}
+
 .vicidial {
   --color-bg: 221 230 237;        /* pale blue-grey page */
   --color-card: 255 255 255;       /* white panels */

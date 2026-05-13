@@ -14,7 +14,13 @@ export default async function RootLayout({
 }) {
   const theme = await getCurrentTheme();
   const themeClass =
-    theme === 'dark' ? 'dark' : theme === 'vicidial' ? 'vicidial' : '';
+    theme === 'dark'
+      ? 'dark'
+      : theme === 'vicidial'
+        ? 'vicidial'
+        : theme === 'saas'
+          ? 'saas'
+          : '';
   return (
     <html lang="en" className={themeClass}>
       <body className="min-h-screen">{children}</body>

@@ -40,9 +40,10 @@ export type AudioCategory = z.infer<typeof AudioCategorySchema>;
 export const AudioSourceSchema = z.enum([
   'uploaded',
   'recorded',
-  // 'tts' lands in iter 151 — kept out of the union here so iter
-  // 150 doesn't accept TTS-tagged rows it doesn't know how to
-  // generate.
+  // Iter 151 — TTS via local piper-tts. Audit-trail shows the
+  // tts_text + tts_voice used at generation time (stored in the
+  // audio_files row's description column for now).
+  'tts',
 ]);
 export type AudioSource = z.infer<typeof AudioSourceSchema>;
 

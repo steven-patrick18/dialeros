@@ -80,7 +80,7 @@ export function Nav({
   initialTheme,
 }: {
   user: { username: string; role: string };
-  initialTheme: 'light' | 'dark' | 'vicidial';
+  initialTheme: 'light' | 'dark' | 'vicidial' | 'saas';
 }) {
   const router = useRouter();
   const pathname = usePathname() ?? '/';

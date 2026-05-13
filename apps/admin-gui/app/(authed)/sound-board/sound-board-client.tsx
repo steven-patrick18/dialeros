@@ -91,9 +91,10 @@ export function SoundBoardClient({
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <UploadCard onSaved={refresh} />
         <RecordCard onSaved={refresh} />
+        <TtsCard onSaved={refresh} />
       </div>
 
       <section>
@@ -491,6 +492,169 @@ function RecordCard({ onSaved }: { onSaved: () => void }) {
       >
         {submitting ? 'Saving…' : 'Save to library'}
       </button>
+    </div>
+  );
+}
+
+function TtsCard({ onSaved }: { onSaved: () => void }) {
+  const [installed, setInstalled] = useState<boolean | null>(null);
+  const [installCommand, setInstallCommand] = useState<string>('');
+  const [voices, setVoices] = useState<{ name: string; model_path: string }[]>(
+    [],
+  );
+  const [voice, setVoice] = useState<string>('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState('menu_prompt');
+  const [text, setText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/audio-files/tts', { credentials: 'same-origin' })
+      .then((r) => r.json())
+      .then(
+        (data: {
+          installed: boolean;
+          install_command?: string;
+          voices: { name: string; model_path: string }[];
+        }) => {
+          if (cancelled) return;
+          setInstalled(data.installed);
+          setInstallCommand(data.install_command ?? '');
+          setVoices(data.voices);
+          if (data.voices.length > 0) setVoice(data.voices[0]!.name);
+        },
+      )
+      .catch(() => {
+        if (!cancelled) setInstalled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function generate() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/audio-files/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice, name, description, category }),
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setText('');
+      setName('');
+      setDescription('');
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="border border-border rounded p-4 space-y-3">
+      <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+        Text-to-speech
+      </h2>
+      {installed === null ? (
+        <p className="text-fg-subtle text-sm">Checking piper-tts…</p>
+      ) : !installed ? (
+        <div className="text-sm space-y-2">
+          <p className="text-warn">
+            piper-tts not installed yet. Run on the server:
+          </p>
+          <pre className="bg-bg-elevated p-2 rounded border border-border text-xs font-mono break-all">
+            {installCommand || 'sudo /opt/dialeros/scripts/install-piper-tts.sh'}
+          </pre>
+          <p className="text-fg-subtle text-xs">
+            ~100MB download (binary + default voice). Refresh this page
+            once installed.
+          </p>
+        </div>
+      ) : (
+        <>
+          <label className="text-sm flex flex-col gap-1">
+            <span className="text-fg-subtle">Name</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="input"
+              placeholder="welcome-tts"
+            />
+          </label>
+          <label className="text-sm flex flex-col gap-1">
+            <span className="text-fg-subtle">Description (optional)</span>
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="input"
+            />
+          </label>
+          <label className="text-sm flex flex-col gap-1">
+            <span className="text-fg-subtle">Category</span>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="input"
+            >
+              <option value="menu_prompt">Menu prompt</option>
+              <option value="hold">Hold music</option>
+              <option value="voicemail">Voicemail message</option>
+              <option value="disclaimer">Disclaimer</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label className="text-sm flex flex-col gap-1">
+            <span className="text-fg-subtle">Voice</span>
+            <select
+              value={voice}
+              onChange={(e) => setVoice(e.target.value)}
+              className="input"
+              disabled={voices.length === 0}
+            >
+              {voices.length === 0 ? (
+                <option value="">No voices found in piper-voices/</option>
+              ) : (
+                voices.map((v) => (
+                  <option key={v.name} value={v.name}>
+                    {v.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+          <label className="text-sm flex flex-col gap-1">
+            <span className="text-fg-subtle">Text to speak (max 1500 chars)</span>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              className="input"
+              rows={4}
+              placeholder="Welcome to Acme. Press 1 for sales, 2 for support."
+              maxLength={1500}
+            />
+          </label>
+          {error ? <div className="text-error text-xs">{error}</div> : null}
+          <button
+            type="button"
+            onClick={generate}
+            disabled={submitting || !text.trim() || !voice || !name}
+            className="bg-accent hover:bg-accent-hover text-accent-fg px-3 py-1.5 rounded text-sm disabled:opacity-50 w-full"
+          >
+            {submitting ? 'Generating…' : 'Generate & save'}
+          </button>
+        </>
+      )}
     </div>
   );
 }

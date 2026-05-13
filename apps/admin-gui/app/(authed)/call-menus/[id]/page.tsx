@@ -46,6 +46,9 @@ export default async function EditCallMenuPage({
       action_type: o.action_type,
       action_value: o.action_value ?? '',
       ordering: o.ordering ?? idx,
+      dispo_code: o.dispo_code ?? '',
+      tod_start: o.tod_start ?? '',
+      tod_end: o.tod_end ?? '',
     })),
   };
 

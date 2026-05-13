@@ -43,6 +43,9 @@ export const CallMenuActionTypeSchema = z.enum([
   'extension',
   'call_menu',
   'did',
+  // Iter 151 — ViciDial parity: re-play the prompt (counts toward
+  // max_retries; once exhausted, default action fires).
+  'repeat',
 ]);
 export type CallMenuActionType = z.infer<typeof CallMenuActionTypeSchema>;
 
@@ -52,6 +55,11 @@ export type CallMenuActionType = z.infer<typeof CallMenuActionTypeSchema>;
 export const CallMenuDigitSchema = z
   .string()
   .regex(/^[0-9*#]$/, 'Digit must be 0-9, *, or #.');
+
+// HH:MM, 24h. Empty string = "no window set".
+const TodTimeSchema = z
+  .string()
+  .regex(/^(?:|([01]\d|2[0-3]):[0-5]\d)$/, 'Use HH:MM (24h) or leave blank.');
 
 export const CallMenuOptionInputSchema = z.object({
   digit: CallMenuDigitSchema,
@@ -64,10 +72,15 @@ export const CallMenuOptionInputSchema = z.object({
   //   extension     — phone extension or sip URI
   //   call_menu     — sub-menu's call_menus.id
   //   did           — E.164 phone we transfer to
-  // Validation of the cross-table reference happens at iter 151
-  // wire-up; iter 149 just stores the string.
+  //   repeat        — ''           (re-plays the prompt)
+  // Validation of the cross-table reference happens at iter 154
+  // wire-up; iter 149/151 just stores the string.
   action_value: z.string().max(255).default(''),
   label: z.string().max(64).default(''),
+  // Iter 151 ViciDial parity:
+  dispo_code: z.string().max(32).default(''),
+  tod_start: TodTimeSchema.default(''),
+  tod_end: TodTimeSchema.default(''),
 });
 export type CallMenuOptionInput = z.infer<typeof CallMenuOptionInputSchema>;
 
@@ -137,6 +150,9 @@ export function createCallMenu(input: CallMenuInput): CreateCallMenuResult {
       action_type: o.action_type,
       action_value: o.action_value || null,
       label: o.label || null,
+      dispo_code: o.dispo_code || null,
+      tod_start: o.tod_start || null,
+      tod_end: o.tod_end || null,
     })),
   );
   return { id };
@@ -180,6 +196,9 @@ export function updateCallMenu(
       action_type: o.action_type,
       action_value: o.action_value || null,
       label: o.label || null,
+      dispo_code: o.dispo_code || null,
+      tod_start: o.tod_start || null,
+      tod_end: o.tod_end || null,
     })),
   );
   return true;
