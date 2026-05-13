@@ -193,6 +193,42 @@ export const CREATE_TABLES_SQL = `
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Iter 149 — Call Menu (IVR) tables.
+    -- call_menus: one row per menu definition.
+    -- call_menu_options: digit -> action mapping. Multiple per menu.
+    -- Both tables back the /call-menus admin pages and the iter 150
+    -- dialplan generator. iter 151 wires the connection columns
+    -- (dids.call_menu_id, in_groups.overflow_call_menu_id, etc).
+    CREATE TABLE IF NOT EXISTS call_menus (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      prompt_path TEXT,
+      prompt_tts_text TEXT,
+      timeout_seconds INTEGER NOT NULL DEFAULT 5,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      invalid_audio_path TEXT,
+      timeout_audio_path TEXT,
+      default_action_type TEXT NOT NULL DEFAULT 'hangup',
+      default_action_value TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS call_menu_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      call_menu_id TEXT NOT NULL REFERENCES call_menus(id) ON DELETE CASCADE,
+      digit TEXT NOT NULL,
+      ordering INTEGER NOT NULL DEFAULT 0,
+      action_type TEXT NOT NULL,
+      action_value TEXT,
+      label TEXT,
+      UNIQUE(call_menu_id, digit)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_call_menu_options_menu
+      ON call_menu_options(call_menu_id);
+
     CREATE TABLE IF NOT EXISTS in_group_dids (
       in_group_id TEXT NOT NULL REFERENCES in_groups(id) ON DELETE CASCADE,
       did TEXT NOT NULL UNIQUE,
@@ -370,6 +406,16 @@ export const COLUMN_MIGRATIONS: string[] = [
   // 'auto' (system-inferred at hangup/backfill), or NULL (legacy
   // pre-iter-146 row that was never re-tagged).
   "ALTER TABLE dial_intents ADD COLUMN disposition_origin TEXT",
+  // Iter 149 — Call Menu (IVR) connection columns. NULL means
+  // 'no menu wired' for each target; iter 151 reads these to
+  // decide whether inbound + overflow routes hit a menu.
+  // iter 149 had ALTER TABLE dids ADD COLUMN call_menu_id TEXT here,
+  // but there's no top-level dids table — DIDs are rows in the
+  // in_group_dids join table. DID-direct-to-menu wiring is
+  // deferred to iter 151 (extend in_group_dids or add a new table).
+  "ALTER TABLE in_groups ADD COLUMN overflow_call_menu_id TEXT",
+  "ALTER TABLE in_groups ADD COLUMN after_hours_call_menu_id TEXT",
+  "ALTER TABLE campaigns ADD COLUMN no_agent_call_menu_id TEXT",
   "ALTER TABLE dial_intents ADD COLUMN dispositioned_at TEXT",
   "ALTER TABLE dial_intents ADD COLUMN callback_at TEXT",
   // iter 19: schedule-aware picker. Mirrors callback_at onto the lead

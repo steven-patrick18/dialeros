@@ -659,3 +659,25 @@ export type {
   AutoDispoCampaign,
 } from './auto-disposition';
 export type { AutoDispositionCandidate } from './db';
+
+// Iter 149 — Call Menu (IVR)
+export {
+  createCallMenu,
+  listCallMenus,
+  getCallMenu,
+  getCallMenuOptions,
+  updateCallMenu,
+  deleteCallMenu,
+  CallMenuInputSchema,
+  CallMenuOptionInputSchema,
+  CallMenuActionTypeSchema,
+} from './call-menu';
+export type {
+  CallMenuInput,
+  CallMenuOptionInput,
+  CallMenuActionType,
+} from './call-menu';
+export type {
+  CallMenuRecord,
+  CallMenuOptionRecord,
+} from './db';

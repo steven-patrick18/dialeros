@@ -3878,6 +3878,192 @@ export interface InGroupRecord {
   updated_at: string;
 }
 
+/* Iter 149 — Call Menu DB ops.
+ *
+ * Two tables, simple relational shape. Options are replaced
+ * wholesale on update (delete-all-then-insert) so the admin UI
+ * can edit the option grid as a single form post without
+ * juggling individual create/update/delete option calls.
+ */
+export interface CallMenuRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  prompt_path: string | null;
+  prompt_tts_text: string | null;
+  timeout_seconds: number;
+  max_retries: number;
+  invalid_audio_path: string | null;
+  timeout_audio_path: string | null;
+  default_action_type: string;
+  default_action_value: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CallMenuOptionRecord {
+  id: number;
+  call_menu_id: string;
+  digit: string;
+  ordering: number;
+  action_type: string;
+  action_value: string | null;
+  label: string | null;
+}
+
+export function insertCallMenu(rec: {
+  id: string;
+  name: string;
+  description: string | null;
+  prompt_path: string | null;
+  prompt_tts_text: string | null;
+  timeout_seconds: number;
+  max_retries: number;
+  invalid_audio_path: string | null;
+  timeout_audio_path: string | null;
+  default_action_type: string;
+  default_action_value: string | null;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO call_menus (
+         id, name, description, prompt_path, prompt_tts_text,
+         timeout_seconds, max_retries,
+         invalid_audio_path, timeout_audio_path,
+         default_action_type, default_action_value
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.name,
+      rec.description,
+      rec.prompt_path,
+      rec.prompt_tts_text,
+      rec.timeout_seconds,
+      rec.max_retries,
+      rec.invalid_audio_path,
+      rec.timeout_audio_path,
+      rec.default_action_type,
+      rec.default_action_value,
+    );
+}
+
+export function listCallMenusFromDb(): CallMenuRecord[] {
+  return db()
+    .prepare(`SELECT * FROM call_menus ORDER BY name ASC`)
+    .all() as unknown as CallMenuRecord[];
+}
+
+export function getCallMenuFromDb(
+  id: string,
+): CallMenuRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM call_menus WHERE id = ?`)
+    .get(id) as unknown as CallMenuRecord | undefined;
+}
+
+export function updateCallMenuFields(
+  id: string,
+  fields: {
+    name: string;
+    description: string | null;
+    prompt_path: string | null;
+    prompt_tts_text: string | null;
+    timeout_seconds: number;
+    max_retries: number;
+    invalid_audio_path: string | null;
+    timeout_audio_path: string | null;
+    default_action_type: string;
+    default_action_value: string | null;
+  },
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE call_menus
+          SET name = ?, description = ?,
+              prompt_path = ?, prompt_tts_text = ?,
+              timeout_seconds = ?, max_retries = ?,
+              invalid_audio_path = ?, timeout_audio_path = ?,
+              default_action_type = ?, default_action_value = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+    )
+    .run(
+      fields.name,
+      fields.description,
+      fields.prompt_path,
+      fields.prompt_tts_text,
+      fields.timeout_seconds,
+      fields.max_retries,
+      fields.invalid_audio_path,
+      fields.timeout_audio_path,
+      fields.default_action_type,
+      fields.default_action_value,
+      id,
+    );
+  return Number(result.changes) > 0;
+}
+
+export function deleteCallMenuFromDb(id: string): boolean {
+  const result = db()
+    .prepare(`DELETE FROM call_menus WHERE id = ?`)
+    .run(id);
+  return Number(result.changes) > 0;
+}
+
+export function listCallMenuOptionsFromDb(
+  callMenuId: string,
+): CallMenuOptionRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM call_menu_options
+        WHERE call_menu_id = ?
+        ORDER BY ordering ASC, digit ASC`,
+    )
+    .all(callMenuId) as unknown as CallMenuOptionRecord[];
+}
+
+export function replaceCallMenuOptions(
+  callMenuId: string,
+  options: Array<{
+    digit: string;
+    ordering: number;
+    action_type: string;
+    action_value: string | null;
+    label: string | null;
+  }>,
+): void {
+  const conn = db();
+  const tx = conn.exec.bind(conn);
+  tx('BEGIN');
+  try {
+    conn
+      .prepare(`DELETE FROM call_menu_options WHERE call_menu_id = ?`)
+      .run(callMenuId);
+    if (options.length > 0) {
+      const stmt = conn.prepare(
+        `INSERT INTO call_menu_options
+           (call_menu_id, digit, ordering, action_type, action_value, label)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const opt of options) {
+        stmt.run(
+          callMenuId,
+          opt.digit,
+          opt.ordering,
+          opt.action_type,
+          opt.action_value,
+          opt.label,
+        );
+      }
+    }
+    tx('COMMIT');
+  } catch (e) {
+    tx('ROLLBACK');
+    throw e;
+  }
+}
+
 export interface InGroupDidRecord {
   in_group_id: string;
   did: string;
