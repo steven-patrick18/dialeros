@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const TYPES = ['inbound_queue', 'transfer_target', 'both'] as const;
 const WHITELIST_MODES = ['none', 'static', 'cluster_wide_leads'] as const;
@@ -23,6 +23,15 @@ interface GroupState {
   wrap_up_seconds: number;
   off_list_action: string;
   enabled: boolean;
+  // Iter 153/155 — call menu wiring
+  entry_call_menu_id: string | null;
+  overflow_call_menu_id: string | null;
+  after_hours_call_menu_id: string | null;
+}
+
+interface CallMenuOpt {
+  id: string;
+  name: string;
 }
 
 export function EditInGroupForm({ group }: { group: GroupState }) {
@@ -35,6 +44,14 @@ export function EditInGroupForm({ group }: { group: GroupState }) {
   const [staticListText, setStaticListText] = useState(
     group.whitelist_static.join('\n'),
   );
+  // Iter 155 — fetch call menus once for the 3 picker dropdowns.
+  const [menus, setMenus] = useState<CallMenuOpt[]>([]);
+  useEffect(() => {
+    fetch('/api/call-menus', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+      .then((data: { menus: CallMenuOpt[] }) => setMenus(data.menus))
+      .catch(() => setMenus([]));
+  }, []);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -62,6 +79,13 @@ export function EditInGroupForm({ group }: { group: GroupState }) {
       wrap_up_seconds: Number(fd.get('wrap_up_seconds') ?? group.wrap_up_seconds),
       off_list_action: String(fd.get('off_list_action') ?? group.off_list_action),
       enabled: fd.get('enabled') === 'on',
+      // Iter 155 — pass the 3 call menu IDs through. Empty string
+      // becomes null server-side (Zod transforms).
+      entry_call_menu_id: String(fd.get('entry_call_menu_id') ?? ''),
+      overflow_call_menu_id: String(fd.get('overflow_call_menu_id') ?? ''),
+      after_hours_call_menu_id: String(
+        fd.get('after_hours_call_menu_id') ?? '',
+      ),
     };
     if (whitelistMode === 'static') {
       body.whitelist_static = staticList;
@@ -189,6 +213,59 @@ export function EditInGroupForm({ group }: { group: GroupState }) {
             />
           </Field>
         </div>
+      </Section>
+
+      <Section title="Call menu wiring (iter 153/155)">
+        <p className="text-xs text-fg-subtle mb-2">
+          When set, inbound calls hit the chosen Call Menu instead
+          of the default queue dispatch.{' '}
+          <a href="/call-menus" className="text-link hover:underline">
+            Manage Call Menus
+          </a>
+          .
+        </p>
+        <Field label="Entry menu (greets caller before queue dispatch)">
+          <select
+            name="entry_call_menu_id"
+            defaultValue={group.entry_call_menu_id ?? ''}
+            className="input"
+          >
+            <option value="">— none —</option>
+            {menus.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Overflow menu (fires when no agent available)">
+          <select
+            name="overflow_call_menu_id"
+            defaultValue={group.overflow_call_menu_id ?? ''}
+            className="input"
+          >
+            <option value="">— none —</option>
+            {menus.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="After-hours menu (fires outside call window)">
+          <select
+            name="after_hours_call_menu_id"
+            defaultValue={group.after_hours_call_menu_id ?? ''}
+            className="input"
+          >
+            <option value="">— none —</option>
+            {menus.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </Field>
       </Section>
 
       <label className="flex items-center gap-2 text-sm">

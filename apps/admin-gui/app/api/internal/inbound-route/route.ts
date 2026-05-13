@@ -139,6 +139,21 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Iter 155 — entry-time call menu. When the in-group has
+  // entry_call_menu_id set, callers are routed into the IVR
+  // before any queue dispatch — the classic "press 1 for sales"
+  // pattern. Kamailio side consumes action='call_menu' by
+  // transferring the call to extension call_menu_<id> in the
+  // default dialplan context.
+  if (ig.entry_call_menu_id) {
+    return NextResponse.json({
+      action: 'call_menu',
+      call_menu_id: ig.entry_call_menu_id,
+      reason: 'did_match_entry_menu',
+      to: toNorm,
+      in_group_id: ig.id,
+    });
+  }
   return forwardOrQueue({
     inGroupId: ig.id,
     reason: 'did_match',

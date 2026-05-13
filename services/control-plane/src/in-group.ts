@@ -179,6 +179,25 @@ export const InGroupUpdateInputSchema = z
     wrap_up_seconds: z.number().int().min(0).max(600).optional(),
     off_list_action: OffListActionSchema.optional(),
     enabled: z.boolean().optional(),
+    // Iter 153/155 — call menu wiring. Each accepts a UUID or empty
+    // string (treated as "clear the binding"); validation that the
+    // ID exists is left to the iter-152 dialplan generator which
+    // will simply emit `transfer ${empty}` if the menu was deleted.
+    entry_call_menu_id: z
+      .string()
+      .nullable()
+      .optional()
+      .or(z.literal('').transform(() => null)),
+    overflow_call_menu_id: z
+      .string()
+      .nullable()
+      .optional()
+      .or(z.literal('').transform(() => null)),
+    after_hours_call_menu_id: z
+      .string()
+      .nullable()
+      .optional()
+      .or(z.literal('').transform(() => null)),
   })
   .refine(
     (d) => {
@@ -243,6 +262,15 @@ export function updateInGroup(
     updates.off_list_action = input.off_list_action;
   }
   if (input.enabled !== undefined) updates.enabled = input.enabled;
+  if (input.entry_call_menu_id !== undefined) {
+    updates.entry_call_menu_id = input.entry_call_menu_id;
+  }
+  if (input.overflow_call_menu_id !== undefined) {
+    updates.overflow_call_menu_id = input.overflow_call_menu_id;
+  }
+  if (input.after_hours_call_menu_id !== undefined) {
+    updates.after_hours_call_menu_id = input.after_hours_call_menu_id;
+  }
   return updateInGroupFields(id, updates);
 }
 

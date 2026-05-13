@@ -5,6 +5,7 @@ import {
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { CallMenuForm } from '../menu-form';
+import { CallMenuAnalyticsCard } from '../analytics-card';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +62,7 @@ export default async function EditCallMenuPage({
         {menu.description || 'No description.'}
       </p>
       <CallMenuForm initialData={initialData} menuId={id} />
+      <CallMenuAnalyticsCard menuId={id} />
     </div>
   );
 }

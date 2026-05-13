@@ -34,6 +34,9 @@ export default async function EditInGroupPage({
           wrap_up_seconds: g.wrap_up_seconds,
           off_list_action: g.off_list_action,
           enabled: g.enabled === 1,
+          entry_call_menu_id: g.entry_call_menu_id ?? null,
+          overflow_call_menu_id: g.overflow_call_menu_id ?? null,
+          after_hours_call_menu_id: g.after_hours_call_menu_id ?? null,
         }}
       />
     </div>

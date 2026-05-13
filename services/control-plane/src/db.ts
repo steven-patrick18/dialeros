@@ -2654,6 +2654,37 @@ export function listAutoDispositionCandidates(
  * cleared (NOT the number of file paths processed — some paths
  * may not have a matching dial_intent if rows were already
  * pruned). */
+/* Iter 155 — per-menu analytics from call_menu_log. Returns one
+ * row per (event_type, digit, action_taken) bucket within an
+ * optional time window. The /call-menus/[id] analytics card
+ * shapes this into pick rate / timeout rate / abandon rate. */
+export interface CallMenuStatsRow {
+  event_type: string;
+  digit: string | null;
+  action_taken: string | null;
+  count: number;
+}
+export function getCallMenuStats(
+  callMenuId: string,
+  sinceIso?: string,
+): CallMenuStatsRow[] {
+  const where = ['call_menu_id = ?'];
+  const vals: unknown[] = [callMenuId];
+  if (sinceIso) {
+    where.push('ts >= ?');
+    vals.push(sinceIso);
+  }
+  return db()
+    .prepare(
+      `SELECT event_type, digit, action_taken, COUNT(*) AS count
+         FROM call_menu_log
+        WHERE ${where.join(' AND ')}
+        GROUP BY event_type, digit, action_taken
+        ORDER BY count DESC`,
+    )
+    .all(...(vals as never[])) as unknown as CallMenuStatsRow[];
+}
+
 /* Iter 153 — DTMF press log writer. Called from fs-events.ts on every
  * dialeros::menu_press CUSTOM event from the dialplan generator's
  * play_and_get_digits emission. Best-effort: errors are logged but
@@ -5254,6 +5285,10 @@ export function updateInGroupFields(
     wrap_up_seconds: number;
     off_list_action: string;
     enabled: boolean;
+    // Iter 153/155 — call menu connection columns
+    entry_call_menu_id: string | null;
+    overflow_call_menu_id: string | null;
+    after_hours_call_menu_id: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

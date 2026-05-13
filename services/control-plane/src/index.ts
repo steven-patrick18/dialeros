@@ -715,3 +715,7 @@ export {
 
 // Iter 153 — DTMF press log
 export { insertCallMenuLog } from './db';
+
+// Iter 155 — per-call-menu analytics
+export { getCallMenuStats } from './db';
+export type { CallMenuStatsRow } from './db';
