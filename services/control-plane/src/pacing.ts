@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import net from 'net';
+import { appendAudit } from './audit';
 import {
   applyDialIntentOriginate,
   closeSimulatedDialIntent,
@@ -367,6 +368,15 @@ function isWithinCallWindow(campaign: CampaignRecord, now = new Date()): boolean
  *   desiredTotal = floor(poolSize × dialLevel)
  *   target       = max(0, desiredTotal − inFlight)
  * dial_level<1 floors to 1 (avoid silent zero on tiny pools). */
+// Iter 164 — Per-campaign last-audit timestamp for the abandon-rate
+// throttle. Dedupes audit_events writes so a persistently-over-cap
+// campaign doesn't generate a row every 5-second tick. Re-audits
+// every 60s if still over, and on the next over-cap event after a
+// gap.
+const lastThrottleAuditMs = new Map<string, number>();
+const lastThrottleStateOverCap = new Map<string, boolean>();
+const THROTTLE_AUDIT_INTERVAL_MS = 60_000;
+
 export function computeDialTarget(
   poolSize: number,
   dialLevel: number,
@@ -1024,15 +1034,68 @@ export function startPacer(campaignId: string): boolean {
       const MIN_ABANDON_SAMPLE = 50;
       if ((c.max_abandon_pct ?? 0) > 0) {
         const arate = getCampaignAbandonRate(campaignId, 100);
-        if (
+        const overCap =
           arate.total >= MIN_ABANDON_SAMPLE &&
-          arate.rate_pct >= c.max_abandon_pct
-        ) {
+          arate.rate_pct >= c.max_abandon_pct;
+        // Iter 164 — audit trail for throttle transitions.
+        // Dedupes per-campaign at 60s so we don't spam the table
+        // with a row every tick while a campaign stays over cap.
+        // Always audits the over→under transition (un-throttle)
+        // immediately so the timeline has both ends of the window.
+        const lastOver = lastThrottleStateOverCap.get(campaignId) === true;
+        const nowMs = Date.now();
+        const lastAuditAt = lastThrottleAuditMs.get(campaignId) ?? 0;
+        if (overCap) {
+          if (!lastOver || nowMs - lastAuditAt >= THROTTLE_AUDIT_INTERVAL_MS) {
+            try {
+              appendAudit({
+                actorUserId: null,
+                actorIp: null,
+                action: 'pacer.throttle',
+                targetType: 'campaign',
+                targetId: campaignId,
+                payload: {
+                  rate_pct: Number(arate.rate_pct.toFixed(3)),
+                  cap_pct: c.max_abandon_pct,
+                  sample_size: arate.total,
+                  abandoned: arate.abandoned,
+                  reason: !lastOver
+                    ? 'crossed_into_throttle'
+                    : 'sustained_over_cap',
+                },
+              });
+            } catch (e) {
+              console.error('[pacing] audit throttle failed:', e);
+            }
+            lastThrottleAuditMs.set(campaignId, nowMs);
+          }
+          lastThrottleStateOverCap.set(campaignId, true);
           console.warn(
             `[pacing] ${campaignId} throttled: abandon ${arate.rate_pct.toFixed(2)}% ` +
               `>= cap ${c.max_abandon_pct}% (sample n=${arate.total}, abandoned=${arate.abandoned})`,
           );
           target = 0;
+        } else if (lastOver) {
+          // Iter 164 — audit the recovery edge too.
+          try {
+            appendAudit({
+              actorUserId: null,
+              actorIp: null,
+              action: 'pacer.throttle_cleared',
+              targetType: 'campaign',
+              targetId: campaignId,
+              payload: {
+                rate_pct: Number(arate.rate_pct.toFixed(3)),
+                cap_pct: c.max_abandon_pct,
+                sample_size: arate.total,
+                abandoned: arate.abandoned,
+              },
+            });
+          } catch (e) {
+            console.error('[pacing] audit throttle clear failed:', e);
+          }
+          lastThrottleStateOverCap.set(campaignId, false);
+          lastThrottleAuditMs.delete(campaignId);
         }
       }
       for (let i = 0; i < target; i++) {
