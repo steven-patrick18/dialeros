@@ -6,12 +6,15 @@ import {
   getFreqCapEnabled,
   getFreqCapLeadCount,
   getFreqCapLeadWindowHours,
+  getFreqCapCidCount,
+  getFreqCapCidWindowHours,
 } from './app-settings';
 import {
   applyDialIntentOriginate,
   closeSimulatedDialIntent,
   countDialIntentsForCampaign,
   countRecentDialsForPhone,
+  countRecentDialsForCid,
   getAvailableAgentsForCampaign,
   getCampaignFromDb,
   getCarrierFromDb,
@@ -320,7 +323,8 @@ export interface PacingTickResult {
     | 'inbound_no_pacer'
     | 'campaign_missing'
     | 'campaign_inactive'
-    | 'skipped_freq_cap';
+    | 'skipped_freq_cap'
+    | 'skipped_cid_freq_cap';
   intent?: DialIntentRecord;
   assigned_agent?: { id: string; username: string };
   /** Iter 32 — when dial_mode='live'. Job UUID on success, error on failure. */
@@ -671,6 +675,45 @@ export async function paceCampaignOnce(
           transformed,
         );
 
+  // Iter 167 — Per-CID frequency cap (anti-robocall pair to the
+  // iter-166 lead cap). Counts dial_intents originated from this
+  // CID over the rolling window. Skips when over the cap; the
+  // next tick will likely pick a different CID via rotation,
+  // unblocking the campaign without operator action.
+  if (getFreqCapEnabled() && cid) {
+    const cidWindow = getFreqCapCidWindowHours();
+    const cidSinceIso = new Date(
+      Date.now() - cidWindow * 60 * 60 * 1000,
+    ).toISOString();
+    const cidRecent = countRecentDialsForCid(cid, cidSinceIso);
+    const cidCap = getFreqCapCidCount();
+    if (cidRecent >= cidCap) {
+      try {
+        appendAudit({
+          actorUserId: null,
+          actorIp: null,
+          action: 'freq_cap.cid_skipped',
+          targetType: 'campaign',
+          targetId: campaignId,
+          payload: {
+            cid,
+            lead_id: lead.lead_id,
+            recent_count: cidRecent,
+            cap: cidCap,
+            window_hours: cidWindow,
+          },
+        });
+      } catch (e) {
+        console.error('[pacing] cid freq cap audit failed:', e);
+      }
+      console.warn(
+        `[pacing] cid_freq_cap_skip cid=${cid} count=${cidRecent} ` +
+          `cap=${cidCap} window=${cidWindow}h campaign=${campaignId}`,
+      );
+      return { outcome: 'skipped_cid_freq_cap' };
+    }
+  }
+
   // Iter 32 — when dial_mode='live', issue a real bgapi originate. We
   // do this BEFORE inserting the dial_intent so we can capture the job
   // UUID (or error) on the same row.
@@ -803,6 +846,16 @@ export async function paceCampaignOnce(
         campaign.amd_action === 'detect')
     ) {
       amdChannelVars.push(`dialeros_recording_path=${recordingPath}`);
+    }
+    // Iter 167 — Recording-notice playback. When the campaign has
+    // a notice .wav configured, push it as a channel var so the
+    // dialeros-record-and-bridge dialplan extension plays it
+    // BEFORE starting record_session and bridging to the agent.
+    // Two-party-consent compliance (CA / FL / etc.).
+    if (campaign.recording_notice_audio_path) {
+      amdChannelVars.push(
+        `dialeros_recording_notice_path=${campaign.recording_notice_audio_path}`,
+      );
     }
     if (campaign.amd_action === 'drop') {
       bridgeApp = '&hangup';

@@ -156,6 +156,16 @@
     only the live conversation, not the AMD ring tone.
   -->
   <extension name="dialeros-record-and-bridge" continue="false">
+    <!-- Iter 167 — recording-notice playback. Plays BEFORE
+         record_session starts so the notice isn't on the saved
+         .wav (the saved file is the consented recording; the
+         notice is the consent ask). break="never" so playback
+         runs only when the channel var is set and the flow
+         falls through to the regular record + bridge below. -->
+    <condition field="${dialeros_recording_notice_path}" expression="^.+$" break="never">
+      <action application="log" data="INFO [dialeros-amd] playing recording notice uuid=${uuid} path=${dialeros_recording_notice_path}"/>
+      <action application="playback" data="${dialeros_recording_notice_path}"/>
+    </condition>
     <condition field="${dialeros_recording_path}" expression="^.+$">
       <action application="log" data="INFO [dialeros-amd] starting record_session uuid=${uuid} path=${dialeros_recording_path}"/>
       <action application="set" data="RECORD_STEREO=true"/>

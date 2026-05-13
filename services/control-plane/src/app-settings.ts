@@ -59,6 +59,9 @@ export const APP_SETTING_KEYS = {
   freqCapEnabled: 'freq_cap.enabled',
   freqCapLeadCount: 'freq_cap.lead_count',
   freqCapLeadWindowHours: 'freq_cap.lead_window_hours',
+  // Iter 167 — Per-CID frequency cap (anti-robocall TCPA pair).
+  freqCapCidCount: 'freq_cap.cid_count',
+  freqCapCidWindowHours: 'freq_cap.cid_window_hours',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -243,4 +246,39 @@ export function getFreqCapLeadWindowHours(): number {
 export function setFreqCapLeadWindowHours(n: number): void {
   const clamped = Math.max(1, Math.min(720, Math.floor(n)));
   setAppSetting(APP_SETTING_KEYS.freqCapLeadWindowHours, String(clamped));
+}
+
+// Iter 167 — Per-CID frequency cap. Limits how many calls a
+// single originating CID can place per window. Anti-robocall
+// guidance from carriers/STIR-SHAKEN tooling lands around
+// 75-100 calls/hour as the "looks legitimate" ceiling; above
+// that, calls start getting flagged/blocked downstream.
+export const FREQ_CAP_CID_DEFAULT_COUNT = 75;
+export const FREQ_CAP_CID_DEFAULT_WINDOW_HOURS = 1;
+
+export function getFreqCapCidCount(): number {
+  const raw = getAppSetting(APP_SETTING_KEYS.freqCapCidCount);
+  const n = raw ? parseInt(raw, 10) : FREQ_CAP_CID_DEFAULT_COUNT;
+  return Number.isFinite(n) && n > 0 ? n : FREQ_CAP_CID_DEFAULT_COUNT;
+}
+
+export function setFreqCapCidCount(n: number): void {
+  const clamped = Math.max(1, Math.min(10000, Math.floor(n)));
+  setAppSetting(APP_SETTING_KEYS.freqCapCidCount, String(clamped));
+}
+
+export function getFreqCapCidWindowHours(): number {
+  const raw = getAppSetting(APP_SETTING_KEYS.freqCapCidWindowHours);
+  const n = raw ? parseInt(raw, 10) : FREQ_CAP_CID_DEFAULT_WINDOW_HOURS;
+  return Number.isFinite(n) && n > 0
+    ? n
+    : FREQ_CAP_CID_DEFAULT_WINDOW_HOURS;
+}
+
+export function setFreqCapCidWindowHours(n: number): void {
+  const clamped = Math.max(1, Math.min(168, Math.floor(n)));
+  setAppSetting(
+    APP_SETTING_KEYS.freqCapCidWindowHours,
+    String(clamped),
+  );
 }

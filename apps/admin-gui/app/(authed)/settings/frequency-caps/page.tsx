@@ -3,6 +3,8 @@ import {
   getFreqCapEnabled,
   getFreqCapLeadCount,
   getFreqCapLeadWindowHours,
+  getFreqCapCidCount,
+  getFreqCapCidWindowHours,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { FrequencyCapsForm } from './form';
@@ -25,6 +27,8 @@ export default async function FrequencyCapsPage() {
     enabled: getFreqCapEnabled(),
     lead_count: getFreqCapLeadCount(),
     lead_window_hours: getFreqCapLeadWindowHours(),
+    cid_count: getFreqCapCidCount(),
+    cid_window_hours: getFreqCapCidWindowHours(),
   };
 
   return (

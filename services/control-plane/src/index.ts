@@ -788,3 +788,14 @@ export {
   setFreqCapLeadWindowHours,
 } from './app-settings';
 export { countRecentDialsForPhone } from './db';
+
+// Iter 167 — Per-CID frequency cap + recording notice
+export {
+  FREQ_CAP_CID_DEFAULT_COUNT,
+  FREQ_CAP_CID_DEFAULT_WINDOW_HOURS,
+  getFreqCapCidCount,
+  setFreqCapCidCount,
+  getFreqCapCidWindowHours,
+  setFreqCapCidWindowHours,
+} from './app-settings';
+export { countRecentDialsForCid } from './db';

@@ -534,6 +534,11 @@ export const COLUMN_MIGRATIONS: string[] = [
   "ALTER TABLE campaigns ADD COLUMN amd_machine_action TEXT",
   "ALTER TABLE campaigns ADD COLUMN amd_machine_call_menu_id TEXT",
   "ALTER TABLE campaigns ADD COLUMN amd_machine_audio_path TEXT",
+  // Iter 167 — Recording-notice playback at answer for
+  // two-party-consent compliance. Pacer pushes the path as a
+  // channel var; dialeros-record-and-bridge plays it before
+  // starting record_session + bridging.
+  "ALTER TABLE campaigns ADD COLUMN recording_notice_audio_path TEXT",
   "ALTER TABLE in_groups ADD COLUMN overflow_call_menu_id TEXT",
   "ALTER TABLE in_groups ADD COLUMN after_hours_call_menu_id TEXT",
   "ALTER TABLE campaigns ADD COLUMN no_agent_call_menu_id TEXT",

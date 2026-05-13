@@ -39,6 +39,7 @@ interface Props {
     amd_machine_call_menu_id: string | null;
     amd_machine_audio_path: string | null;
     no_agent_call_menu_id: string | null;
+    recording_notice_audio_path: string | null;
   };
 }
 
@@ -70,6 +71,10 @@ export function OnAnswerCard({ campaignId, initial }: Props) {
   // local agent is available at originate time.
   const [noAgentCallMenuId, setNoAgentCallMenuId] = useState(
     initial.no_agent_call_menu_id ?? '',
+  );
+  // Iter 167 — Recording notice audio (compliance).
+  const [recordingNoticePath, setRecordingNoticePath] = useState(
+    initial.recording_notice_audio_path ?? '',
   );
   const [menus, setMenus] = useState<CallMenuOpt[]>([]);
   const [saving, setSaving] = useState(false);
@@ -113,6 +118,7 @@ export function OnAnswerCard({ campaignId, initial }: Props) {
               ? machineAudioPath || null
               : null,
           no_agent_call_menu_id: noAgentCallMenuId || null,
+          recording_notice_audio_path: recordingNoticePath || null,
         }),
       });
       if (!res.ok) {
@@ -294,6 +300,23 @@ export function OnAnswerCard({ campaignId, initial }: Props) {
           </div>
         </div>
       ) : null}
+
+      <div className="pt-3 border-t border-border">
+        <h3 className="text-xs uppercase tracking-wide text-fg-subtle mb-2">
+          Recording notice (iter 167 — two-party-consent compliance)
+        </h3>
+        <p className="text-xs text-fg-subtle mb-2">
+          When set, this audio plays to the caller before record_session
+          starts on the agent bridge. Notice file is NOT included in
+          the saved recording (compliance: notice = consent ask;
+          recording = consented audio).
+        </p>
+        <AudioPicker
+          value={recordingNoticePath}
+          onChange={setRecordingNoticePath}
+          category="disclaimer"
+        />
+      </div>
 
       <div className="pt-3 border-t border-border">
         <h3 className="text-xs uppercase tracking-wide text-fg-subtle mb-2">

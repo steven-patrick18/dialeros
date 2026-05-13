@@ -372,6 +372,12 @@ export const CampaignUpdateInputSchema = z
       .nullable()
       .optional()
       .or(z.literal('').transform(() => null)),
+    // Iter 167 — Recording-notice audio (compliance).
+    recording_notice_audio_path: z
+      .string()
+      .nullable()
+      .optional()
+      .or(z.literal('').transform(() => null)),
     voicemail_path: z
       .string()
       .nullable()
@@ -482,6 +488,8 @@ export function updateCampaign(
     updates.amd_machine_audio_path = input.amd_machine_audio_path;
   if (input.no_agent_call_menu_id !== undefined)
     updates.no_agent_call_menu_id = input.no_agent_call_menu_id;
+  if (input.recording_notice_audio_path !== undefined)
+    updates.recording_notice_audio_path = input.recording_notice_audio_path;
   if (input.voicemail_path !== undefined) {
     updates.voicemail_path = input.voicemail_path ?? null;
   }

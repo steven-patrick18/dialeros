@@ -4,9 +4,13 @@ import {
   getFreqCapEnabled,
   getFreqCapLeadCount,
   getFreqCapLeadWindowHours,
+  getFreqCapCidCount,
+  getFreqCapCidWindowHours,
   setFreqCapEnabled,
   setFreqCapLeadCount,
   setFreqCapLeadWindowHours,
+  setFreqCapCidCount,
+  setFreqCapCidWindowHours,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -24,6 +28,8 @@ export async function GET() {
     enabled: getFreqCapEnabled(),
     lead_count: getFreqCapLeadCount(),
     lead_window_hours: getFreqCapLeadWindowHours(),
+    cid_count: getFreqCapCidCount(),
+    cid_window_hours: getFreqCapCidWindowHours(),
   });
 }
 
@@ -48,6 +54,8 @@ export async function PUT(req: NextRequest) {
     enabled?: unknown;
     lead_count?: unknown;
     lead_window_hours?: unknown;
+    cid_count?: unknown;
+    cid_window_hours?: unknown;
   };
   if (typeof obj.enabled === 'boolean') {
     setFreqCapEnabled(obj.enabled);
@@ -72,6 +80,26 @@ export async function PUT(req: NextRequest) {
     }
     setFreqCapLeadWindowHours(n);
   }
+  if (obj.cid_count !== undefined) {
+    const n = Number(obj.cid_count);
+    if (!Number.isFinite(n) || n < 1 || n > 10000) {
+      return NextResponse.json(
+        { error: 'cid_count must be 1-10000' },
+        { status: 400 },
+      );
+    }
+    setFreqCapCidCount(n);
+  }
+  if (obj.cid_window_hours !== undefined) {
+    const n = Number(obj.cid_window_hours);
+    if (!Number.isFinite(n) || n < 1 || n > 168) {
+      return NextResponse.json(
+        { error: 'cid_window_hours must be 1-168' },
+        { status: 400 },
+      );
+    }
+    setFreqCapCidWindowHours(n);
+  }
   appendAudit({
     actorUserId: me.id,
     actorIp: clientIp(req),
@@ -88,5 +116,7 @@ export async function PUT(req: NextRequest) {
     enabled: getFreqCapEnabled(),
     lead_count: getFreqCapLeadCount(),
     lead_window_hours: getFreqCapLeadWindowHours(),
+    cid_count: getFreqCapCidCount(),
+    cid_window_hours: getFreqCapCidWindowHours(),
   });
 }

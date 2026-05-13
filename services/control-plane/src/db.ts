@@ -2815,6 +2815,25 @@ export function getCallDetail(id: number): CallDetailRow | undefined {
     .get(id) as unknown as CallDetailRow | undefined;
 }
 
+/* Iter 167 — Count recent non-simulated dial_intents originated
+ * from a given CID. cid_used is NULL on dial_intents that didn't
+ * pick a CID (no route plan, etc.); those don't count toward
+ * the cap. */
+export function countRecentDialsForCid(
+  cid: string,
+  sinceIso: string,
+): number {
+  const r = db()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents
+        WHERE cid_used = ?
+          AND ts >= ?
+          AND kind != 'simulated'`,
+    )
+    .get(cid, sinceIso) as { n: number };
+  return r.n;
+}
+
 /* Iter 166 — Count recent dial_intents for a phone number. Used
  * by the pacer's per-lead frequency cap pre-dial guard. Includes
  * every non-simulated row regardless of disposition — the TCPA
@@ -2904,6 +2923,8 @@ export interface CampaignLiveRow {
   // answered leg is routed into the call menu instead of being
   // silently abandoned (ViciDial drop_call_target parity).
   no_agent_call_menu_id: string | null;
+  // Iter 167 — Recording-notice playback (compliance).
+  recording_notice_audio_path: string | null;
 }
 export function liveCampaignSnapshot(): CampaignLiveRow[] {
   return db()
@@ -5529,6 +5550,8 @@ export interface CampaignRecord {
   // answered leg is routed into the call menu instead of being
   // silently abandoned (ViciDial drop_call_target parity).
   no_agent_call_menu_id: string | null;
+  // Iter 167 — Recording-notice playback (compliance).
+  recording_notice_audio_path: string | null;
   voicemail_path: string | null;
   list_order: string;
   /** Iter 94 — JSON array of lead statuses the pacer is allowed
@@ -5820,6 +5843,8 @@ export function updateCampaignFields(
   // answered leg is routed into the call menu instead of being
   // silently abandoned (ViciDial drop_call_target parity).
   no_agent_call_menu_id: string | null;
+  // Iter 167 — Recording-notice playback (compliance).
+  recording_notice_audio_path: string | null;
     voicemail_path: string | null;
     list_order: string;
     dialable_statuses: string;
