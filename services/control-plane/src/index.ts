@@ -712,3 +712,6 @@ export {
   deployCallMenuDialplan,
   removeCallMenuDialplan,
 } from './call-menu-deploy';
+
+// Iter 153 — DTMF press log
+export { insertCallMenuLog } from './db';

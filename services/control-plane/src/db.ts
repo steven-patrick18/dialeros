@@ -2654,6 +2654,42 @@ export function listAutoDispositionCandidates(
  * cleared (NOT the number of file paths processed — some paths
  * may not have a matching dial_intent if rows were already
  * pruned). */
+/* Iter 153 — DTMF press log writer. Called from fs-events.ts on every
+ * dialeros::menu_press CUSTOM event from the dialplan generator's
+ * play_and_get_digits emission. Best-effort: errors are logged but
+ * don't propagate (the log is observability, not correctness-
+ * critical). */
+export function insertCallMenuLog(rec: {
+  call_menu_id: string;
+  dial_intent_id: number | null;
+  call_uuid: string | null;
+  event_type: string;
+  digit: string | null;
+  action_taken: string | null;
+  retry_count: number | null;
+}): void {
+  try {
+    db()
+      .prepare(
+        `INSERT INTO call_menu_log
+           (call_menu_id, dial_intent_id, call_uuid,
+            event_type, digit, action_taken, retry_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        rec.call_menu_id,
+        rec.dial_intent_id,
+        rec.call_uuid,
+        rec.event_type,
+        rec.digit,
+        rec.action_taken,
+        rec.retry_count,
+      );
+  } catch (e) {
+    console.error('[call-menu-log] insert failed', e);
+  }
+}
+
 export function clearRecordingPathsForFiles(paths: string[]): number {
   if (paths.length === 0) return 0;
   const CHUNK = 500;
@@ -3876,6 +3912,10 @@ export interface InGroupRecord {
   enabled: number;
   created_at: string;
   updated_at: string;
+  // Iter 149 / 153 — call menu connection columns.
+  overflow_call_menu_id: string | null;
+  after_hours_call_menu_id: string | null;
+  entry_call_menu_id: string | null;
 }
 
 /* Iter 150 — Sound Board (audio library) DB ops. Files are stored

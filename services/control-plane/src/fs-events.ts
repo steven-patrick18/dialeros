@@ -5,6 +5,7 @@ import {
   applyAutoDisposition,
   getCampaignFromDb,
   getLeadIdForCorrelation,
+  insertCallMenuLog,
   setLeadStatusIfIn,
 } from './db';
 import { inferAutoDisposition } from './auto-disposition';
@@ -197,7 +198,7 @@ function handleData(chunk: string): void {
       ) {
         s.phase = 'subscribing';
         s.socket?.write(
-          'event plain CHANNEL_ANSWER CHANNEL_HANGUP_COMPLETE\n\n',
+          'event plain CHANNEL_ANSWER CHANNEL_HANGUP_COMPLETE CUSTOM dialeros::menu_press\n\n',
         );
       } else {
         console.error('[fs-events] auth failed:', headers['reply-text']);
@@ -266,6 +267,33 @@ function handleEventBody(
       if (updated) emitIntentUpdate(updated);
     } catch (e) {
       console.error('[fs-events] applyDialIntentAnswered failed:', e);
+    }
+    return;
+  }
+
+  // Iter 153 — DTMF press logging. The call-menu dialplan generator
+  // emits Event-Subclass=dialeros::menu_press for every entry, press,
+  // timeout, invalid digit, and completion. We persist these into
+  // call_menu_log for iter 154 analytics (option pick rate, drop
+  // rate during menu, etc.).
+  if (
+    eventName === 'CUSTOM' &&
+    ev['event-subclass'] === 'dialeros::menu_press'
+  ) {
+    try {
+      insertCallMenuLog({
+        call_menu_id: ev['dialeros_menu_id'] ?? '',
+        dial_intent_id: null,
+        call_uuid: ev['unique-id'] ?? null,
+        event_type:
+          ev['dialeros_menu_event'] ??
+          (ev['dialeros_menu_digit'] ? 'pressed' : 'unknown'),
+        digit: ev['dialeros_menu_digit'] ?? null,
+        action_taken: ev['dialeros_menu_action'] ?? null,
+        retry_count: null,
+      });
+    } catch (e) {
+      console.error('[fs-events] menu_press log failed:', e);
     }
     return;
   }

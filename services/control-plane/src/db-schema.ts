@@ -473,6 +473,10 @@ export const COLUMN_MIGRATIONS: string[] = [
   // but there's no top-level dids table — DIDs are rows in the
   // in_group_dids join table. DID-direct-to-menu wiring is
   // deferred to iter 151 (extend in_group_dids or add a new table).
+  // Iter 153 — entry-time call menu (greets the caller before
+  // the queue dispatch attempts an agent pick). Distinct from
+  // overflow_call_menu_id (fires only when no agent available).
+  "ALTER TABLE in_groups ADD COLUMN entry_call_menu_id TEXT",
   "ALTER TABLE in_groups ADD COLUMN overflow_call_menu_id TEXT",
   "ALTER TABLE in_groups ADD COLUMN after_hours_call_menu_id TEXT",
   "ALTER TABLE campaigns ADD COLUMN no_agent_call_menu_id TEXT",

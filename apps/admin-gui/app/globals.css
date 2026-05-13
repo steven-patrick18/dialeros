@@ -323,3 +323,186 @@ textarea.input {
 .vicidial-modulestrip {
   display: none;
 }
+
+/*
+ * Iter 153 — ViciDial theme: authenticity polish.
+ *
+ * Closes the gap between the generic "blue-grey + Verdana" iter-42
+ * baseline and the actual ViciDial admin UI:
+ *   - Dark cobalt top header strip (ModuleStrip already in markup;
+ *     iter 153 makes it look right when vicidial theme is active)
+ *   - Bolder table header bar (navy gradient + white text)
+ *   - Tighter spacing throughout — ViciDial is dense on purpose
+ *   - Sharper button bevel + smaller padding
+ *   - Form layout: labels above inputs stay, but font drops to 11px
+ *     so a 4-column form actually fits on one screen
+ *   - Section headings: small bold uppercase navy on pale-blue rule
+ */
+
+.vicidial {
+  --vd-cobalt: #1f3f87;
+  --vd-cobalt-hover: #2a59b8;
+  --vd-cobalt-light: #d0e0f0;
+  --vd-page-bg: #dde6ed;
+  --vd-row-zebra: #f0f5fa;
+  --vd-row-hover: #fff8d8;
+}
+
+/* Top module strip — render with a cobalt gradient + white text +
+   pill-style tabs so admin pages get the classic ViciDial header. */
+.vicidial-modulestrip {
+  background: linear-gradient(180deg, var(--vd-cobalt-hover) 0%, var(--vd-cobalt) 100%);
+  color: #ffffff;
+  border-bottom: 1px solid #0d2255;
+  padding: 0.25rem 0.75rem;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.vicidial .vicidial-modulestrip a,
+.vicidial .vicidial-modulestrip span {
+  color: #ffffff !important;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+}
+.vicidial .vicidial-modulestrip a:hover {
+  background: rgba(255, 255, 255, 0.15);
+  text-decoration: none;
+}
+
+/* Page heading: small bold uppercase navy. ViciDial pages always
+   open with a tight "MODULE → SECTION" header instead of the
+   chunky h1 the SaaS look prefers. */
+.vicidial h1 {
+  font-size: 14px !important;
+  font-weight: bold !important;
+  color: var(--vd-cobalt) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem !important;
+  border-bottom: 1px solid var(--vd-cobalt-light);
+  padding-bottom: 0.25rem;
+}
+.vicidial h2 {
+  font-size: 12px !important;
+  font-weight: bold !important;
+  color: var(--vd-cobalt);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.4rem;
+}
+.vicidial h3 {
+  font-size: 12px !important;
+  color: rgb(var(--color-fg)) !important;
+}
+
+/* Density: ViciDial pages cram everything in. Squeeze main padding.*/
+.vicidial main {
+  padding: 0.75rem !important;
+  font-size: 12px;
+}
+
+/* Tables: cobalt header strip + uppercase white labels + denser
+   cells. Zebra rows + yellow hover are kept (iter 42 had them).
+   Override the iter-42 light header so the contrast is real. */
+.vicidial table thead {
+  background: linear-gradient(180deg, var(--vd-cobalt-hover) 0%, var(--vd-cobalt) 100%) !important;
+  color: #ffffff !important;
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.vicidial table thead th {
+  color: #ffffff !important;
+  padding: 0.3rem 0.5rem !important;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+  border-right: 1px solid rgba(255, 255, 255, 0.15);
+}
+.vicidial table tbody td {
+  padding: 0.25rem 0.5rem !important;
+  font-size: 12px;
+}
+.vicidial tbody tr:nth-child(even) {
+  background: var(--vd-row-zebra) !important;
+}
+.vicidial tbody tr:hover {
+  background: var(--vd-row-hover) !important;
+}
+
+/* Buttons: classic ViciDial small bevel + cobalt gradient. */
+.vicidial .bg-accent {
+  padding: 0.25rem 0.6rem !important;
+  font-size: 11px !important;
+  font-weight: bold;
+}
+
+/* Form inputs: denser. Label text is small bold navy above. */
+.vicidial label {
+  font-size: 11px;
+  color: var(--vd-cobalt);
+}
+.vicidial label > span {
+  font-weight: bold;
+  color: var(--vd-cobalt) !important;
+}
+.vicidial .input {
+  padding: 2px 5px !important;
+  font-size: 12px !important;
+  background: #ffffff !important;
+  border: 1px solid #8aa1b8 !important;
+  box-shadow:
+    inset 1px 1px 0 rgba(0, 0, 0, 0.08),
+    inset -1px -1px 0 rgba(255, 255, 255, 0.6) !important;
+}
+.vicidial .input:focus {
+  outline: 1px solid var(--vd-cobalt);
+  outline-offset: -1px;
+}
+
+/* Sidebar nav: keep the existing layout but tighten + cobalt
+   group labels (the section divider text in nav.tsx). */
+.vicidial nav {
+  padding: 0.5rem !important;
+  font-size: 11px !important;
+}
+.vicidial nav a {
+  padding: 2px 6px !important;
+  font-size: 11px;
+}
+/* Section group label inside nav (the small uppercase text above
+   each block of nav items — rendered by NavGroup in nav.tsx). */
+.vicidial nav h3,
+.vicidial nav .text-fg-subtle {
+  color: var(--vd-cobalt) !important;
+  font-weight: bold !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px !important;
+}
+
+/* Card panels: drop heavy padding, tighter top-corner header strip
+   (ViciDial cards have an obvious pale-blue cap above each card). */
+.vicidial .border-border {
+  border-color: #8aa1b8 !important;
+}
+.vicidial .bg-card {
+  background: #ffffff !important;
+  border: 1px solid #8aa1b8 !important;
+}
+
+/* Stat/label tints: dial back the SaaS-style large numbers; ViciDial
+   shows everything in 12px Verdana with bold labels. */
+.vicidial .text-3xl,
+.vicidial .text-2xl {
+  font-size: 18px !important;
+  font-weight: bold;
+}
+.vicidial .text-xl {
+  font-size: 14px !important;
+}
+.vicidial .text-lg {
+  font-size: 13px !important;
+}
+
+/* Status badges: ViciDial uses inline color swatches not pills. */
+.vicidial .rounded-full {
+  border-radius: 0 !important;
+}
