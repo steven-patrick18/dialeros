@@ -71,14 +71,47 @@ export function PauseControl({ initial }: { initial: AgentStatus }) {
     }
   }
 
+  // Iter 163 — wrap-up enforcement: when the admin has toggled
+  // 'wrapup.enforcement_enabled' on, the status endpoint returns
+  // 409 with the blocking intent info instead of flipping the
+  // agent to AVAILABLE. We surface that as a clear banner; the
+  // agent's wrap-up dialog on the main console handles the
+  // actual disposition.
+  const [wrapupBlock, setWrapupBlock] = useState<{
+    intent_id: number;
+    campaign_name?: string;
+    lead_name?: string | null;
+    phone?: string | null;
+  } | null>(null);
+
   async function resume() {
     setBusy(true);
+    setWrapupBlock(null);
     try {
       const r = await fetch('/api/agent/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'AVAILABLE' }),
       });
+      if (r.status === 409) {
+        const data = (await r.json()) as {
+          error?: string;
+          message?: string;
+          intent_id?: number;
+          campaign_name?: string;
+          lead_name?: string | null;
+          phone?: string | null;
+        };
+        if (data.error === 'wrapup_required' && data.intent_id) {
+          setWrapupBlock({
+            intent_id: data.intent_id,
+            campaign_name: data.campaign_name,
+            lead_name: data.lead_name ?? null,
+            phone: data.phone ?? null,
+          });
+        }
+        return;
+      }
       if (r.ok) {
         const j = (await r.json()) as AgentStatus;
         setStatus(j);
@@ -92,23 +125,39 @@ export function PauseControl({ initial }: { initial: AgentStatus }) {
 
   if (isPaused) {
     return (
-      <div className="flex items-center gap-2">
-        <span className="text-[10px] uppercase tracking-wide px-2 py-1 rounded border bg-warn/15 text-warn border-warn/40">
-          PAUSED
-          {status.reason && (
-            <span className="ml-1 normal-case tracking-normal">
-              · {status.reason}
-            </span>
-          )}
-        </span>
-        <button
-          type="button"
-          onClick={resume}
-          disabled={busy}
-          className="text-xs px-3 py-1 rounded border border-success/50 text-success hover:bg-success/10 disabled:opacity-40"
-        >
-          Resume
-        </button>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wide px-2 py-1 rounded border bg-warn/15 text-warn border-warn/40">
+            PAUSED
+            {status.reason && (
+              <span className="ml-1 normal-case tracking-normal">
+                · {status.reason}
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={resume}
+            disabled={busy}
+            className="text-xs px-3 py-1 rounded border border-success/50 text-success hover:bg-success/10 disabled:opacity-40"
+          >
+            Resume
+          </button>
+        </div>
+        {wrapupBlock && (
+          <div className="border border-warn/50 bg-warn/10 text-warn rounded p-2 text-xs space-y-1 max-w-md">
+            <div className="font-medium">Disposition required before AVAILABLE</div>
+            <div>
+              {wrapupBlock.campaign_name ? `${wrapupBlock.campaign_name} · ` : ''}
+              {wrapupBlock.phone ?? ''}
+              {wrapupBlock.lead_name ? ` · ${wrapupBlock.lead_name}` : ''}
+            </div>
+            <div className="text-fg-subtle">
+              Click the call row on your agent console to disposition it,
+              then click Resume again.
+            </div>
+          </div>
+        )}
       </div>
     );
   }

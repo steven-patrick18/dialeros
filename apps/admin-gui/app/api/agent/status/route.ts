@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   appendAudit,
   getAgentStatus,
+  getWrapupEnforcementEnabled,
+  latestUndisposedIntentForUser,
   pauseAgent,
   resumeAgent,
 } from '@dialeros/control-plane';
@@ -44,6 +46,29 @@ export async function POST(req: NextRequest) {
   if (parsed.data.status === 'PAUSED') {
     pauseAgent(me.id, parsed.data.reason ?? null);
   } else {
+    // Iter 163 — wrap-up enforcement. Only an answered call without
+    // a disposition counts as "stuck in wrap-up"; an unanswered
+    // outbound that ended at NO_ANSWER auto-dispositions to NA via
+    // iter 146. Allow agents to override with ?force=1 (admin path
+    // for stuck rows that fs-events never closed).
+    const force = req.nextUrl.searchParams.get('force') === '1';
+    if (getWrapupEnforcementEnabled() && !force) {
+      const stuck = latestUndisposedIntentForUser(me.id);
+      if (stuck && stuck.answered_at) {
+        return NextResponse.json(
+          {
+            error: 'wrapup_required',
+            message:
+              'Disposition your last connected call before going AVAILABLE.',
+            intent_id: stuck.id,
+            campaign_name: stuck.campaign_name,
+            lead_name: stuck.lead_name ?? null,
+            phone: stuck.transformed_phone ?? stuck.phone ?? null,
+          },
+          { status: 409 },
+        );
+      }
+    }
     resumeAgent(me.id);
   }
   appendAudit({

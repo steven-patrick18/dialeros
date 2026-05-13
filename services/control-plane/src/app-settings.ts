@@ -51,6 +51,10 @@ export const APP_SETTING_KEYS = {
   // JSON-encoded PacingThresholds object. Admin-tunable
   // via /settings/pacing; defaults applied when unset.
   pacingThresholds: 'pacing.recommendation_thresholds',
+  // Iter 163 — wrap-up enforcement toggle. When 'on', the
+  // agent /status POST refuses to flip an agent to AVAILABLE
+  // while they have an undispositioned connected call.
+  wrapupEnforcementEnabled: 'wrapup.enforcement_enabled',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -185,3 +189,18 @@ export function clearPacingThresholds(): void {
   clearAppSetting(APP_SETTING_KEYS.pacingThresholds);
 }
 
+// Iter 163 — Wrap-up enforcement toggle. Off by default to keep
+// existing deployments behaving as before; admin opts in via
+// /settings/wrapup-enforcement.
+export function getWrapupEnforcementEnabled(): boolean {
+  return (
+    getAppSetting(APP_SETTING_KEYS.wrapupEnforcementEnabled) === '1'
+  );
+}
+
+export function setWrapupEnforcementEnabled(enabled: boolean): void {
+  setAppSetting(
+    APP_SETTING_KEYS.wrapupEnforcementEnabled,
+    enabled ? '1' : '0',
+  );
+}

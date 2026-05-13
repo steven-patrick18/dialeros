@@ -57,6 +57,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/cluster/nodes', label: 'Cluster Nodes' },
       { href: '/settings/telephony', label: 'Telephony settings' },
       { href: '/settings/recording-retention', label: 'Recording retention' },
+      { href: '/settings/wrapup-enforcement', label: 'Wrap-up enforcement' },
       { href: '/settings/domain', label: 'Domain & TLS' },
       { href: '/settings/pacing', label: 'Pacing curve' },
     ],

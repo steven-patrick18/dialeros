@@ -755,3 +755,9 @@ export type {
   SurveyResponseStatsRow,
   SurveyResponseExportRow,
 } from './db';
+
+// Iter 163 — Wrap-up enforcement
+export {
+  getWrapupEnforcementEnabled,
+  setWrapupEnforcementEnabled,
+} from './app-settings';
