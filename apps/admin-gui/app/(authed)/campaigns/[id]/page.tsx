@@ -733,6 +733,24 @@ function DetailTab({
           }}
         />
 
+        {/* Iter 157 — per-campaign short survey. Quick link to the
+            dedicated editor. iter 158 will surface "X questions /
+            collected today" stats inline. */}
+        <Link
+          href={`/campaigns/${c.id}/survey`}
+          className="block border border-border rounded p-4 bg-card hover:bg-card-hover/40 transition-colors max-w-3xl"
+        >
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-base font-semibold">Wrap-up survey →</h2>
+            <span className="text-xs text-fg-subtle">iter 157</span>
+          </div>
+          <p className="text-fg-subtle text-sm mt-1">
+            Define the questions agents answer during wrap-up after a
+            connected call. Required questions block the agent from
+            going AVAILABLE without filling them in.
+          </p>
+        </Link>
+
         <VoicemailPanel
           campaignId={c.id}
           amdAction={c.amd_action}

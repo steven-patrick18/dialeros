@@ -3962,6 +3962,192 @@ export interface InGroupRecord {
   entry_call_menu_id: string | null;
 }
 
+/* Iter 157 — Survey DB ops. Wholesale-replace-on-update pattern
+ * for questions (delete-all-then-insert) so the admin UI saves
+ * the entire question list as one transactional form post.
+ */
+export interface SurveyRecord {
+  id: string;
+  campaign_id: string;
+  name: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SurveyQuestionRecord {
+  id: number;
+  survey_id: string;
+  ordering: number;
+  question_text: string;
+  question_type: string;
+  options_json: string | null;
+  is_required: number;
+}
+
+export interface SurveyAnswerRecord {
+  id: number;
+  ts: string;
+  dial_intent_id: number;
+  survey_id: string;
+  question_id: number;
+  answer_text: string | null;
+  answered_by_user_id: string | null;
+}
+
+export function insertSurvey(rec: {
+  id: string;
+  campaign_id: string;
+  name: string;
+  is_active: boolean;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO campaign_surveys (id, campaign_id, name, is_active)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(rec.id, rec.campaign_id, rec.name, rec.is_active ? 1 : 0);
+}
+
+export function getSurveyForCampaign(
+  campaignId: string,
+): SurveyRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM campaign_surveys WHERE campaign_id = ?`)
+    .get(campaignId) as unknown as SurveyRecord | undefined;
+}
+
+export function updateSurveyFields(
+  id: string,
+  fields: { name?: string; is_active?: boolean },
+): boolean {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (fields.name !== undefined) {
+    sets.push('name = ?');
+    vals.push(fields.name);
+  }
+  if (fields.is_active !== undefined) {
+    sets.push('is_active = ?');
+    vals.push(fields.is_active ? 1 : 0);
+  }
+  if (sets.length === 0) return false;
+  sets.push('updated_at = CURRENT_TIMESTAMP');
+  vals.push(id);
+  const result = db()
+    .prepare(`UPDATE campaign_surveys SET ${sets.join(', ')} WHERE id = ?`)
+    .run(...(vals as never[]));
+  return Number(result.changes) > 0;
+}
+
+export function deleteSurveyFromDb(id: string): boolean {
+  const result = db()
+    .prepare(`DELETE FROM campaign_surveys WHERE id = ?`)
+    .run(id);
+  return Number(result.changes) > 0;
+}
+
+export function listSurveyQuestionsFromDb(
+  surveyId: string,
+): SurveyQuestionRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM survey_questions
+        WHERE survey_id = ?
+        ORDER BY ordering ASC, id ASC`,
+    )
+    .all(surveyId) as unknown as SurveyQuestionRecord[];
+}
+
+export function replaceSurveyQuestions(
+  surveyId: string,
+  questions: Array<{
+    ordering: number;
+    question_text: string;
+    question_type: string;
+    options_json: string | null;
+    is_required: boolean;
+  }>,
+): void {
+  const conn = db();
+  const tx = conn.exec.bind(conn);
+  tx('BEGIN');
+  try {
+    conn
+      .prepare(`DELETE FROM survey_questions WHERE survey_id = ?`)
+      .run(surveyId);
+    if (questions.length > 0) {
+      const stmt = conn.prepare(
+        `INSERT INTO survey_questions
+           (survey_id, ordering, question_text, question_type,
+            options_json, is_required)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      for (const q of questions) {
+        stmt.run(
+          surveyId,
+          q.ordering,
+          q.question_text,
+          q.question_type,
+          q.options_json,
+          q.is_required ? 1 : 0,
+        );
+      }
+    }
+    tx('COMMIT');
+  } catch (e) {
+    tx('ROLLBACK');
+    throw e;
+  }
+}
+
+export function insertSurveyAnswers(
+  rows: Array<{
+    dial_intent_id: number;
+    survey_id: string;
+    question_id: number;
+    answer_text: string | null;
+    answered_by_user_id: string | null;
+  }>,
+): void {
+  if (rows.length === 0) return;
+  const conn = db();
+  const stmt = conn.prepare(
+    `INSERT INTO survey_answers
+       (dial_intent_id, survey_id, question_id, answer_text, answered_by_user_id)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const tx = conn.exec.bind(conn);
+  tx('BEGIN');
+  try {
+    for (const r of rows) {
+      stmt.run(
+        r.dial_intent_id,
+        r.survey_id,
+        r.question_id,
+        r.answer_text,
+        r.answered_by_user_id,
+      );
+    }
+    tx('COMMIT');
+  } catch (e) {
+    tx('ROLLBACK');
+    throw e;
+  }
+}
+
+export function listSurveyAnswersForIntent(
+  dialIntentId: number,
+): SurveyAnswerRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM survey_answers
+        WHERE dial_intent_id = ?
+        ORDER BY id ASC`,
+    )
+    .all(dialIntentId) as unknown as SurveyAnswerRecord[];
+}
+
 /* Iter 150 — Sound Board (audio library) DB ops. Files are stored
  * on disk under /var/lib/dialeros/audio/library/<id>.wav; this
  * table indexes them with operator-facing metadata.

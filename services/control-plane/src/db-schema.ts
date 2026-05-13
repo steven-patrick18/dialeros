@@ -193,6 +193,50 @@ export const CREATE_TABLES_SQL = `
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Iter 157 — Per-campaign short survey. One survey per
+    -- campaign (UNIQUE constraint). Questions are ordered and
+    -- have a type that drives the agent wrap-up UI widget.
+    -- survey_answers ties each answer to a dial_intent so the
+    -- iter-159 export can join in campaign + lead + agent
+    -- context cleanly.
+    CREATE TABLE IF NOT EXISTS campaign_surveys (
+      id TEXT PRIMARY KEY,
+      campaign_id TEXT NOT NULL UNIQUE
+        REFERENCES campaigns(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS survey_questions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      survey_id TEXT NOT NULL REFERENCES campaign_surveys(id) ON DELETE CASCADE,
+      ordering INTEGER NOT NULL DEFAULT 0,
+      question_text TEXT NOT NULL,
+      question_type TEXT NOT NULL,
+      options_json TEXT,
+      is_required INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_survey_questions_survey
+      ON survey_questions(survey_id);
+
+    CREATE TABLE IF NOT EXISTS survey_answers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      dial_intent_id INTEGER NOT NULL REFERENCES dial_intents(id) ON DELETE CASCADE,
+      survey_id TEXT NOT NULL REFERENCES campaign_surveys(id) ON DELETE CASCADE,
+      question_id INTEGER NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
+      answer_text TEXT,
+      answered_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_survey_answers_intent
+      ON survey_answers(dial_intent_id);
+    CREATE INDEX IF NOT EXISTS idx_survey_answers_question
+      ON survey_answers(question_id);
+
     -- Iter 150 — Sound Board (audio library). Central catalogue
     -- referenced by call menus, voicemail drops, in-group greetings,
     -- hold music. Files are stored at /var/lib/dialeros/audio/library/<id>.wav

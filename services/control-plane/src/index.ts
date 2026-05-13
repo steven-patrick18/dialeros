@@ -719,3 +719,29 @@ export { insertCallMenuLog } from './db';
 // Iter 155 — per-call-menu analytics
 export { getCallMenuStats } from './db';
 export type { CallMenuStatsRow } from './db';
+
+// Iter 157 — Per-campaign short survey
+export {
+  SurveyInputSchema,
+  SurveyQuestionInputSchema,
+  SurveyQuestionTypeSchema,
+  saveCampaignSurvey,
+  getCampaignSurvey,
+  deleteCampaignSurvey,
+  parseSurveyOptions,
+} from './survey';
+export type {
+  SurveyInput,
+  SurveyQuestionInput,
+  SurveyQuestionType,
+  SurveyWithQuestions,
+} from './survey';
+export type {
+  SurveyRecord,
+  SurveyQuestionRecord,
+  SurveyAnswerRecord,
+} from './db';
+export {
+  insertSurveyAnswers,
+  listSurveyAnswersForIntent,
+} from './db';
