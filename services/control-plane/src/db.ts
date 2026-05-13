@@ -4136,6 +4136,96 @@ export function insertSurveyAnswers(
   }
 }
 
+/* Iter 159 — Per-question response stats. Groups survey_answers
+ * by (question_id, answer_text) so the report page can render
+ * the distribution per question without round-tripping to the
+ * client. The survey_id filter scopes to one survey definition;
+ * since lets the operator pick a time window (defaults to ALL
+ * answers when omitted). */
+export interface SurveyResponseStatsRow {
+  question_id: number;
+  question_text: string;
+  question_type: string;
+  options_json: string | null;
+  is_required: number;
+  answer_text: string | null;
+  answer_count: number;
+}
+export function getSurveyResponseStats(
+  surveyId: string,
+  sinceIso?: string,
+): SurveyResponseStatsRow[] {
+  const where = ['sa.survey_id = ?'];
+  const vals: unknown[] = [surveyId];
+  if (sinceIso) {
+    where.push('sa.ts >= ?');
+    vals.push(sinceIso);
+  }
+  return db()
+    .prepare(
+      `SELECT q.id AS question_id, q.question_text, q.question_type,
+              q.options_json, q.is_required,
+              sa.answer_text, COUNT(*) AS answer_count
+         FROM survey_answers sa
+         JOIN survey_questions q ON q.id = sa.question_id
+        WHERE ${where.join(' AND ')}
+        GROUP BY q.id, sa.answer_text
+        ORDER BY q.ordering ASC, q.id ASC, answer_count DESC`,
+    )
+    .all(...(vals as never[])) as unknown as SurveyResponseStatsRow[];
+}
+
+/* Iter 159 — Flat join for CSV export. One row per survey_answer,
+ * with the surrounding dial_intent + campaign + lead + agent
+ * context joined in so the exported CSV is self-describing.
+ * Multi-choice answer_text is left as the stored JSON array —
+ * operators split per their own tooling. */
+export interface SurveyResponseExportRow {
+  ts: string;
+  dial_intent_id: number;
+  campaign_id: string;
+  campaign_name: string;
+  lead_id: string;
+  lead_phone: string;
+  lead_name: string | null;
+  agent_username: string | null;
+  disposition: string | null;
+  question_id: number;
+  question_text: string;
+  question_type: string;
+  answer_text: string | null;
+}
+export function listSurveyResponsesForExport(
+  campaignId: string,
+  sinceIso?: string,
+): SurveyResponseExportRow[] {
+  const where = ['di.campaign_id = ?'];
+  const vals: unknown[] = [campaignId];
+  if (sinceIso) {
+    where.push('sa.ts >= ?');
+    vals.push(sinceIso);
+  }
+  return db()
+    .prepare(
+      `SELECT sa.ts, sa.dial_intent_id,
+              di.campaign_id, c.name AS campaign_name,
+              di.lead_id, l.phone AS lead_phone, l.name AS lead_name,
+              u.username AS agent_username,
+              di.disposition,
+              q.id AS question_id, q.question_text, q.question_type,
+              sa.answer_text
+         FROM survey_answers sa
+         JOIN survey_questions q ON q.id = sa.question_id
+         JOIN dial_intents di ON di.id = sa.dial_intent_id
+         JOIN campaigns c ON c.id = di.campaign_id
+         JOIN leads l ON l.id = di.lead_id
+         LEFT JOIN users u ON u.id = sa.answered_by_user_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY sa.id ASC`,
+    )
+    .all(...(vals as never[])) as unknown as SurveyResponseExportRow[];
+}
+
 export function listSurveyAnswersForIntent(
   dialIntentId: number,
 ): SurveyAnswerRecord[] {

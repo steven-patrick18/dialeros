@@ -745,3 +745,13 @@ export {
   insertSurveyAnswers,
   listSurveyAnswersForIntent,
 } from './db';
+
+// Iter 159 — Survey reporting
+export {
+  getSurveyResponseStats,
+  listSurveyResponsesForExport,
+} from './db';
+export type {
+  SurveyResponseStatsRow,
+  SurveyResponseExportRow,
+} from './db';

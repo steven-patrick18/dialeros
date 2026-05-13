@@ -65,6 +65,14 @@ export default async function CampaignSurveyPage({
         </Link>
       </div>
       <h1 className="text-2xl font-semibold mb-1">Survey — {campaign.name}</h1>
+      <p className="text-fg-subtle text-sm mb-2 max-w-3xl">
+        <Link
+          href={`/campaigns/${id}/survey/responses`}
+          className="text-link hover:underline"
+        >
+          View responses + CSV export →
+        </Link>
+      </p>
       <p className="text-fg-subtle text-sm mb-6 max-w-3xl">
         Short questionnaire the agent fills in during wrap-up after
         a connected call. Question types: single-choice, multi-choice,
