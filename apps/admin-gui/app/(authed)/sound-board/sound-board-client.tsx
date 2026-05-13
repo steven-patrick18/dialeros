@@ -524,7 +524,15 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
           setInstalled(data.installed);
           setInstallCommand(data.install_command ?? '');
           setVoices(data.voices);
-          if (data.voices.length > 0) setVoice(data.voices[0]!.name);
+          if (data.voices.length > 0) {
+            // Iter 161 — pick the best-quality voice as default
+            // instead of alphabetical first.
+            const sorted = [...data.voices].sort(
+              (a, b) =>
+                voiceQualityRank(b.name) - voiceQualityRank(a.name),
+            );
+            setVoice(sorted[0]!.name);
+          }
         },
       )
       .catch(() => {
@@ -615,7 +623,12 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
             </select>
           </label>
           <label className="text-sm flex flex-col gap-1">
-            <span className="text-fg-subtle">Voice</span>
+            <span className="text-fg-subtle">
+              Voice{' '}
+              <span className="text-[10px] text-fg-subtle">
+                (high &gt; medium &gt; low — sorted best-first)
+              </span>
+            </span>
             <select
               value={voice}
               onChange={(e) => setVoice(e.target.value)}
@@ -625,11 +638,20 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
               {voices.length === 0 ? (
                 <option value="">No voices found in piper-voices/</option>
               ) : (
-                voices.map((v) => (
-                  <option key={v.name} value={v.name}>
-                    {v.name}
-                  </option>
-                ))
+                // Iter 161 — sort 'high' tier first, then 'medium', then 'low'
+                // so the default selection on a fresh page lands on the best
+                // available voice.
+                [...voices]
+                  .sort(
+                    (a, b) =>
+                      voiceQualityRank(b.name) - voiceQualityRank(a.name) ||
+                      a.name.localeCompare(b.name),
+                  )
+                  .map((v) => (
+                    <option key={v.name} value={v.name}>
+                      {voiceLabel(v.name)}
+                    </option>
+                  ))
               )}
             </select>
           </label>
@@ -657,4 +679,29 @@ function TtsCard({ onSaved }: { onSaved: () => void }) {
       )}
     </div>
   );
+}
+
+// Iter 161 — piper voice helpers. Voice names look like
+// "<lang>-<speaker>-<quality>", e.g. "en_US-libritts-high".
+// Quality tier dominates naturalness; high > medium > low > x_low.
+function voiceQualityRank(name: string): number {
+  if (name.endsWith('-high')) return 3;
+  if (name.endsWith('-medium')) return 2;
+  if (name.endsWith('-low')) return 1;
+  if (name.endsWith('-x_low')) return 0;
+  return 0;
+}
+
+function voiceLabel(name: string): string {
+  const tier = name.endsWith('-high')
+    ? '✦ HIGH'
+    : name.endsWith('-medium')
+      ? 'medium'
+      : 'low';
+  // Pretty-print speaker name: en_US-libritts-high -> en-US · libritts (HIGH)
+  const m = /^([a-z]{2})_([A-Z]{2})-(.+)-(high|medium|low|x_low)$/.exec(name);
+  if (m) {
+    return `${m[1]}-${m[2]} · ${m[3]} (${tier})`;
+  }
+  return `${name} (${tier})`;
 }

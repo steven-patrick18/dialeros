@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
-# Iter 151 — install piper-tts for the Sound Board TTS feature.
+# Iter 151 — install piper-tts.
+# Iter 161 — extended to install 5 voices (low/medium/high quality
+# tiers) instead of just amy-medium. Operators can drop additional
+# .onnx + .onnx.json files into /var/lib/dialeros/ai/piper-voices
+# at any time; the Sound Board TTS card enumerates the dir on each
+# page load.
 #
-# piper is a fast, CPU-only neural TTS engine. Runs entirely on the
-# box — no external API calls (consistent with iter 137's no-cloud-AI
-# constraint). One ~70MB binary + per-voice model files (~25-100MB
-# each).
+# Iter 162 will layer Coqui XTTS-v2 on top for voice cloning, which
+# requires Python + PyTorch + ~3GB RAM for the model. Until then,
+# the libritts-high + ryan-high + lessac-high voices below are the
+# best you can get from CPU-only inference at ~RTF 0.15.
 #
-# Idempotent. Re-running is safe — existing piper + voices are kept.
-#
-# What lands on disk:
-#   /usr/local/bin/piper                          piper binary
-#   /var/lib/dialeros/ai/piper-voices/<voice>.onnx
-#   /var/lib/dialeros/ai/piper-voices/<voice>.onnx.json
-#
-# Default voice: en_US-amy-medium (clear American female, ~63MB).
-# Operators can drop additional .onnx voice files into the
-# piper-voices dir; the Sound Board TTS card auto-discovers them.
+# Idempotent. Re-running is safe — existing binary + voices are
+# preserved.
 
 set -euo pipefail
 
@@ -24,13 +21,26 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-PIPER_VERSION="2023.11.14-2"  # Last release tag with prebuilt linux x86_64
+PIPER_VERSION="2023.11.14-2"
 PIPER_URL="https://github.com/rhasspy/piper/releases/download/${PIPER_VERSION}/piper_linux_x86_64.tar.gz"
 PIPER_DIR=/usr/local/share/piper
 PIPER_BIN=/usr/local/bin/piper
 VOICES_DIR=/var/lib/dialeros/ai/piper-voices
-DEFAULT_VOICE_NAME="en_US-amy-medium"
-DEFAULT_VOICE_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium"
+
+# Voice catalog: { name -> hf-base-url-path }
+# Naming: <lang>-<speaker>-<quality>
+# Quality tiers:
+#   x_low / low  ~10-20MB, fast, robotic
+#   medium       ~60MB, balanced (iter 151 default was amy-medium)
+#   high         ~100-130MB, slower, MUCH more natural
+declare -A VOICES=(
+  [en_US-amy-medium]="en/en_US/amy/medium"
+  [en_US-libritts-high]="en/en_US/libritts/high"
+  [en_US-ryan-high]="en/en_US/ryan/high"
+  [en_US-lessac-high]="en/en_US/lessac/high"
+  [en_GB-alba-medium]="en/en_GB/alba/medium"
+)
+HF_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 
 echo "[install-piper] checking deps"
 apt-get update -qq
@@ -46,37 +56,38 @@ else
   mkdir -p "${PIPER_DIR}"
   tar -xzf "${TMPTAR}" -C "${PIPER_DIR}" --strip-components=1
   rm -f "${TMPTAR}"
-  # The release ships a wrapper script + libs; symlink to /usr/local/bin
   ln -sf "${PIPER_DIR}/piper" "${PIPER_BIN}"
   echo "[install-piper] piper installed at ${PIPER_BIN}"
 fi
 
-echo "[install-piper] piper version: $(${PIPER_BIN} --help 2>&1 | head -1 || echo '(no --help)')"
-
-# Voices dir owned by dialeros, readable by group (admin-gui reads
-# the .onnx.json sidecars to enumerate available voices).
 mkdir -p "${VOICES_DIR}"
 chown -R dialeros:dialeros "${VOICES_DIR}"
 chmod 0755 "${VOICES_DIR}"
 
-ONNX="${VOICES_DIR}/${DEFAULT_VOICE_NAME}.onnx"
-JSON="${VOICES_DIR}/${DEFAULT_VOICE_NAME}.onnx.json"
-
-if [ -f "${ONNX}" ] && [ -f "${JSON}" ]; then
-  echo "[install-piper] default voice ${DEFAULT_VOICE_NAME} already present"
-else
-  echo "[install-piper] downloading default voice ${DEFAULT_VOICE_NAME}"
-  curl -fsSL "${DEFAULT_VOICE_BASE}/${DEFAULT_VOICE_NAME}.onnx" -o "${ONNX}"
-  curl -fsSL "${DEFAULT_VOICE_BASE}/${DEFAULT_VOICE_NAME}.onnx.json" -o "${JSON}"
-  chown dialeros:dialeros "${ONNX}" "${JSON}"
-  echo "[install-piper] voice downloaded ($(du -h "${ONNX}" | cut -f1))"
-fi
+for voice in "${!VOICES[@]}"; do
+  path="${VOICES[$voice]}"
+  onnx="${VOICES_DIR}/${voice}.onnx"
+  json="${VOICES_DIR}/${voice}.onnx.json"
+  if [ -f "${onnx}" ] && [ -f "${json}" ]; then
+    echo "[install-piper] voice ${voice} already present"
+    continue
+  fi
+  echo "[install-piper] downloading voice ${voice}"
+  curl -fsSL "${HF_BASE}/${path}/${voice}.onnx" -o "${onnx}"
+  curl -fsSL "${HF_BASE}/${path}/${voice}.onnx.json" -o "${json}"
+  chown dialeros:dialeros "${onnx}" "${json}"
+  size=$(du -h "${onnx}" | cut -f1)
+  echo "[install-piper] voice ${voice} downloaded (${size})"
+done
 
 echo "[install-piper] done."
 echo
-echo "Try it:"
-echo "  echo 'Hello from DialerOS.' | ${PIPER_BIN} --model ${ONNX} --output_file /tmp/test.wav"
-echo "  aplay /tmp/test.wav  # or scp to your laptop and play"
+echo "Installed voices:"
+ls -lh "${VOICES_DIR}"/*.onnx 2>/dev/null | awk '{print "  " $NF " (" $5 ")"}'
 echo
 echo "Add more voices: drop the .onnx + .onnx.json files into ${VOICES_DIR}"
 echo "Voice catalog: https://huggingface.co/rhasspy/piper-voices"
+echo
+echo "Quality tip: '-high' voices sound dramatically more natural"
+echo "than '-medium'. The libritts/ryan/lessac high voices are the"
+echo "best CPU-only piper can do."
