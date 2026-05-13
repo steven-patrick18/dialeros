@@ -24,7 +24,10 @@ export default async function SoundBoardPage() {
     );
   }
 
-  const initial = listAudioFiles();
+  // Iter 162 fix — node:sqlite returns null-prototype rows which
+  // React 19 RSC refuses to pass into a Client Component. Round-trip
+  // through JSON to plain objects (same pattern as supervisor/page).
+  const initial = JSON.parse(JSON.stringify(listAudioFiles()));
 
   return (
     <div className="max-w-5xl">
