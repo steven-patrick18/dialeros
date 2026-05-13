@@ -199,6 +199,7 @@ export type {
 
 // Floor disposition mix (iter 103)
 export { floorDispositionMixToday } from './db';
+export { floorDispositionMixSince } from './db';
 
 // Callback queue (iter 104)
 export { listScheduledCallbacks } from './db';

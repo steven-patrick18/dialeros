@@ -3580,6 +3580,39 @@ export function floorDispositionMixToday(): CampaignDispositionRow[] {
   return rows;
 }
 
+/* Iter 148 — generalised disposition mix: any time window, optionally
+ * filtered by disposition_origin ('agent' / 'auto'). Returns rows
+ * in {disposition, count} shape compatible with the existing
+ * DispositionStrip renderer. NO synthetic OPEN bucket — the
+ * /reports view is post-hoc, not a wrap-up reminder. Codes
+ * unknown to KNOWN_DISPOSITIONS still appear (auto codes get
+ * appended), so iter-146 codes show up without table changes. */
+export function floorDispositionMixSince(
+  sinceIso: string,
+  origin?: 'agent' | 'auto' | null,
+): CampaignDispositionRow[] {
+  const where = [
+    "kind != 'simulated'",
+    'dispositioned_at IS NOT NULL',
+    'dispositioned_at >= ?',
+  ];
+  const vals: unknown[] = [sinceIso];
+  if (origin) {
+    where.push('disposition_origin = ?');
+    vals.push(origin);
+  }
+  const counted = db()
+    .prepare(
+      `SELECT disposition AS d, COUNT(*) AS n
+         FROM dial_intents
+        WHERE ${where.join(' AND ')}
+        GROUP BY disposition
+        ORDER BY n DESC`,
+    )
+    .all(...(vals as never[])) as Array<{ d: string; n: number }>;
+  return counted.map((r) => ({ disposition: r.d, count: r.n }));
+}
+
 export function campaignDispositionMix(
   campaignId: string,
 ): CampaignDispositionRow[] {

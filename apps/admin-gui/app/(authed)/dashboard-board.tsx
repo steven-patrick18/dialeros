@@ -349,6 +349,18 @@ const DISPO_TONES: Record<string, { dot: string; text: string }> = {
   BAD_NUMBER: { dot: 'bg-error', text: 'text-error' },
   DNC: { dot: 'bg-error', text: 'text-error' },
   OPEN: { dot: 'bg-accent', text: 'text-accent' },
+  // Iter 146/148 — auto codes. 'A' (abandoned) is the TCPA-relevant
+  // one so it gets the loud error tone. Originate errors + carrier
+  // rejects also red (carrier-side problems). NA/B are neutral.
+  // AM* are info-toned to match the manual ANSWERING_MACHINE row.
+  A: { dot: 'bg-error', text: 'text-error' },
+  OE: { dot: 'bg-error', text: 'text-error' },
+  CC: { dot: 'bg-error', text: 'text-error' },
+  NA: { dot: 'bg-fg-muted', text: 'text-fg-muted' },
+  B: { dot: 'bg-fg-muted', text: 'text-fg-muted' },
+  AM: { dot: 'bg-info', text: 'text-info' },
+  'AM-VMD': { dot: 'bg-info', text: 'text-info' },
+  'AM-DROP': { dot: 'bg-info', text: 'text-info' },
 };
 function DispositionStrip({ rows }: { rows: DispoRow[] }) {
   const total = rows.reduce(

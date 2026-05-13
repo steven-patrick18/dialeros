@@ -3,12 +3,14 @@ import {
   agentLeaderboardToday,
   auditCountsByAction,
   dialIntentsByHour,
+  floorDispositionMixSince,
   globalLeadStatusBreakdown,
   listLeadLists,
   loginActivityRollup,
   pauseReasonAnalytics,
   topCampaignsByIntents,
   totalDialIntents,
+  type CampaignDispositionRow,
   type PauseReasonRow,
 } from '@dialeros/control-plane';
 
@@ -28,6 +30,12 @@ export default async function ReportsPage() {
   const leadLists = listLeadLists();
   const leaderboard = agentLeaderboardToday();
   const pauseReasons = pauseReasonAnalytics(since24);
+  // Iter 148 — disposition mix split by origin so agents-vs-system
+  // calls show distinctly. Since iter 146 every unbridged call
+  // ends up tagged ('A','OE','NA',...) — this section makes that
+  // visible without burying it in the dashboard's 8-cell strip.
+  const agentDispos24 = floorDispositionMixSince(since24, 'agent');
+  const autoDispos24 = floorDispositionMixSince(since24, 'auto');
 
   return (
     <div>
@@ -210,6 +218,66 @@ export default async function ReportsPage() {
           )}
         </Panel>
       </div>
+
+      {/* Iter 148 — Agent vs System dispositions (24h). The
+          system column surfaces iter-146 auto codes (OE/NA/B/CC/A/AM*)
+          so an operator instantly sees how much of the floor's
+          activity bypassed agents — and crucially, sees the
+          abandoned-call ('A') count in a context that makes the
+          iter-147 abandon-rate cap legible. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-6xl mt-6">
+        <DispositionPanel
+          title="Agent outcomes — 24h"
+          subtitle="dispositioned manually via wrap-up"
+          rows={agentDispos24}
+        />
+        <DispositionPanel
+          title="System outcomes — 24h"
+          subtitle="auto-tagged at hangup (iter 146): OE/NA/B/CC/A/AM*"
+          rows={autoDispos24}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Iter 148 — compact disposition list for the reports page.
+// Keeps the table-style row form (label / bar / count) so it
+// matches the rest of the page; the dashboard's chunky strip
+// is for at-a-glance reads, this is for browsing.
+function DispositionPanel({
+  title,
+  subtitle,
+  rows,
+}: {
+  title: string;
+  subtitle: string;
+  rows: CampaignDispositionRow[];
+}) {
+  const total = rows.reduce((a, r) => a + r.count, 0);
+  return (
+    <div className="border border-border rounded p-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted">
+          {title}
+        </h2>
+        <span className="text-xs text-fg-subtle">
+          {total.toLocaleString()} total
+        </span>
+      </div>
+      <p className="text-xs text-fg-subtle mb-3">{subtitle}</p>
+      {rows.length === 0 ? (
+        <p className="text-fg-subtle text-sm">
+          No dispositions in this window.
+        </p>
+      ) : (
+        <BreakdownBars
+          data={rows.map((r) => ({
+            label: r.disposition,
+            count: r.count,
+          }))}
+        />
+      )}
     </div>
   );
 }
