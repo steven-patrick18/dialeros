@@ -4136,6 +4136,300 @@ export function insertSurveyAnswers(
   }
 }
 
+/* Iter 165 — TCPA Compliance metrics (rolling window).
+ *
+ * FCC TCPA rule: abandoned-call rate must stay ≤ 3% of calls that
+ * are answered live by a person, measured over a rolling 30-day
+ * window. iter-147's pacer guardrail enforces a tighter real-time
+ * cap (last 100 dispositioned calls); iter-165 is the audit-grade
+ * report regulators ask for.
+ *
+ * Definitions matched to ViciDial / industry norms:
+ *   attempts        every non-simulated dial_intent within the window
+ *   answered_live   answered_at IS NOT NULL AND disposition is a
+ *                   live-talk code (NOT 'A', 'NA', 'B', 'CC', 'OE',
+ *                   'AM', 'AM-VMD', 'AM-DROP')
+ *   abandoned       disposition = 'A' (iter-146 auto-disposition
+ *                   code for "answered but no agent on bridge")
+ *   abandon_rate    abandoned / (answered_live + abandoned)
+ *                   matches the FCC formula
+ */
+export interface TcpaWindowMetrics {
+  since_iso: string;
+  until_iso: string;
+  attempts: number;
+  answered_live: number;
+  abandoned: number;
+  answering_machine: number;
+  no_answer: number;
+  busy: number;
+  carrier_rejected: number;
+  originate_errors: number;
+  abandon_rate_pct: number;
+}
+
+const AUTO_NON_LIVE = [
+  'A',
+  'NA',
+  'B',
+  'CC',
+  'OE',
+  'AM',
+  'AM-VMD',
+  'AM-DROP',
+];
+
+export function getRollingTcpaMetrics(
+  sinceIso: string,
+  untilIso?: string,
+): TcpaWindowMetrics {
+  const where = [
+    "kind != 'simulated'",
+    'ts >= ?',
+  ];
+  const vals: unknown[] = [sinceIso];
+  if (untilIso) {
+    where.push('ts < ?');
+    vals.push(untilIso);
+  }
+  const w = where.join(' AND ');
+  const conn = db();
+
+  const totalRow = conn
+    .prepare(`SELECT COUNT(*) AS n FROM dial_intents WHERE ${w}`)
+    .get(...(vals as never[])) as { n: number };
+
+  const dispoRows = conn
+    .prepare(
+      `SELECT COALESCE(disposition, '__none__') AS d, COUNT(*) AS n
+         FROM dial_intents
+        WHERE ${w}
+          AND answered_at IS NOT NULL
+        GROUP BY disposition`,
+    )
+    .all(...(vals as never[])) as Array<{ d: string; n: number }>;
+
+  let abandoned = 0;
+  let answering_machine = 0;
+  let answered_live = 0;
+  for (const r of dispoRows) {
+    if (r.d === 'A') abandoned += r.n;
+    else if (r.d === 'AM' || r.d === 'AM-VMD' || r.d === 'AM-DROP')
+      answering_machine += r.n;
+    else if (AUTO_NON_LIVE.includes(r.d)) {
+      /* other non-live auto codes — count separately below */
+    } else if (r.d !== '__none__') {
+      // Manual agent disposition; counts as live talk.
+      answered_live += r.n;
+    } else {
+      // Answered but no disposition — agent walked away. Iter 163
+      // wrap-up enforcement plus iter-146 auto-disposition close
+      // this over time; for the rolling window we still count it
+      // as "answered live" since something picked up the phone.
+      answered_live += r.n;
+    }
+  }
+
+  const naRow = conn
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents
+        WHERE ${w} AND disposition = 'NA'`,
+    )
+    .get(...(vals as never[])) as { n: number };
+  const busyRow = conn
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents
+        WHERE ${w} AND disposition = 'B'`,
+    )
+    .get(...(vals as never[])) as { n: number };
+  const ccRow = conn
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents
+        WHERE ${w} AND disposition = 'CC'`,
+    )
+    .get(...(vals as never[])) as { n: number };
+  const oeRow = conn
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents
+        WHERE ${w} AND disposition = 'OE'`,
+    )
+    .get(...(vals as never[])) as { n: number };
+
+  const denom = answered_live + abandoned;
+  const abandon_rate_pct = denom > 0 ? (abandoned / denom) * 100 : 0;
+
+  return {
+    since_iso: sinceIso,
+    until_iso: untilIso ?? new Date().toISOString(),
+    attempts: totalRow.n,
+    answered_live,
+    abandoned,
+    answering_machine,
+    no_answer: naRow.n,
+    busy: busyRow.n,
+    carrier_rejected: ccRow.n,
+    originate_errors: oeRow.n,
+    abandon_rate_pct,
+  };
+}
+
+/* Iter 165 — Daily breakdown over the window. One row per UTC
+ * calendar day in the window so a Mon-Fri operator can see whether
+ * weekends drag the rolling rate up or down. */
+export interface TcpaDailyRow {
+  date: string; // YYYY-MM-DD
+  attempts: number;
+  answered_live: number;
+  abandoned: number;
+  abandon_rate_pct: number;
+}
+export function getDailyDialMetrics(
+  sinceIso: string,
+  untilIso?: string,
+): TcpaDailyRow[] {
+  const where = [
+    "kind != 'simulated'",
+    'ts >= ?',
+  ];
+  const vals: unknown[] = [sinceIso];
+  if (untilIso) {
+    where.push('ts < ?');
+    vals.push(untilIso);
+  }
+  const w = where.join(' AND ');
+  const rows = db()
+    .prepare(
+      `SELECT date(ts) AS d,
+              COUNT(*) AS attempts,
+              SUM(CASE
+                    WHEN disposition = 'A' THEN 1 ELSE 0 END) AS abandoned,
+              SUM(CASE
+                    WHEN answered_at IS NOT NULL
+                      AND disposition IS NOT NULL
+                      AND disposition NOT IN ('A','NA','B','CC','OE','AM','AM-VMD','AM-DROP')
+                    THEN 1 ELSE 0 END) AS answered_live
+         FROM dial_intents
+        WHERE ${w}
+        GROUP BY date(ts)
+        ORDER BY date(ts) ASC`,
+    )
+    .all(...(vals as never[])) as Array<{
+    d: string;
+    attempts: number;
+    abandoned: number;
+    answered_live: number;
+  }>;
+  return rows.map((r) => ({
+    date: r.d,
+    attempts: r.attempts,
+    answered_live: r.answered_live,
+    abandoned: r.abandoned,
+    abandon_rate_pct:
+      r.answered_live + r.abandoned > 0
+        ? (r.abandoned / (r.answered_live + r.abandoned)) * 100
+        : 0,
+  }));
+}
+
+/* Iter 165 — Per-campaign breakdown for the audit report. Joins
+ * the campaign name in so the operator doesn't have to cross-
+ * reference IDs while talking to a regulator. */
+export interface TcpaCampaignRow {
+  campaign_id: string;
+  campaign_name: string;
+  max_abandon_pct: number;
+  attempts: number;
+  answered_live: number;
+  abandoned: number;
+  abandon_rate_pct: number;
+  over_cap: boolean;
+}
+export function getPerCampaignTcpaMetrics(
+  sinceIso: string,
+  untilIso?: string,
+): TcpaCampaignRow[] {
+  const where = [
+    "di.kind != 'simulated'",
+    'di.ts >= ?',
+  ];
+  const vals: unknown[] = [sinceIso];
+  if (untilIso) {
+    where.push('di.ts < ?');
+    vals.push(untilIso);
+  }
+  const rows = db()
+    .prepare(
+      `SELECT di.campaign_id, c.name AS campaign_name,
+              c.max_abandon_pct,
+              COUNT(*) AS attempts,
+              SUM(CASE
+                    WHEN di.disposition = 'A' THEN 1 ELSE 0 END) AS abandoned,
+              SUM(CASE
+                    WHEN di.answered_at IS NOT NULL
+                      AND di.disposition IS NOT NULL
+                      AND di.disposition NOT IN ('A','NA','B','CC','OE','AM','AM-VMD','AM-DROP')
+                    THEN 1 ELSE 0 END) AS answered_live
+         FROM dial_intents di
+         JOIN campaigns c ON c.id = di.campaign_id
+        WHERE ${where.join(' AND ')}
+        GROUP BY di.campaign_id
+        ORDER BY attempts DESC`,
+    )
+    .all(...(vals as never[])) as Array<{
+    campaign_id: string;
+    campaign_name: string;
+    max_abandon_pct: number;
+    attempts: number;
+    abandoned: number;
+    answered_live: number;
+  }>;
+  return rows.map((r) => {
+    const denom = r.answered_live + r.abandoned;
+    const rate = denom > 0 ? (r.abandoned / denom) * 100 : 0;
+    return {
+      campaign_id: r.campaign_id,
+      campaign_name: r.campaign_name,
+      max_abandon_pct: r.max_abandon_pct,
+      attempts: r.attempts,
+      answered_live: r.answered_live,
+      abandoned: r.abandoned,
+      abandon_rate_pct: rate,
+      over_cap: r.max_abandon_pct > 0 && rate > r.max_abandon_pct,
+    };
+  });
+}
+
+/* Iter 165 — DNC activity over the window. Counts adds + bulk-
+ * adds for the regulators' "show me your scrub log" question. */
+export interface TcpaDncActivity {
+  dnc_added: number;
+  dnc_bulk_added: number;
+  dnc_removed: number;
+  throttle_events: number;
+  throttle_cleared_events: number;
+}
+export function getTcpaAuditActivity(
+  sinceIso: string,
+): TcpaDncActivity {
+  const conn = db();
+  const q = (action: string): number => {
+    const r = conn
+      .prepare(
+        `SELECT COUNT(*) AS n FROM audit_events
+          WHERE ts >= ? AND action = ?`,
+      )
+      .get(sinceIso, action) as { n: number };
+    return r.n;
+  };
+  return {
+    dnc_added: q('dnc.added'),
+    dnc_bulk_added: q('dnc.bulk_added'),
+    dnc_removed: q('dnc.removed'),
+    throttle_events: q('pacer.throttle'),
+    throttle_cleared_events: q('pacer.throttle_cleared'),
+  };
+}
+
 /* Iter 159 — Per-question response stats. Groups survey_answers
  * by (question_id, answer_text) so the report page can render
  * the distribution per question without round-tripping to the

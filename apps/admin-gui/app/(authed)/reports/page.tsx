@@ -40,8 +40,16 @@ export default async function ReportsPage() {
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-1">Reports</h1>
-      <p className="text-fg-subtle text-sm mb-6">
+      <p className="text-fg-subtle text-sm mb-2">
         Live aggregates over the past 24 hours. Refresh to update.
+      </p>
+      <p className="text-sm mb-6">
+        <a
+          href="/reports/tcpa"
+          className="text-link hover:underline"
+        >
+          → TCPA compliance report (rolling 30-day, FCC abandon-rate audit)
+        </a>
       </p>
 
       {/* Top stat strip */}

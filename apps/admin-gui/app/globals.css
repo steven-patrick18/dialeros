@@ -506,3 +506,42 @@ textarea.input {
 .vicidial .rounded-full {
   border-radius: 0 !important;
 }
+
+/* Iter 165 — Print styles for the TCPA compliance report. The
+   admin nav + buttons hide; the rest of the page reflows clean
+   for letter/A4 with reasonable margins. */
+@media print {
+  nav,
+  .vicidial-modulestrip,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt;
+  }
+  main {
+    padding: 0 !important;
+  }
+  .bg-card,
+  .border-border {
+    background: #ffffff !important;
+    border-color: #cccccc !important;
+    box-shadow: none !important;
+  }
+  a {
+    color: #000000 !important;
+    text-decoration: none !important;
+  }
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  thead {
+    display: table-header-group;
+  }
+}

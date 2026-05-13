@@ -761,3 +761,17 @@ export {
   getWrapupEnforcementEnabled,
   setWrapupEnforcementEnabled,
 } from './app-settings';
+
+// Iter 165 — TCPA compliance reporting
+export {
+  getRollingTcpaMetrics,
+  getDailyDialMetrics,
+  getPerCampaignTcpaMetrics,
+  getTcpaAuditActivity,
+} from './db';
+export type {
+  TcpaWindowMetrics,
+  TcpaDailyRow,
+  TcpaCampaignRow,
+  TcpaDncActivity,
+} from './db';
