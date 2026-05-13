@@ -681,3 +681,23 @@ export type {
   CallMenuRecord,
   CallMenuOptionRecord,
 } from './db';
+
+// Iter 150 — Sound Board
+export {
+  AudioCategorySchema,
+  AudioSourceSchema,
+  AudioFileMetaSchema,
+  AUDIO_LIBRARY_ROOT,
+  audioFilePath,
+  newAudioFileId,
+  registerAudioFile,
+  listAudioFiles,
+  getAudioFile,
+  deleteAudioFile,
+} from './audio-library';
+export type {
+  AudioCategory,
+  AudioSource,
+  AudioFileMeta,
+} from './audio-library';
+export type { AudioFileRecord } from './db';

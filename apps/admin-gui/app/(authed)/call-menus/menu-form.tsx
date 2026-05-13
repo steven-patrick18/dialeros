@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { AudioPicker } from '@/components/audio-picker';
 import { useState } from 'react';
 
 // Iter 149 — Shared call-menu form. Used by both /call-menus/add
@@ -220,13 +221,13 @@ export function CallMenuForm({
         </label>
         <label className="text-sm flex flex-col gap-1">
           <span className="text-fg-subtle">
-            Prompt audio path (set later via upload)
+            Prompt audio (from Sound Board — upload one at
+            /sound-board if the list is empty)
           </span>
-          <input
+          <AudioPicker
             value={form.prompt_path}
-            onChange={(e) => setField('prompt_path', e.target.value)}
-            className="input font-mono text-xs"
-            placeholder="/var/lib/dialeros/audio/menus/<id>.wav"
+            onChange={(path) => setField('prompt_path', path)}
+            category="menu_prompt"
           />
         </label>
       </fieldset>

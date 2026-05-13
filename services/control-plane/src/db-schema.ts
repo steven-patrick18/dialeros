@@ -193,6 +193,27 @@ export const CREATE_TABLES_SQL = `
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Iter 150 — Sound Board (audio library). Central catalogue
+    -- referenced by call menus, voicemail drops, in-group greetings,
+    -- hold music. Files are stored at /var/lib/dialeros/audio/library/<id>.wav
+    -- after ffmpeg normalization to 8kHz mono PCM .wav.
+    CREATE TABLE IF NOT EXISTS audio_files (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      category TEXT NOT NULL DEFAULT 'menu_prompt',
+      path TEXT NOT NULL,
+      source TEXT NOT NULL,
+      duration_ms INTEGER,
+      size_bytes INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audio_files_category
+      ON audio_files(category);
+
     -- Iter 149 — Call Menu (IVR) tables.
     -- call_menus: one row per menu definition.
     -- call_menu_options: digit -> action mapping. Multiple per menu.

@@ -3878,6 +3878,87 @@ export interface InGroupRecord {
   updated_at: string;
 }
 
+/* Iter 150 — Sound Board (audio library) DB ops. Files are stored
+ * on disk under /var/lib/dialeros/audio/library/<id>.wav; this
+ * table indexes them with operator-facing metadata.
+ */
+export interface AudioFileRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  path: string;
+  source: string;
+  duration_ms: number | null;
+  size_bytes: number;
+  created_at: string;
+  updated_at: string;
+  created_by_user_id: string | null;
+}
+
+export function insertAudioFile(rec: {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string;
+  path: string;
+  source: string;
+  duration_ms: number | null;
+  size_bytes: number;
+  created_by_user_id: string | null;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO audio_files (
+         id, name, description, category, path, source,
+         duration_ms, size_bytes, created_by_user_id
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.name,
+      rec.description,
+      rec.category,
+      rec.path,
+      rec.source,
+      rec.duration_ms,
+      rec.size_bytes,
+      rec.created_by_user_id,
+    );
+}
+
+export function listAudioFilesFromDb(
+  category?: string,
+): AudioFileRecord[] {
+  if (category) {
+    return db()
+      .prepare(
+        `SELECT * FROM audio_files
+          WHERE category = ?
+          ORDER BY name ASC`,
+      )
+      .all(category) as unknown as AudioFileRecord[];
+  }
+  return db()
+    .prepare(`SELECT * FROM audio_files ORDER BY name ASC`)
+    .all() as unknown as AudioFileRecord[];
+}
+
+export function getAudioFileFromDb(
+  id: string,
+): AudioFileRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM audio_files WHERE id = ?`)
+    .get(id) as unknown as AudioFileRecord | undefined;
+}
+
+export function deleteAudioFileFromDb(id: string): boolean {
+  const result = db()
+    .prepare(`DELETE FROM audio_files WHERE id = ?`)
+    .run(id);
+  return Number(result.changes) > 0;
+}
+
 /* Iter 149 — Call Menu DB ops.
  *
  * Two tables, simple relational shape. Options are replaced

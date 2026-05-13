@@ -44,6 +44,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/leads', label: 'Lead Lists' },
       { href: '/in-groups', label: 'In-Groups' },
       { href: '/call-menus', label: 'Call Menus (IVR)' },
+      { href: '/sound-board', label: 'Sound Board' },
       { href: '/dids', label: 'DIDs' },
     ],
   },
