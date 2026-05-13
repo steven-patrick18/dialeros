@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { insertSurveyAnswers } from './db';
+import { getCampaignSurvey } from './survey';
 import { disposeIntent, type DialIntentRecord } from './db';
 import { appendAudit } from './audit';
 
@@ -39,11 +41,22 @@ const DISPOSITION_TO_LEAD_STATUS: Record<Disposition, string> = {
   SURVEYED: 'SURVEYED',
 };
 
+// Iter 158 — Optional survey answers payload. Empty array (or
+// missing field) skips the answer write entirely. Each entry is
+// {question_id, answer_text}; multi-choice questions carry a
+// JSON-stringified array as answer_text so the export can split
+// it back without a schema change.
+export const SurveyAnswerInputSchema = z.object({
+  question_id: z.number().int().positive(),
+  answer_text: z.string().max(2000).nullable(),
+});
+
 export const DisposeInputSchema = z
   .object({
     disposition: DispositionSchema,
     callback_at: z.string().datetime().optional(),
     note: z.string().max(500).optional(),
+    survey_answers: z.array(SurveyAnswerInputSchema).max(50).optional(),
   })
   .refine(
     (d) => d.disposition !== 'CALLBACK' || !!d.callback_at,
@@ -98,6 +111,39 @@ export function disposeAgentIntent(args: {
         note: args.input.note ?? null,
       },
     });
+  }
+
+  // Iter 158 — persist survey answers if provided + an active
+  // survey exists for the campaign. The agent UI looks up the
+  // survey + question_ids up front, so we trust the payload and
+  // just insert. Validation against the schema-known questions
+  // happens at GET time (only known IDs are exposed to the agent).
+  if (args.input.survey_answers && args.input.survey_answers.length > 0) {
+    const surveyBundle = getCampaignSurvey(intent.campaign_id);
+    if (surveyBundle && surveyBundle.survey.is_active === 1) {
+      const validIds = new Set(
+        surveyBundle.questions.map((q) => q.id),
+      );
+      const rows = args.input.survey_answers
+        .filter((a) => validIds.has(a.question_id))
+        .map((a) => ({
+          dial_intent_id: args.intentId,
+          survey_id: surveyBundle.survey.id,
+          question_id: a.question_id,
+          answer_text: a.answer_text,
+          answered_by_user_id: args.userId,
+        }));
+      if (rows.length > 0) {
+        try {
+          insertSurveyAnswers(rows);
+        } catch (e) {
+          // Don't fail the dispose — the disposition row is the
+          // operationally critical part. Survey persistence is
+          // observability + reporting; log and move on.
+          console.error('[dispose] survey answer insert failed:', e);
+        }
+      }
+    }
   }
 
   return { intent, newLeadStatus };

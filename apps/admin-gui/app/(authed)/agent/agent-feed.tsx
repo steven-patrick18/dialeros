@@ -72,31 +72,60 @@ export function AgentFeed({ initial }: { initial: AgentIntent[] }) {
     userScrolledRef.current = !atBottom;
   };
 
-  async function dispose(intentId: number, code: string) {
-    setBusyId(intentId);
+  // Iter 158 — clicking a disposition opens the wrap-up dialog
+  // which lazily fetches the campaign survey. If the campaign has
+  // no active survey, the dialog auto-submits the disposition and
+  // closes (one tap = one dispose, same as before). If a survey
+  // exists, the agent fills it in + clicks Submit to finalize.
+  const [wrapUpFor, setWrapUpFor] = useState<{
+    intent: AgentIntent;
+    initialCode: string;
+  } | null>(null);
+
+  function openWrapUp(intent: AgentIntent, code: string) {
     setError(null);
-    let body: Record<string, unknown> = { disposition: code };
-    if (code === 'CALLBACK') {
-      // Default to +60 minutes — agent UI can refine later.
-      body.callback_at = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    setWrapUpFor({ intent, initialCode: code });
+  }
+
+  async function submitDispose(args: {
+    intentId: number;
+    code: string;
+    callbackAt?: string;
+    surveyAnswers?: Array<{ question_id: number; answer_text: string | null }>;
+  }) {
+    setBusyId(args.intentId);
+    setError(null);
+    const body: Record<string, unknown> = { disposition: args.code };
+    if (args.code === 'CALLBACK') {
+      body.callback_at =
+        args.callbackAt ??
+        new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    }
+    if (args.surveyAnswers && args.surveyAnswers.length > 0) {
+      body.survey_answers = args.surveyAnswers;
     }
     try {
-      const res = await fetch(`/api/agent/intents/${intentId}/dispose`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      const res = await fetch(
+        `/api/agent/intents/${args.intentId}/dispose`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         setError(j.error ?? `dispose failed (${res.status})`);
-        return;
+        return false;
       }
       const j = (await res.json()) as { intent: AgentIntent };
       setIntents((prev) =>
-        prev.map((p) => (p.id === intentId ? j.intent : p)),
+        prev.map((p) => (p.id === args.intentId ? j.intent : p)),
       );
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     } finally {
       setBusyId(null);
     }
@@ -133,11 +162,27 @@ export function AgentFeed({ initial }: { initial: AgentIntent[] }) {
               key={i.id}
               intent={i}
               busy={busyId === i.id}
-              onDispose={(code) => dispose(i.id, code)}
+              onDispose={(code) => openWrapUp(i, code)}
             />
           ))
         )}
       </div>
+      {wrapUpFor ? (
+        <WrapUpDialog
+          intent={wrapUpFor.intent}
+          initialCode={wrapUpFor.initialCode}
+          onClose={() => setWrapUpFor(null)}
+          onSubmit={async (args) => {
+            const ok = await submitDispose({
+              intentId: wrapUpFor.intent.id,
+              code: args.code,
+              callbackAt: args.callbackAt,
+              surveyAnswers: args.surveyAnswers,
+            });
+            if (ok) setWrapUpFor(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -239,4 +284,278 @@ function formatTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+interface SurveyQuestion {
+  id: number;
+  ordering: number;
+  question_text: string;
+  question_type: string;
+  options: string[];
+  is_required: number;
+}
+
+// Iter 158 — Wrap-up dialog: fetches the campaign survey for this
+// intent's campaign and renders the form. If no survey exists,
+// auto-submits the chosen disposition and closes immediately.
+function WrapUpDialog({
+  intent,
+  initialCode,
+  onClose,
+  onSubmit,
+}: {
+  intent: AgentIntent;
+  initialCode: string;
+  onClose: () => void;
+  onSubmit: (args: {
+    code: string;
+    callbackAt?: string;
+    surveyAnswers?: Array<{ question_id: number; answer_text: string | null }>;
+  }) => Promise<void>;
+}) {
+  const [questions, setQuestions] = useState<SurveyQuestion[] | null>(null);
+  const [answers, setAnswers] = useState<Record<number, unknown>>({});
+  const [code, setCode] = useState(initialCode);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [autoSubmitted, setAutoSubmitted] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/campaigns/${intent.campaign_id}/survey`, {
+      credentials: 'same-origin',
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+      .then(
+        (data: {
+          survey: { is_active: number } | null;
+          questions: SurveyQuestion[];
+        }) => {
+          if (cancelled) return;
+          if (
+            !data.survey ||
+            data.survey.is_active !== 1 ||
+            data.questions.length === 0
+          ) {
+            // No active survey — short-circuit. Submit the
+            // disposition right away with no answers.
+            setAutoSubmitted(true);
+            void onSubmit({ code: initialCode });
+            return;
+          }
+          setQuestions(data.questions);
+        },
+      )
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent.campaign_id]);
+
+  function setAnswer(qid: number, val: unknown) {
+    setAnswers((a) => ({ ...a, [qid]: val }));
+  }
+
+  function submit() {
+    if (!questions) return;
+    // Required-field check
+    const missing = questions.filter(
+      (q) =>
+        q.is_required === 1 &&
+        (answers[q.id] === undefined ||
+          answers[q.id] === null ||
+          answers[q.id] === '' ||
+          (Array.isArray(answers[q.id]) &&
+            (answers[q.id] as unknown[]).length === 0)),
+    );
+    if (missing.length > 0) {
+      setError(
+        `Please answer the required question(s): ${missing
+          .map((q) => `"${q.question_text}"`)
+          .join(', ')}`,
+      );
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const surveyAnswers = questions
+      .map((q) => {
+        const v = answers[q.id];
+        if (v === undefined || v === null || v === '') return null;
+        let text: string;
+        if (Array.isArray(v)) {
+          if ((v as unknown[]).length === 0) return null;
+          text = JSON.stringify(v);
+        } else {
+          text = String(v);
+        }
+        return { question_id: q.id, answer_text: text };
+      })
+      .filter((x): x is { question_id: number; answer_text: string } => x !== null);
+    void onSubmit({ code, surveyAnswers }).finally(() => setSubmitting(false));
+  }
+
+  if (autoSubmitted) return null;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    >
+      <div className="bg-bg border border-border rounded-lg shadow-xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-4">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold">Wrap-up</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-fg-subtle hover:text-fg text-sm"
+            disabled={submitting}
+          >
+            ✕
+          </button>
+        </div>
+        <div className="text-sm text-fg-subtle">
+          <span className="text-accent">{intent.campaign_name}</span> ·{' '}
+          <span className="font-mono">{intent.transformed_phone}</span>
+          {intent.lead_name ? ` · ${intent.lead_name}` : ''}
+        </div>
+
+        {questions === null ? (
+          <p className="text-fg-subtle text-sm">Loading survey…</p>
+        ) : (
+          <div className="space-y-3">
+            {questions.map((q) => (
+              <div key={q.id} className="space-y-1">
+                <label className="text-sm font-medium">
+                  {q.question_text}
+                  {q.is_required === 1 ? (
+                    <span className="text-error ml-1">*</span>
+                  ) : null}
+                </label>
+                {q.question_type === 'text' ? (
+                  <input
+                    type="text"
+                    className="input"
+                    value={String(answers[q.id] ?? '')}
+                    onChange={(e) => setAnswer(q.id, e.target.value)}
+                  />
+                ) : q.question_type === 'numeric' ? (
+                  <input
+                    type="number"
+                    className="input"
+                    value={String(answers[q.id] ?? '')}
+                    onChange={(e) => setAnswer(q.id, e.target.value)}
+                  />
+                ) : q.question_type === 'yes_no' ? (
+                  <div className="flex gap-2">
+                    {['Yes', 'No'].map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setAnswer(q.id, opt)}
+                        className={`px-3 py-1.5 rounded text-sm border ${
+                          answers[q.id] === opt
+                            ? 'bg-accent text-accent-fg border-accent'
+                            : 'border-border hover:bg-card-hover'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                ) : q.question_type === 'single_choice' ? (
+                  <div className="space-y-1">
+                    {q.options.map((opt) => (
+                      <label
+                        key={opt}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <input
+                          type="radio"
+                          name={`q-${q.id}`}
+                          checked={answers[q.id] === opt}
+                          onChange={() => setAnswer(q.id, opt)}
+                        />
+                        {opt}
+                      </label>
+                    ))}
+                  </div>
+                ) : q.question_type === 'multi_choice' ? (
+                  <div className="space-y-1">
+                    {q.options.map((opt) => {
+                      const selected = Array.isArray(answers[q.id])
+                        ? (answers[q.id] as string[])
+                        : [];
+                      const checked = selected.includes(opt);
+                      return (
+                        <label
+                          key={opt}
+                          className="flex items-center gap-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setAnswer(
+                                q.id,
+                                checked
+                                  ? selected.filter((s) => s !== opt)
+                                  : [...selected, opt],
+                              );
+                            }}
+                          />
+                          {opt}
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="pt-3 border-t border-border space-y-2">
+          <label className="text-sm font-medium">Disposition</label>
+          <select
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            className="input"
+            disabled={submitting}
+          >
+            {DISPOSITIONS.map((d) => (
+              <option key={d.code} value={d.code}>
+                {d.code} — {d.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {error ? <div className="text-error text-sm">{error}</div> : null}
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="text-sm text-fg-subtle hover:text-fg"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={submitting || questions === null}
+            className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-2 rounded text-sm disabled:opacity-50"
+          >
+            {submitting ? 'Saving…' : 'Submit wrap-up'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
