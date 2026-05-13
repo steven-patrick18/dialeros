@@ -3,9 +3,15 @@ import { randomUUID } from 'crypto';
 import net from 'net';
 import { appendAudit } from './audit';
 import {
+  getFreqCapEnabled,
+  getFreqCapLeadCount,
+  getFreqCapLeadWindowHours,
+} from './app-settings';
+import {
   applyDialIntentOriginate,
   closeSimulatedDialIntent,
   countDialIntentsForCampaign,
+  countRecentDialsForPhone,
   getAvailableAgentsForCampaign,
   getCampaignFromDb,
   getCarrierFromDb,
@@ -313,7 +319,8 @@ export interface PacingTickResult {
     | 'dnc'
     | 'inbound_no_pacer'
     | 'campaign_missing'
-    | 'campaign_inactive';
+    | 'campaign_inactive'
+    | 'skipped_freq_cap';
   intent?: DialIntentRecord;
   assigned_agent?: { id: string; username: string };
   /** Iter 32 — when dial_mode='live'. Job UUID on success, error on failure. */
@@ -604,6 +611,49 @@ export async function paceCampaignOnce(
     plan.transform_strip_prefix,
     plan.transform_add_prefix,
   );
+
+  // Iter 166 — TCPA per-lead frequency cap pre-dial guard. When
+  // enabled, count the lead.phone's non-simulated dial_intents
+  // over the configured rolling window and skip the dial if at or
+  // over the cap. The picker will hand us the same lead next tick
+  // (it doesn't know about the cap), and we'll skip again — until
+  // older calls age out of the window. Operators avoid the
+  // re-pick churn by tightening dialable_statuses or pausing the
+  // campaign while iterating on the cap value.
+  if (getFreqCapEnabled()) {
+    const windowHours = getFreqCapLeadWindowHours();
+    const sinceIso = new Date(
+      Date.now() - windowHours * 60 * 60 * 1000,
+    ).toISOString();
+    const recent = countRecentDialsForPhone(lead.phone, sinceIso);
+    const cap = getFreqCapLeadCount();
+    if (recent >= cap) {
+      try {
+        appendAudit({
+          actorUserId: null,
+          actorIp: null,
+          action: 'freq_cap.lead_skipped',
+          targetType: 'lead',
+          targetId: lead.lead_id,
+          payload: {
+            phone: lead.phone,
+            campaign_id: campaignId,
+            recent_count: recent,
+            cap,
+            window_hours: windowHours,
+          },
+        });
+      } catch (e) {
+        console.error('[pacing] freq_cap audit failed:', e);
+      }
+      console.warn(
+        `[pacing] freq_cap_skip lead=${lead.lead_id} phone=${lead.phone} ` +
+          `count=${recent} cap=${cap} window=${windowHours}h`,
+      );
+      return { outcome: 'skipped_freq_cap' };
+    }
+  }
+
   // Iter 125 — per-lead preferred CID wins over the route plan's
   // cid_strategy when set. Lets a lead carry "always call from
   // this number" through CSV imports, prior-call stickiness, etc.

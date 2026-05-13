@@ -55,6 +55,10 @@ export const APP_SETTING_KEYS = {
   // agent /status POST refuses to flip an agent to AVAILABLE
   // while they have an undispositioned connected call.
   wrapupEnforcementEnabled: 'wrapup.enforcement_enabled',
+  // Iter 166 — Per-lead frequency cap (TCPA pre-dial guard).
+  freqCapEnabled: 'freq_cap.enabled',
+  freqCapLeadCount: 'freq_cap.lead_count',
+  freqCapLeadWindowHours: 'freq_cap.lead_window_hours',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -203,4 +207,40 @@ export function setWrapupEnforcementEnabled(enabled: boolean): void {
     APP_SETTING_KEYS.wrapupEnforcementEnabled,
     enabled ? '1' : '0',
   );
+}
+
+// Iter 166 — Per-lead frequency cap. Off by default. Defaults are
+// FCC-conservative when enabled: max 3 calls per 24h to the same
+// phone. Operators tighten or loosen via /settings/frequency-caps.
+export const FREQ_CAP_DEFAULT_COUNT = 3;
+export const FREQ_CAP_DEFAULT_WINDOW_HOURS = 24;
+
+export function getFreqCapEnabled(): boolean {
+  return getAppSetting(APP_SETTING_KEYS.freqCapEnabled) === '1';
+}
+
+export function setFreqCapEnabled(enabled: boolean): void {
+  setAppSetting(APP_SETTING_KEYS.freqCapEnabled, enabled ? '1' : '0');
+}
+
+export function getFreqCapLeadCount(): number {
+  const raw = getAppSetting(APP_SETTING_KEYS.freqCapLeadCount);
+  const n = raw ? parseInt(raw, 10) : FREQ_CAP_DEFAULT_COUNT;
+  return Number.isFinite(n) && n > 0 ? n : FREQ_CAP_DEFAULT_COUNT;
+}
+
+export function setFreqCapLeadCount(n: number): void {
+  const clamped = Math.max(1, Math.min(50, Math.floor(n)));
+  setAppSetting(APP_SETTING_KEYS.freqCapLeadCount, String(clamped));
+}
+
+export function getFreqCapLeadWindowHours(): number {
+  const raw = getAppSetting(APP_SETTING_KEYS.freqCapLeadWindowHours);
+  const n = raw ? parseInt(raw, 10) : FREQ_CAP_DEFAULT_WINDOW_HOURS;
+  return Number.isFinite(n) && n > 0 ? n : FREQ_CAP_DEFAULT_WINDOW_HOURS;
+}
+
+export function setFreqCapLeadWindowHours(n: number): void {
+  const clamped = Math.max(1, Math.min(720, Math.floor(n)));
+  setAppSetting(APP_SETTING_KEYS.freqCapLeadWindowHours, String(clamped));
 }

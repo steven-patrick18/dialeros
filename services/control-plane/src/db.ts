@@ -2815,6 +2815,26 @@ export function getCallDetail(id: number): CallDetailRow | undefined {
     .get(id) as unknown as CallDetailRow | undefined;
 }
 
+/* Iter 166 — Count recent dial_intents for a phone number. Used
+ * by the pacer's per-lead frequency cap pre-dial guard. Includes
+ * every non-simulated row regardless of disposition — the TCPA
+ * "calls to a consumer" definition counts every attempt, not just
+ * the answered ones. */
+export function countRecentDialsForPhone(
+  phone: string,
+  sinceIso: string,
+): number {
+  const r = db()
+    .prepare(
+      `SELECT COUNT(*) AS n FROM dial_intents
+        WHERE phone = ?
+          AND ts >= ?
+          AND kind != 'simulated'`,
+    )
+    .get(phone, sinceIso) as { n: number };
+  return r.n;
+}
+
 export function countDialIntentsForCampaign(campaignId: string): number {
   const row = db()
     .prepare(

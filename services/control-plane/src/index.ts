@@ -775,3 +775,16 @@ export type {
   TcpaCampaignRow,
   TcpaDncActivity,
 } from './db';
+
+// Iter 166 — Per-lead frequency cap
+export {
+  FREQ_CAP_DEFAULT_COUNT,
+  FREQ_CAP_DEFAULT_WINDOW_HOURS,
+  getFreqCapEnabled,
+  setFreqCapEnabled,
+  getFreqCapLeadCount,
+  setFreqCapLeadCount,
+  getFreqCapLeadWindowHours,
+  setFreqCapLeadWindowHours,
+} from './app-settings';
+export { countRecentDialsForPhone } from './db';
