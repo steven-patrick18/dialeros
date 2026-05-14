@@ -86,6 +86,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
   {
     label: 'Settings',
     items: [
+      { href: '/settings/orgs', label: 'Organizations' },
       { href: '/settings/telephony', label: 'Telephony' },
       { href: '/settings/pacing', label: 'Pacing curve' },
       { href: '/settings/recording-retention', label: 'Recording retention' },
@@ -111,7 +112,13 @@ export function Nav({
   user,
   initialTheme,
 }: {
-  user: { username: string; role: string };
+  user: {
+    username: string;
+    role: string;
+    // Iter 181 — multi-org foundation.
+    orgName?: string;
+    orgSlug?: string;
+  };
   initialTheme: 'light' | 'dark' | 'vicidial' | 'saas';
 }) {
   const router = useRouter();
@@ -153,6 +160,15 @@ export function Nav({
         <div className="text-xs text-fg-muted">
           <div className="text-fg">{user.username}</div>
           <div className="text-fg-subtle">{user.role}</div>
+          {user.orgName ? (
+            <div
+              className="mt-1 text-fg-subtle"
+              title={`Org: ${user.orgSlug ?? ''}`}
+            >
+              <span className="text-[10px] uppercase tracking-wider">org · </span>
+              {user.orgName}
+            </div>
+          ) : null}
         </div>
         <button
           onClick={handleLogout}

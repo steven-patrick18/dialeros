@@ -889,4 +889,34 @@ export const COLUMN_MIGRATIONS: string[] = [
     UNIQUE (holiday_date)
   )`,
   "CREATE INDEX IF NOT EXISTS idx_holidays_date_enabled ON holidays(holiday_date, enabled)",
+  // Iter 181 — Multi-org foundation (Phase F). Pre-1.0 the
+  // product was implicitly single-tenant; iter 181 lays the
+  // schema for true multi-tenancy. Resources will gain org_id
+  // in subsequent iters with WHERE filters in listing queries.
+  // For now: every user is tagged with an org; lists remain
+  // unfiltered (legacy "shared visibility" — explicit until the
+  // propagation pass).
+  //
+  // settings_json holds per-org config that previously lived in
+  // app_settings (recording retention, freq caps, smtp, etc.).
+  // For iter 181 it stays empty; future iter shifts those keys
+  // under here when an operator opts in to per-org overrides.
+  `CREATE TABLE IF NOT EXISTS orgs (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    settings_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  // Seed the default org. Idempotent via OR IGNORE — re-running
+  // migrations after upgrade is safe.
+  "INSERT OR IGNORE INTO orgs (id, slug, name) VALUES ('default', 'default', 'Default Organization')",
+  // Add org_id to users. Nullable for the ALTER (SQLite can't
+  // add NOT NULL without a default to existing rows); we backfill
+  // immediately below + treat NULL as 'default' in code.
+  "ALTER TABLE users ADD COLUMN org_id TEXT",
+  "UPDATE users SET org_id = 'default' WHERE org_id IS NULL",
+  "CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)",
 ];

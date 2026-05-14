@@ -320,6 +320,11 @@ export interface UserRecord {
   permissions: string | null;
   created_at: string;
   updated_at: string;
+  // Iter 181 — Multi-org foundation. Every user belongs to one
+  // org; legacy rows are backfilled to 'default' via migration.
+  // string here (not nullable) because the migration UPDATE
+  // closes that gap before any code reads the column.
+  org_id: string;
 }
 
 export function countUsers(): number {
@@ -346,10 +351,13 @@ export function insertUser(rec: {
   role: string;
   display_name?: string | null;
   skill_tier?: string;
+  // Iter 181 — optional; defaults to 'default'. New tenants
+  // call this with their own org_id to scope creation.
+  org_id?: string;
 }): void {
   db()
     .prepare(
-      `INSERT INTO users (id, username, email, password_hash, role, display_name, skill_tier) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (id, username, email, password_hash, role, display_name, skill_tier, org_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
@@ -359,6 +367,7 @@ export function insertUser(rec: {
       rec.role,
       rec.display_name ?? null,
       rec.skill_tier ?? 'new',
+      rec.org_id ?? 'default',
     );
 }
 
@@ -7773,4 +7782,121 @@ export function getActiveHolidayDateSet(): Set<string> {
     )
     .all() as Array<{ holiday_date: string }>;
   return new Set(rows.map((r) => r.holiday_date));
+}
+
+/* Iter 181 — Org (tenant) records. The default org has id='default'
+ * and is seeded by the migration; every user gets backfilled into
+ * it. Resource tables will gain org_id columns + WHERE filters in
+ * subsequent iters — for now this is just the registry surface. */
+export interface OrgRecord {
+  id: string;
+  slug: string;
+  name: string;
+  enabled: number;
+  settings_json: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function listOrgs(): OrgRecord[] {
+  return db()
+    .prepare(`SELECT * FROM orgs ORDER BY name ASC`)
+    .all() as unknown as OrgRecord[];
+}
+
+export function getOrg(id: string): OrgRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM orgs WHERE id = ?`)
+    .get(id) as unknown as OrgRecord | undefined;
+}
+
+export function getOrgBySlug(slug: string): OrgRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM orgs WHERE slug = ?`)
+    .get(slug) as unknown as OrgRecord | undefined;
+}
+
+export function insertOrg(args: {
+  id: string;
+  slug: string;
+  name: string;
+}): OrgRecord {
+  db()
+    .prepare(
+      `INSERT INTO orgs (id, slug, name) VALUES (?, ?, ?)`,
+    )
+    .run(args.id, args.slug, args.name);
+  return getOrg(args.id) as OrgRecord;
+}
+
+export function updateOrg(
+  id: string,
+  updates: Partial<{ name: string; slug: string; enabled: boolean }>,
+): boolean {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  if (updates.name !== undefined) {
+    fields.push('name = ?');
+    values.push(updates.name);
+  }
+  if (updates.slug !== undefined) {
+    fields.push('slug = ?');
+    values.push(updates.slug);
+  }
+  if (updates.enabled !== undefined) {
+    fields.push('enabled = ?');
+    values.push(updates.enabled ? 1 : 0);
+  }
+  if (fields.length === 0) return false;
+  fields.push("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')");
+  values.push(id);
+  const result = db()
+    .prepare(`UPDATE orgs SET ${fields.join(', ')} WHERE id = ?`)
+    .run(...(values as never[]));
+  return Number(result.changes) > 0;
+}
+
+/** Delete an org. Refuses on 'default' or when any users still
+ * reference it — caller must move them first. Returns the
+ * blocking reason on failure for a precise API response. */
+export function deleteOrg(
+  id: string,
+): { ok: true } | { ok: false; reason: 'default' | 'users_attached' | 'not_found' } {
+  if (id === 'default') return { ok: false, reason: 'default' };
+  const existing = getOrg(id);
+  if (!existing) return { ok: false, reason: 'not_found' };
+  const count = db()
+    .prepare(`SELECT COUNT(*) AS n FROM users WHERE org_id = ?`)
+    .get(id) as { n: number };
+  if (count.n > 0) {
+    return { ok: false, reason: 'users_attached' };
+  }
+  db().prepare(`DELETE FROM orgs WHERE id = ?`).run(id);
+  return { ok: true };
+}
+
+export function setUserOrg(userId: string, orgId: string): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE users SET org_id = ?,
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?`,
+    )
+    .run(orgId, userId);
+  return Number(result.changes) > 0;
+}
+
+/** How many users belong to each org. Surfaces on the orgs admin
+ * page so an operator sees "Acme: 12 users" at a glance. */
+export function countUsersPerOrg(): Record<string, number> {
+  const rows = db()
+    .prepare(
+      `SELECT org_id, COUNT(*) AS n FROM users
+        WHERE org_id IS NOT NULL
+        GROUP BY org_id`,
+    )
+    .all() as Array<{ org_id: string; n: number }>;
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.org_id] = r.n;
+  return out;
 }

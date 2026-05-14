@@ -956,3 +956,16 @@ export type {
   BusinessHoursContext,
   DayKey,
 } from './business-hours';
+
+// Iter 181 — Multi-org foundation
+export {
+  listOrgs,
+  getOrg,
+  getOrgBySlug,
+  insertOrg,
+  updateOrg,
+  deleteOrg,
+  setUserOrg,
+  countUsersPerOrg,
+} from './db';
+export type { OrgRecord } from './db';
