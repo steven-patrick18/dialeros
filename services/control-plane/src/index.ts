@@ -836,3 +836,6 @@ export {
   getLatestBackupVerification,
 } from './db';
 export type { BackupVerificationRecord } from './db';
+
+// Iter 172 — FS event listener state
+export { getFsEventListenerState } from './fs-events';

@@ -45,6 +45,15 @@ const ESL_PORT = 8021;
 const ESL_PASSWORD = 'ClueCon';
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_CAP_MS = 60000;
+// Iter 172 — heartbeat: send `api status core db handle` every 30s
+// while streaming. If no reply within 5s, force a reconnect — the
+// socket is silently dead.
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = 5_000;
+// Iter 172 — watchdog: if the state machine sits in any non-streaming
+// phase for more than 60s, something's stuck. Force a reconnect.
+const WATCHDOG_INTERVAL_MS = 10_000;
+const PHASE_STALL_MS = 60_000;
 
 interface ListenerState {
   socket: net.Socket | null;
@@ -59,6 +68,14 @@ interface ListenerState {
   // Suppress ECONNREFUSED log spam — only log first occurrence and on
   // every transition from "was-up" to "down".
   loggedConnectFailure: boolean;
+  // Iter 172 — resilience tracking
+  lastEventAt: number;        // ms timestamp of last event from FS
+  lastConnectedAt: number;    // ms timestamp of last successful connect
+  reconnectCount: number;     // lifetime reconnects
+  phaseEnteredAt: number;     // ms timestamp of last phase transition
+  heartbeatTimer: NodeJS.Timeout | null;
+  heartbeatPendingSince: number; // 0 = no pending; ms when sent otherwise
+  watchdogTimer: NodeJS.Timeout | null;
 }
 
 declare global {
@@ -77,12 +94,23 @@ function state(): ListenerState {
       pendingBodyLen: 0,
       pendingHeaders: null,
       loggedConnectFailure: false,
+      lastEventAt: 0,
+      lastConnectedAt: 0,
+      reconnectCount: 0,
+      phaseEnteredAt: Date.now(),
+      heartbeatTimer: null,
+      heartbeatPendingSince: 0,
+      watchdogTimer: null,
     };
   }
   return globalThis.__dialeros_fs_events!;
 }
 
 export function ensureFsEventListener(): void {
+  // Iter 172 — watchdog runs continuously regardless of connection
+  // state so a wedged 'auth-pending' phase still triggers eventual
+  // reconnect.
+  startWatchdog();
   const s = state();
   if (s.socket && !s.socket.destroyed) return;
   if (s.reconnectTimer) return; // a reconnect is already scheduled
@@ -118,6 +146,8 @@ function connect(): void {
     }
     s.loggedConnectFailure = false;
     s.reconnectMs = RECONNECT_BASE_MS;
+    s.lastConnectedAt = Date.now();
+    s.reconnectCount += 1;
   });
 
   socket.on('error', (e) => {
@@ -156,9 +186,12 @@ function teardown(): void {
   }
   s.socket = null;
   s.phase = 'wait-auth';
+  s.phaseEnteredAt = Date.now();
   s.buffer = '';
   s.pendingBodyLen = 0;
   s.pendingHeaders = null;
+  // Iter 172 — stop heartbeat on teardown; new connection re-starts.
+  stopHeartbeat();
 }
 
 function handleData(chunk: string): void {
@@ -187,6 +220,7 @@ function handleData(chunk: string): void {
     if (s.phase === 'wait-auth') {
       if (headers['content-type'] === 'auth/request') {
         s.phase = 'auth-pending';
+      s.phaseEnteredAt = Date.now();
         s.socket?.write(`auth ${ESL_PASSWORD}\n\n`);
       }
       continue;
@@ -197,6 +231,7 @@ function handleData(chunk: string): void {
         headers['reply-text']?.startsWith('+OK')
       ) {
         s.phase = 'subscribing';
+        s.phaseEnteredAt = Date.now();
         s.socket?.write(
           'event plain CHANNEL_ANSWER CHANNEL_HANGUP_COMPLETE CUSTOM dialeros::menu_press\n\n',
         );
@@ -214,6 +249,9 @@ function handleData(chunk: string): void {
         headers['reply-text']?.startsWith('+OK')
       ) {
         s.phase = 'streaming';
+        s.phaseEnteredAt = Date.now();
+        s.lastEventAt = Date.now();
+        startHeartbeat();
         console.log('[fs-events] subscribed; streaming events');
       } else {
         console.error(
@@ -237,8 +275,30 @@ function handleData(chunk: string): void {
         }
         continue;
       }
-      // Other server-pushed messages (heartbeats, command/reply for
-      // commands we never sent post-subscribe) — ignore.
+      // Iter 172 — api/response or command/reply on the streaming
+      // channel is our heartbeat coming back. Reset the pending
+      // flag + lastEventAt so the watchdog sees liveness.
+      if (
+        headers['content-type'] === 'api/response' ||
+        headers['content-type'] === 'command/reply'
+      ) {
+        s.heartbeatPendingSince = 0;
+        s.lastEventAt = Date.now();
+        // api/response carries a Content-Length body; consume it.
+        if (headers['content-length']) {
+          const len = Number(headers['content-length']);
+          if (len > 0 && s.buffer.length >= len) {
+            s.buffer = s.buffer.slice(len);
+          } else if (len > 0) {
+            // Body not all here yet — schedule body drain.
+            s.pendingBodyLen = len;
+            s.pendingHeaders = headers;
+          }
+        }
+        continue;
+      }
+      // Other server-pushed messages (event heartbeats, etc.) —
+      // ignore.
       continue;
     }
   }
@@ -248,6 +308,13 @@ function handleEventBody(
   body: string,
   _envelope: Record<string, string>,
 ): void {
+  // Iter 172 — every event resets the freshness clock + clears any
+  // pending heartbeat ping (the ping arrives as a command/reply
+  // which doesn't go through this path, but if the reply got
+  // ahead of normal events we still want to clear it).
+  const s = state();
+  s.lastEventAt = Date.now();
+  s.heartbeatPendingSince = 0;
   const ev = parseEventBody(body);
   const correlationId = ev['variable_dialeros_correlation_id'];
   if (!correlationId) return; // not one of ours — ignore
@@ -456,4 +523,103 @@ function epochToIso(microseconds: string | undefined): string | undefined {
   const us = Number(microseconds);
   if (!Number.isFinite(us) || us <= 0) return undefined;
   return new Date(us / 1000).toISOString();
+}
+
+// Iter 172 — heartbeat: every HEARTBEAT_INTERVAL_MS, send a cheap
+// `api status core db handle` ping while streaming. If we don't see
+// any event/reply within HEARTBEAT_TIMEOUT_MS, force a reconnect.
+function startHeartbeat(): void {
+  const s = state();
+  if (s.heartbeatTimer) return;
+  s.heartbeatTimer = setInterval(() => {
+    const s2 = state();
+    if (s2.phase !== 'streaming' || !s2.socket || s2.socket.destroyed) {
+      return;
+    }
+    const now = Date.now();
+    if (
+      s2.heartbeatPendingSince > 0 &&
+      now - s2.heartbeatPendingSince > HEARTBEAT_TIMEOUT_MS
+    ) {
+      console.warn(
+        '[fs-events] heartbeat timeout — reconnecting',
+      );
+      teardown();
+      scheduleReconnect();
+      return;
+    }
+    if (s2.heartbeatPendingSince === 0) {
+      s2.heartbeatPendingSince = now;
+      try {
+        s2.socket.write('api status core db handle\n\n');
+      } catch {
+        teardown();
+        scheduleReconnect();
+      }
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+  s.heartbeatTimer.unref?.();
+}
+
+function stopHeartbeat(): void {
+  const s = state();
+  if (s.heartbeatTimer) {
+    clearInterval(s.heartbeatTimer);
+    s.heartbeatTimer = null;
+  }
+  s.heartbeatPendingSince = 0;
+}
+
+// Iter 172 — watchdog: catches the case where the state machine sits
+// in a non-streaming phase forever (e.g. auth hang). Force a
+// reconnect after PHASE_STALL_MS.
+function startWatchdog(): void {
+  const s = state();
+  if (s.watchdogTimer) return;
+  s.watchdogTimer = setInterval(() => {
+    const s2 = state();
+    if (s2.phase === 'streaming') return;
+    const now = Date.now();
+    if (now - s2.phaseEnteredAt > PHASE_STALL_MS) {
+      console.warn(
+        `[fs-events] watchdog: stalled in phase=${s2.phase} for ` +
+          `${Math.round((now - s2.phaseEnteredAt) / 1000)}s — reconnecting`,
+      );
+      teardown();
+      scheduleReconnect();
+    }
+  }, WATCHDOG_INTERVAL_MS);
+  s.watchdogTimer.unref?.();
+}
+
+// Iter 172 — Snapshot of listener state for the health probe.
+export function getFsEventListenerState(): {
+  phase: string;
+  connected: boolean;
+  last_event_at_iso: string | null;
+  last_connected_at_iso: string | null;
+  reconnect_count: number;
+  seconds_since_last_event: number | null;
+  heartbeat_pending_seconds: number | null;
+} {
+  const s = state();
+  const now = Date.now();
+  return {
+    phase: s.phase,
+    connected: Boolean(s.socket && !s.socket.destroyed),
+    last_event_at_iso: s.lastEventAt
+      ? new Date(s.lastEventAt).toISOString()
+      : null,
+    last_connected_at_iso: s.lastConnectedAt
+      ? new Date(s.lastConnectedAt).toISOString()
+      : null,
+    reconnect_count: s.reconnectCount,
+    seconds_since_last_event: s.lastEventAt
+      ? Math.round((now - s.lastEventAt) / 1000)
+      : null,
+    heartbeat_pending_seconds:
+      s.heartbeatPendingSince > 0
+        ? Math.round((now - s.heartbeatPendingSince) / 1000)
+        : null,
+  };
 }

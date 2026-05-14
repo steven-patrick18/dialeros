@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { statfs } from 'node:fs/promises';
-import { listCampaigns, totalIntentsFor } from '@dialeros/control-plane';
+import {
+  getFsEventListenerState,
+  listCampaigns,
+  totalIntentsFor,
+} from '@dialeros/control-plane';
 import { eslApi } from '@/lib/esl';
 
 export const runtime = 'nodejs';
@@ -36,6 +40,7 @@ export async function GET() {
     db: await probeDb(),
     disk: await probeDisk(),
     esl: await probeEsl(),
+    fs_events: probeFsEvents(),
     pacer: probePacer(),
   };
 
@@ -150,4 +155,32 @@ function combineStatus(
     if (s.status === 'degraded') degraded = true;
   }
   return degraded ? 'degraded' : 'healthy';
+}
+
+// Iter 172 — Listener-state probe. Distinct from `esl` (which
+// one-shot connects to FS) — this reads the long-lived
+// fs-events.ts state. A wedged listener (silent dead socket,
+// stuck auth, missed reconnect window) shows up as 'degraded'
+// or 'down' here even when the standalone esl probe succeeds.
+function probeFsEvents(): SubsystemReport {
+  const s = getFsEventListenerState();
+  if (!s.connected || s.phase !== 'streaming') {
+    return {
+      status: 'degraded',
+      detail: `listener not streaming (phase=${s.phase}, connected=${s.connected})`,
+      ...s,
+    };
+  }
+  // Streaming but heartbeat is overdue → degraded.
+  if (s.heartbeat_pending_seconds != null && s.heartbeat_pending_seconds > 10) {
+    return {
+      status: 'degraded',
+      detail: `heartbeat pending ${s.heartbeat_pending_seconds}s`,
+      ...s,
+    };
+  }
+  return {
+    status: 'ok',
+    ...s,
+  };
 }
