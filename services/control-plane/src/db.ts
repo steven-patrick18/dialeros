@@ -4003,6 +4003,47 @@ export interface InGroupRecord {
   entry_call_menu_id: string | null;
 }
 
+/* Iter 170 — Backup verification history. Two helpers:
+ *   listBackupVerifications(limit) for the admin page
+ *   getLatestBackupVerification() for the dashboard
+ * The verify-backup.sh script INSERTs rows directly via the
+ * sqlite3 CLI; the admin-gui just reads. */
+export interface BackupVerificationRecord {
+  id: number;
+  ts: string;
+  status: string;
+  source_path: string | null;
+  size_bytes: number | null;
+  users_count: number | null;
+  campaigns_count: number | null;
+  intents_count: number | null;
+  leads_count: number | null;
+  latest_intent_ts: string | null;
+  error_msg: string | null;
+}
+
+export function listBackupVerifications(
+  limit = 30,
+): BackupVerificationRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM backup_verifications
+        ORDER BY id DESC
+        LIMIT ?`,
+    )
+    .all(Math.max(1, Math.min(200, limit))) as unknown as BackupVerificationRecord[];
+}
+
+export function getLatestBackupVerification():
+  | BackupVerificationRecord
+  | undefined {
+  return db()
+    .prepare(
+      `SELECT * FROM backup_verifications ORDER BY id DESC LIMIT 1`,
+    )
+    .get() as unknown as BackupVerificationRecord | undefined;
+}
+
 /* Iter 168 — Consent record DB ops. Wholesale-replace not needed
  * — each consent is its own immutable row; revocation is an
  * UPDATE that sets revoked_at without touching the original

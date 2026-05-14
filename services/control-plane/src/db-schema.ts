@@ -193,6 +193,28 @@ export const CREATE_TABLES_SQL = `
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Iter 170 — Backup verification history. Populated by
+    -- /opt/dialeros/scripts/verify-backup.sh on its weekly run
+    -- (and on manual triggers from /settings/backups). Operators
+    -- audit "are our backups actually restorable?" from this
+    -- table; failures are loud (the script exits non-zero and
+    -- systemd surfaces it via failed-state).
+    CREATE TABLE IF NOT EXISTS backup_verifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      status TEXT NOT NULL,
+      source_path TEXT,
+      size_bytes INTEGER,
+      users_count INTEGER,
+      campaigns_count INTEGER,
+      intents_count INTEGER,
+      leads_count INTEGER,
+      latest_intent_ts TEXT,
+      error_msg TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_backup_verifications_ts
+      ON backup_verifications(ts DESC);
+
     -- Iter 168 — Consent records. Searchable "they said yes" log
     -- for TCPA defensibility. Operators record express consent
     -- (written / oral / prior business) with evidence pointers.

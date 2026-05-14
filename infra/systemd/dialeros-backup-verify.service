@@ -1,0 +1,27 @@
+# Iter 170 — Backup verification: restore the latest snapshot
+# to a temp file, run integrity + sanity checks, write a result
+# row into backup_verifications. Paired with .timer for weekly
+# autonomous runs.
+
+[Unit]
+Description=DialerOS backup verification
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/dialeros/backup.env
+ExecStart=/opt/dialeros/scripts/verify-backup.sh
+StandardOutput=journal
+StandardError=journal
+User=dialeros
+Group=dialeros
+
+# Hardening — script needs to:
+#   - read snapshots from /var/backups/dialeros
+#   - write a temp restored copy under /tmp
+#   - INSERT a result row into /opt/dialeros/apps/admin-gui/data/dialeros.db
+ProtectSystem=strict
+ReadOnlyPaths=/var/backups/dialeros
+ReadWritePaths=/opt/dialeros/apps/admin-gui/data
+NoNewPrivileges=true
+PrivateTmp=true

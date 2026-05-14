@@ -1,0 +1,15 @@
+# Iter 170 — Weekly backup verification. Fires every Sunday at
+# 03:00 local — one hour after the iter-112 nightly backup
+# completes (02:00). Persistent=true catches up after an outage.
+
+[Unit]
+Description=DialerOS backup verification timer
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=10min
+Unit=dialeros-backup-verify.service
+
+[Install]
+WantedBy=timers.target

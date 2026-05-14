@@ -829,3 +829,10 @@ export {
   MSMTPRC_PATH,
 } from './app-settings';
 export type { SmtpConfig } from './app-settings';
+
+// Iter 170 — Backup verification
+export {
+  listBackupVerifications,
+  getLatestBackupVerification,
+} from './db';
+export type { BackupVerificationRecord } from './db';
