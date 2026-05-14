@@ -4,12 +4,14 @@ import {
   getInGroup,
   getInGroupAllowedUserIds,
   getInGroupDids,
+  listDidsWithPriorityForInGroup,
   getUser,
   listCampaignsUsingInGroup,
   parseStaticWhitelist,
 } from '@dialeros/control-plane';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteInGroupButton } from './delete-button';
+import { DidPriorityList } from './did-priority-list';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +26,11 @@ export default async function InGroupDetail({
 
   const staticList = parseStaticWhitelist(g);
   const dids = getInGroupDids(id);
+  // Iter 179 — priority-aware list for the editor (RSC-safe
+  // plain-object cast for node:sqlite rows).
+  const didsWithPriority = JSON.parse(
+    JSON.stringify(listDidsWithPriorityForInGroup(id)),
+  ) as Array<{ did: string; priority: number }>;
 
   return (
     <div>
@@ -192,24 +199,7 @@ export default async function InGroupDetail({
           </Link>
           .
         </p>
-        {dids.length === 0 ? (
-          <p className="text-fg-subtle text-sm">
-            No DIDs attached. Inbound calls have nowhere to land.
-          </p>
-        ) : (
-          <ul className="font-mono text-xs space-y-1 max-h-60 overflow-y-auto">
-            {dids.map((d) => (
-              <li key={d}>
-                <Link
-                  href={`/dids/${encodeURIComponent(d)}`}
-                  className="hover:underline"
-                >
-                  {d}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
+        <DidPriorityList inGroupId={id} items={didsWithPriority} />
       </div>
 
       <CampaignsUsingCard inGroupId={id} />

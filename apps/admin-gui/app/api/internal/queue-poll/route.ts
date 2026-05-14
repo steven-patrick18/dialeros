@@ -13,6 +13,7 @@ import {
   getQueueAnnounceEnabled,
   getQueuedCallByCallId,
   insertCallbackRequest,
+  isHighestPriorityWaiter,
   pickAvailableAgentForInGroup,
 } from '@dialeros/control-plane';
 
@@ -182,6 +183,21 @@ export async function POST(req: NextRequest) {
     ig?.routing_strategy === 'longest_idle'
       ? ig.routing_strategy
       : 'longest_idle';
+  // Iter 179 — Don't claim an agent for this caller if a
+  // higher-priority caller is also waiting in the same in-group.
+  // Without this, first-to-poll wins; the priority gate ensures
+  // the VIP band gets served first when an agent comes free.
+  if (!isHighestPriorityWaiter(row.call_id)) {
+    return NextResponse.json({
+      action: 'hold',
+      reason: 'priority_yield',
+      waited_ms: Date.now() - Date.parse(row.enqueued_at),
+      announce: getQueueAnnounceEnabled(),
+      callback_enabled: getCallbackEnabled(),
+      callback_dtmf: getCallbackDtmfDigit(),
+    });
+  }
+
   const agent = pickAvailableAgentForInGroup(row.in_group_id, strategy);
   if (!agent) {
     // Iter 177 — position + ETA + announce flag.

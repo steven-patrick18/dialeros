@@ -4,6 +4,7 @@ import {
   appendAudit,
   getInGroup,
   removeDidFromInGroup,
+  setDidPriority,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -97,6 +98,58 @@ export async function DELETE(
     targetType: 'in_group',
     targetId: id,
     payload: { did },
+  });
+  return NextResponse.json({ ok: true });
+}
+
+// Iter 179 — Update a DID's priority band (0..9, 0=highest).
+export async function PATCH(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (user.role !== 'admin') {
+    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  }
+  const { id } = await ctx.params;
+  if (!getInGroup(id)) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+  const raw = (await req.json().catch(() => ({}))) as {
+    did?: unknown;
+    priority?: unknown;
+  };
+  if (typeof raw.did !== 'string' || raw.did.trim().length === 0) {
+    return NextResponse.json({ error: 'did is required' }, { status: 400 });
+  }
+  if (
+    typeof raw.priority !== 'number' ||
+    !Number.isInteger(raw.priority) ||
+    raw.priority < 0 ||
+    raw.priority > 9
+  ) {
+    return NextResponse.json(
+      { error: 'priority must be integer 0..9' },
+      { status: 400 },
+    );
+  }
+  const ok = setDidPriority(raw.did, raw.priority);
+  if (!ok) {
+    return NextResponse.json(
+      { error: 'DID not found' },
+      { status: 404 },
+    );
+  }
+  appendAudit({
+    actorUserId: user.id,
+    actorIp: clientIp(req),
+    action: 'in_group.did_priority',
+    targetType: 'in_group',
+    targetId: id,
+    payload: { did: raw.did, priority: raw.priority },
   });
   return NextResponse.json({ ok: true });
 }

@@ -5439,6 +5439,48 @@ export function listDidsForInGroup(inGroupId: string): string[] {
   return rows.map((r) => r.did);
 }
 
+/* Iter 179 — DID priority band (0..9, 0 = highest). Default
+ * 5 puts everything at parity. Used by inbound-route to stamp
+ * the priority onto each enqueued row, and surfaced in the
+ * in-group DID editor + supervisor view. */
+export interface DidWithPriority {
+  did: string;
+  priority: number;
+}
+
+export function listDidsWithPriorityForInGroup(
+  inGroupId: string,
+): DidWithPriority[] {
+  return db()
+    .prepare(
+      `SELECT did, priority
+         FROM in_group_dids
+        WHERE in_group_id = ?
+        ORDER BY priority ASC, did ASC`,
+    )
+    .all(inGroupId) as unknown as DidWithPriority[];
+}
+
+export function getDidPriority(did: string): number {
+  const row = db()
+    .prepare(`SELECT priority FROM in_group_dids WHERE did = ?`)
+    .get(did) as { priority: number } | undefined;
+  if (!row) return 5;
+  const n = Number(row.priority);
+  if (!Number.isInteger(n) || n < 0 || n > 9) return 5;
+  return n;
+}
+
+export function setDidPriority(did: string, priority: number): boolean {
+  if (!Number.isInteger(priority) || priority < 0 || priority > 9) {
+    throw new Error('priority must be integer 0..9');
+  }
+  const result = db()
+    .prepare(`UPDATE in_group_dids SET priority = ? WHERE did = ?`)
+    .run(priority, did);
+  return Number(result.changes) > 0;
+}
+
 /**
  * Iter 22 — list all DIDs across every in-group with their owner. Used
  * by the standalone /dids page so admins don't have to hunt through
@@ -5573,6 +5615,8 @@ export interface InboundQueueRow {
   to_phone: string;
   in_group_id: string;
   classification: string | null;
+  // Iter 179 — copied from DID at enqueue time. 0..9, 0=highest.
+  priority?: number;
   lead_id: string | null;
   enqueued_at: string;
   dispatched_at: string | null;
@@ -5589,13 +5633,24 @@ export function enqueueInboundCall(args: {
   inGroupId: string;
   classification: string | null;
   leadId: string | null;
+  // Iter 179 — optional priority. When omitted, falls back to 5
+  // (DID's default). Set by inbound-route from the DID's
+  // priority band.
+  priority?: number;
 }): InboundQueueRow {
   const id = randomUUID();
+  const priority =
+    typeof args.priority === 'number' &&
+    Number.isInteger(args.priority) &&
+    args.priority >= 0 &&
+    args.priority <= 9
+      ? args.priority
+      : 5;
   const d = db();
   d.prepare(
     `INSERT INTO inbound_queue (
-       id, call_id, from_phone, to_phone, in_group_id, classification, lead_id
-     ) VALUES (?, ?, ?, ?, ?, ?, ?)
+       id, call_id, from_phone, to_phone, in_group_id, classification, lead_id, priority
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(call_id) DO NOTHING`,
   ).run(
     id,
@@ -5605,6 +5660,7 @@ export function enqueueInboundCall(args: {
     args.inGroupId,
     args.classification,
     args.leadId,
+    priority,
   );
   // Read back — when ON CONFLICT fires, the row already exists
   // with whatever id it was first assigned; return that.
@@ -5671,6 +5727,8 @@ export interface SupervisorQueueRow {
   enqueued_at: string;
   dispatched_at: string | null;
   dispatched_extension: string | null;
+  // Iter 179 — priority band, 0..9 (0=highest).
+  priority: number;
 }
 /* Iter 177 — Queue position + ETA for the announcing Lua loop.
  * Position is 1-indexed (1 = next-up). ahead is the count of
@@ -5689,27 +5747,50 @@ export interface InboundQueuePosition {
 export function getInboundQueuePosition(
   callId: string,
 ): InboundQueuePosition | undefined {
+  // Iter 179 — fixed iter-177's `active = 1` typo (column doesn't
+  // exist); use proper `dispatched_at IS NULL AND expired_at IS NULL`
+  // predicate. Also pulled priority for the priority-aware ahead
+  // count below.
   const row = db()
     .prepare(
-      `SELECT call_id, in_group_id, enqueued_at
+      `SELECT call_id, in_group_id, enqueued_at, priority
          FROM inbound_queue
-        WHERE call_id = ? AND active = 1`,
+        WHERE call_id = ?
+          AND dispatched_at IS NULL
+          AND expired_at IS NULL`,
     )
     .get(callId) as
-    | { call_id: string; in_group_id: string; enqueued_at: string }
+    | {
+        call_id: string;
+        in_group_id: string;
+        enqueued_at: string;
+        priority: number;
+      }
     | undefined;
   if (!row) return undefined;
 
-  // Count active rows enqueued before this one in the same in-group.
+  // Count waiting rows in the same in-group that out-rank this
+  // caller: either strictly higher priority (lower number), OR
+  // same priority but enqueued earlier. ACD's standard "priority
+  // queue with FIFO within a band" rule.
   const aheadRow = db()
     .prepare(
       `SELECT COUNT(*) AS n
          FROM inbound_queue
         WHERE in_group_id = ?
-          AND active = 1
-          AND enqueued_at < ?`,
+          AND dispatched_at IS NULL
+          AND expired_at IS NULL
+          AND (
+            priority < ?
+            OR (priority = ? AND enqueued_at < ?)
+          )`,
     )
-    .get(row.in_group_id, row.enqueued_at) as { n: number };
+    .get(
+      row.in_group_id,
+      row.priority,
+      row.priority,
+      row.enqueued_at,
+    ) as { n: number };
 
   // Rolling-avg wait seconds: average over recently-dispatched
   // calls on this in-group in the last 30 minutes. Fallback to
@@ -5940,17 +6021,67 @@ export function countRecentCallbacksForPhone(
   return row.n;
 }
 
+/* Iter 179 — Gate for queue-poll dispatch. Returns true when
+ * THIS caller is the highest-priority still-waiting caller in
+ * its in-group (or tied with the same priority and earliest in
+ * that band). queue-poll uses this to avoid handing an agent to
+ * a lower-priority caller when a higher-priority one is also
+ * polling — without this, the first-to-poll wins, which is
+ * unfair to the VIP band. */
+export function isHighestPriorityWaiter(callId: string): boolean {
+  const me = db()
+    .prepare(
+      `SELECT in_group_id, priority, enqueued_at
+         FROM inbound_queue
+        WHERE call_id = ?
+          AND dispatched_at IS NULL
+          AND expired_at IS NULL`,
+    )
+    .get(callId) as
+    | {
+        in_group_id: string;
+        priority: number;
+        enqueued_at: string;
+      }
+    | undefined;
+  if (!me) return false;
+
+  const better = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM inbound_queue
+        WHERE in_group_id = ?
+          AND dispatched_at IS NULL
+          AND expired_at IS NULL
+          AND call_id != ?
+          AND (
+            priority < ?
+            OR (priority = ? AND enqueued_at < ?)
+          )`,
+    )
+    .get(
+      me.in_group_id,
+      callId,
+      me.priority,
+      me.priority,
+      me.enqueued_at,
+    ) as { n: number };
+  return better.n === 0;
+}
+
 export function listActiveQueuedCalls(): SupervisorQueueRow[] {
   return db()
     .prepare(
+      // Iter 179 — priority-first FIFO ordering, surfacing
+      // priority for the supervisor table.
       `SELECT q.id, q.call_id, q.from_phone, q.to_phone,
               q.in_group_id, ig.name AS in_group_name,
               q.classification, q.enqueued_at,
-              q.dispatched_at, q.dispatched_extension
+              q.dispatched_at, q.dispatched_extension, q.priority
          FROM inbound_queue q
          JOIN in_groups ig ON ig.id = q.in_group_id
         WHERE q.expired_at IS NULL
-        ORDER BY q.enqueued_at ASC`,
+        ORDER BY q.priority ASC, q.enqueued_at ASC`,
     )
     .all() as unknown as SupervisorQueueRow[];
 }

@@ -18,6 +18,8 @@ interface QueuedCall {
   enqueued_at: string;
   dispatched_at: string | null;
   dispatched_extension: string | null;
+  // Iter 179 — priority band, 0..9 (0=highest).
+  priority?: number;
 }
 
 export function QueuedCalls({ initial }: { initial: QueuedCall[] }) {
@@ -79,6 +81,7 @@ export function QueuedCalls({ initial }: { initial: QueuedCall[] }) {
                 <th className="font-medium">From</th>
                 <th className="font-medium">DID</th>
                 <th className="font-medium">In-group</th>
+                <th className="font-medium">Priority</th>
                 <th className="font-medium">State</th>
               </tr>
             </thead>
@@ -109,6 +112,10 @@ export function QueuedCalls({ initial }: { initial: QueuedCall[] }) {
                       {r.to_phone}
                     </td>
                     <td className="text-fg-muted">{r.in_group_name}</td>
+                    <td className="text-fg-muted tabular-nums">
+                      {r.priority ?? 5}
+                      {r.priority === 0 ? ' ★' : ''}
+                    </td>
                     <td>
                       {ringing ? (
                         <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border bg-info/15 text-info border-info/40">

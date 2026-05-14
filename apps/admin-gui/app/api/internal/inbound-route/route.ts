@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   appendAudit,
   enqueueInboundCall,
+  getDidPriority,
   findDidOwner,
   findInboundReturnMatch,
   getCampaignInGroups,
@@ -207,6 +208,9 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
     // from+to+now so the audit still gets a stable key.
     const callId =
       args.call_id ?? `${args.from}-${args.to}-${Date.now()}`;
+    // Iter 179 — stamp DID's priority band onto the queue row
+    // so the priority-aware picker can rank waiting callers.
+    const didPriority = getDidPriority(args.to);
     enqueueInboundCall({
       callId,
       fromPhone: args.from,
@@ -214,6 +218,7 @@ function forwardOrQueue(args: ForwardArgs): NextResponse {
       inGroupId: args.inGroupId,
       classification: args.reason,
       leadId: args.lead_id ?? null,
+      priority: didPriority,
     });
     appendAudit({
       actorUserId: null,

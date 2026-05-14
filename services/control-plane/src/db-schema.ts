@@ -854,4 +854,15 @@ export const COLUMN_MIGRATIONS: string[] = [
   "CREATE INDEX IF NOT EXISTS idx_callback_status ON callback_requests(status, requested_at)",
   "CREATE INDEX IF NOT EXISTS idx_callback_phone ON callback_requests(from_phone, requested_at)",
   "CREATE INDEX IF NOT EXISTS idx_callback_in_group ON callback_requests(in_group_id, status)",
+  // Iter 179 — ACD priority queues. Per-DID priority band 0..9
+  // where 0 is highest. Default 5 keeps existing DIDs at parity
+  // with each other. The inbound-queue row copies the DID's
+  // priority at enqueue time so a later priority change on the
+  // DID doesn't reshuffle in-flight callers (predictable ETAs).
+  "ALTER TABLE in_group_dids ADD COLUMN priority INTEGER NOT NULL DEFAULT 5",
+  "ALTER TABLE inbound_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 5",
+  // Compound index for the priority-aware queue picker: order by
+  // (in_group_id, priority ASC, enqueued_at ASC) restricted to
+  // still-waiting rows (no dispatched, no expired).
+  "CREATE INDEX IF NOT EXISTS idx_inbound_queue_priority ON inbound_queue(in_group_id, priority, enqueued_at) WHERE dispatched_at IS NULL AND expired_at IS NULL",
 ];

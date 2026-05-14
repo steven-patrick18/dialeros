@@ -3,16 +3,52 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+// Iter 179 — priority editor for DIDs. The legacy `dids: string[]`
+// prop is kept for back-compat; new `didsWithPriority` carries
+// the priority band (0..9, 0=highest) for the editor.
+interface DidWithPriority {
+  did: string;
+  priority: number;
+}
+
 export function DidManager({
   id,
   dids,
+  didsWithPriority,
 }: {
   id: string;
   dids: string[];
+  didsWithPriority?: DidWithPriority[];
 }) {
   const router = useRouter();
   const [newDid, setNewDid] = useState('');
   const [busy, setBusy] = useState(false);
+  // Iter 179 — saving state for priority changes (per-DID).
+  const [priorityBusy, setPriorityBusy] = useState<string | null>(null);
+
+  // Iter 179 — Save a new priority for a DID.
+  async function changePriority(did: string, priority: number) {
+    setPriorityBusy(did);
+    setError(null);
+    try {
+      const res = await fetch(`/api/in-groups/${id}/dids`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ did, priority }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setError(err.error ?? `Failed (${res.status})`);
+        return;
+      }
+      router.refresh();
+    } finally {
+      setPriorityBusy(null);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
 
   async function addDid() {
@@ -90,23 +126,66 @@ export function DidManager({
         </p>
       ) : (
         <ul className="space-y-1">
-          {dids.map((d) => (
+          {didsWithPriority ? (
+          didsWithPriority.map((d) => (
+            <li
+              key={d.did}
+              className="flex items-center justify-between gap-3 py-1"
+            >
+              <span className="font-mono text-sm">{d.did}</span>
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-fg-subtle flex items-center gap-1">
+                  pri:
+                  <select
+                    value={d.priority}
+                    onChange={(e) =>
+                      void changePriority(
+                        d.did,
+                        Number.parseInt(e.target.value, 10),
+                      )
+                    }
+                    disabled={priorityBusy === d.did}
+                    className="border border-border rounded bg-bg px-1 py-0.5 text-xs"
+                  >
+                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                        {p === 0 ? ' ★' : ''}
+                        {p === 5 ? ' (default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void removeDid(d.did)}
+                  disabled={busy}
+                  className="text-error hover:underline text-xs"
+                >
+                  Remove
+                </button>
+              </div>
+            </li>
+          ))
+        ) : (
+          dids.map((d) => (
             <li
               key={d}
-              className="flex items-center justify-between border border-border rounded px-3 py-2 text-sm"
+              className="flex items-center justify-between"
             >
-              <span className="font-mono">{d}</span>
+              <span className="font-mono text-sm">{d}</span>
               <button
                 type="button"
-                onClick={() => removeDid(d)}
+                onClick={() => void removeDid(d)}
                 disabled={busy}
-                className="text-error hover:text-error text-xs"
+                className="text-error hover:underline text-xs"
               >
-                remove
+                Remove
               </button>
             </li>
-          ))}
-        </ul>
+          ))
+        )}
+      </ul>
       )}
     </div>
   );

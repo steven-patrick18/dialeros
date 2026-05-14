@@ -923,3 +923,12 @@ export {
   getCallbackTtlMinutes,
   setCallbackTtlMinutes,
 } from './app-settings';
+
+// Iter 179 — ACD priority queues
+export {
+  getDidPriority,
+  setDidPriority,
+  listDidsWithPriorityForInGroup,
+  isHighestPriorityWaiter,
+} from './db';
+export type { DidWithPriority } from './db';

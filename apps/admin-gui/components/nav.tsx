@@ -21,33 +21,41 @@ interface NavGroupDef {
   items: NavItem[];
 }
 
+// Iter 178 — sidebar reorganized into 7 coherent groups.
+// Previously Telephony had 15 items mixing core wiring with
+// runtime settings; Operations mixed live monitoring with reports
+// + compliance. Now: Live Operations / Campaigns & Leads /
+// Inbound / Telephony / Reports & Audit / People / Settings.
+// Labels disambiguated: 'Scheduled callbacks' (iter 19, per-lead)
+// vs 'Inbound callbacks' (iter 178, press-to-request from queue).
 const ADMIN_GROUPS: NavGroupDef[] = [
   {
-    label: 'Operations',
+    label: 'Live operations',
     items: [
       { href: '/', label: 'Dashboard' },
       { href: '/realtime', label: 'Real-time' },
       { href: '/agent', label: 'Agent console' },
       { href: '/supervisor', label: 'Supervisor floor' },
-      { href: '/supervisor/callbacks', label: 'Callback requests' },
       { href: '/supervisor/calls', label: 'Floor calls' },
-      { href: '/callbacks', label: 'Callbacks' },
       { href: '/search/transcripts', label: 'Search transcripts' },
-      { href: '/reports', label: 'Reports' },
-      { href: '/audit', label: 'Audit Log' },
-      { href: '/dnc', label: 'Do Not Call' },
-      { href: '/consent-records', label: 'Consent records' },
     ],
   },
   {
-    label: 'Campaigns',
+    label: 'Campaigns & Leads',
     items: [
       { href: '/campaigns', label: 'Campaigns' },
       { href: '/leads', label: 'Lead Lists' },
+      { href: '/callbacks', label: 'Scheduled callbacks' },
+    ],
+  },
+  {
+    label: 'Inbound',
+    items: [
       { href: '/in-groups', label: 'In-Groups' },
+      { href: '/dids', label: 'DIDs' },
       { href: '/call-menus', label: 'Call Menus (IVR)' },
       { href: '/sound-board', label: 'Sound Board' },
-      { href: '/dids', label: 'DIDs' },
+      { href: '/supervisor/callbacks', label: 'Inbound callbacks' },
     ],
   },
   {
@@ -57,17 +65,15 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/route-plans', label: 'Route Plans' },
       { href: '/cid-groups', label: 'CID Groups' },
       { href: '/cluster/nodes', label: 'Cluster Nodes' },
-      { href: '/settings/telephony', label: 'Telephony settings' },
-      { href: '/settings/recording-retention', label: 'Recording retention' },
-      { href: '/settings/smtp', label: 'SMTP / email' },
-      { href: '/settings/backups', label: 'Backups' },
-      { href: '/settings/timers', label: 'Timer health' },
-      { href: '/settings/queue-announce', label: 'Queue announce' },
-      { href: '/settings/callback', label: 'Inbound callback' },
-      { href: '/settings/wrapup-enforcement', label: 'Wrap-up enforcement' },
-      { href: '/settings/frequency-caps', label: 'Frequency caps (TCPA)' },
-      { href: '/settings/domain', label: 'Domain & TLS' },
-      { href: '/settings/pacing', label: 'Pacing curve' },
+    ],
+  },
+  {
+    label: 'Reports & Audit',
+    items: [
+      { href: '/reports', label: 'Reports' },
+      { href: '/audit', label: 'Audit Log' },
+      { href: '/dnc', label: 'Do Not Call' },
+      { href: '/consent-records', label: 'Consent records' },
     ],
   },
   {
@@ -75,6 +81,22 @@ const ADMIN_GROUPS: NavGroupDef[] = [
     items: [
       { href: '/users', label: 'Users' },
       { href: '/remote-agents', label: 'Remote Agents' },
+    ],
+  },
+  {
+    label: 'Settings',
+    items: [
+      { href: '/settings/telephony', label: 'Telephony' },
+      { href: '/settings/pacing', label: 'Pacing curve' },
+      { href: '/settings/recording-retention', label: 'Recording retention' },
+      { href: '/settings/frequency-caps', label: 'Frequency caps (TCPA)' },
+      { href: '/settings/wrapup-enforcement', label: 'Wrap-up enforcement' },
+      { href: '/settings/queue-announce', label: 'Queue announce' },
+      { href: '/settings/callback', label: 'Inbound callback' },
+      { href: '/settings/smtp', label: 'SMTP / email' },
+      { href: '/settings/backups', label: 'Backups' },
+      { href: '/settings/timers', label: 'Timer health' },
+      { href: '/settings/domain', label: 'Domain & TLS' },
     ],
   },
 ];
