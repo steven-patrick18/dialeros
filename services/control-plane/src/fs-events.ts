@@ -1,6 +1,8 @@
 import net from 'net';
 import {
   applyDialIntentAnswered,
+  getRaceOutcomeByCorrelation,
+  recordRaceWinner,
   applyDialIntentHangup,
   applyAutoDisposition,
   getCampaignFromDb,
@@ -8,6 +10,7 @@ import {
   insertCallMenuLog,
   setLeadStatusIfIn,
 } from './db';
+import { appendAudit } from './audit';
 import { inferAutoDisposition } from './auto-disposition';
 import {
   IN_FLIGHT_STATUSES,
@@ -334,6 +337,84 @@ function handleEventBody(
       if (updated) emitIntentUpdate(updated);
     } catch (e) {
       console.error('[fs-events] applyDialIntentAnswered failed:', e);
+    }
+
+    // Iter 186 — Parallel race-to-answer winner detection.
+    // When the correlation_id matches a pending race outcome (set
+    // by iter 183's recordRaceStart), identify the winning leg's
+    // gateway from event vars + map back to the carrier_id. The
+    // gateway naming convention 'dialeros-<carrierId>' is set by
+    // the pacer (carrier.id → gateway = `dialeros-${carrier.id}`),
+    // so the suffix is the carrier id.
+    try {
+      const pending = getRaceOutcomeByCorrelation(correlationId);
+      if (pending && !pending.winner_carrier_id) {
+        // FreeSWITCH sets variable_sip_gateway_name when an
+        // outbound leg via sofia/gateway/<name> is created.
+        // Fallbacks cover older FS versions + edge cases.
+        const gw =
+          ev['variable_sip_gateway_name'] ??
+          ev['variable_sip_gateway'] ??
+          ev['variable_dialed_user'] ??
+          '';
+        const carrierId = gw.startsWith('dialeros-')
+          ? gw.slice('dialeros-'.length)
+          : null;
+        if (carrierId) {
+          // PDD = answered_at - race.started_at (ms). started_at
+          // is iso 8601 from the DB; answeredAt is iso 8601 from
+          // the FS event.
+          const startedMs = Date.parse(pending.started_at);
+          const answeredMs = Date.parse(answeredAt);
+          const pddMs =
+            Number.isFinite(startedMs) && Number.isFinite(answeredMs)
+              ? Math.max(0, answeredMs - startedMs)
+              : 0;
+          const ok = recordRaceWinner(correlationId, carrierId, pddMs);
+          if (ok) {
+            console.log(
+              `[fs-events] race winner: correlation=${correlationId.slice(0, 8)} carrier=${carrierId} pdd=${pddMs}ms`,
+            );
+            try {
+              appendAudit({
+                actorUserId: null,
+                actorIp: null,
+                action: 'pacing.parallel_race_won',
+                targetType: 'carrier_race_outcome',
+                targetId: String(pending.id),
+                payload: {
+                  correlation_id: correlationId,
+                  winner_carrier_id: carrierId,
+                  pdd_ms: pddMs,
+                  raced_carriers: (() => {
+                    try {
+                      return JSON.parse(pending.raced_carriers_json);
+                    } catch {
+                      return [];
+                    }
+                  })(),
+                },
+              });
+            } catch (auditErr) {
+              console.error(
+                '[fs-events] race-won audit append failed:',
+                auditErr,
+              );
+            }
+          }
+        } else {
+          // Gateway didn't match our naming convention — log so
+          // the operator can investigate (custom gateway names,
+          // FS version with different vars, etc.).
+          console.warn(
+            `[fs-events] race-pending CHANNEL_ANSWER had no recognizable gateway var (sip_gateway_name=${ev['variable_sip_gateway_name'] ?? '∅'} sip_gateway=${ev['variable_sip_gateway'] ?? '∅'})`,
+          );
+        }
+      }
+    } catch (e) {
+      // Race-winner detection is best-effort — never let a parse
+      // glitch kill the CHANNEL_ANSWER handler.
+      console.error('[fs-events] race-winner detection failed:', e);
     }
     return;
   }

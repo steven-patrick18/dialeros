@@ -979,11 +979,13 @@ export {
 export type { RecordingNodeRollup } from './db';
 
 // Iter 183 — Parallel race-to-answer SIP forking
+// Iter 186 adds getRaceOutcomeByCorrelation for fs-events winner detection.
 export {
   parseRoutePlanParallelCarriers,
   setRoutePlanParallelRace,
   recordRaceStart,
   recordRaceWinner,
+  getRaceOutcomeByCorrelation,
   listRaceOutcomes,
   getCarrierRaceStats,
 } from './db';

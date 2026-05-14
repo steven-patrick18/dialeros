@@ -1043,6 +1043,26 @@ export function recordRaceStart(args: {
   return Number(result.lastInsertRowid);
 }
 
+/* Iter 186 — Lookup the pending race outcome by correlation_id.
+ * Used by fs-events on CHANNEL_ANSWER to decide whether the
+ * answer is a parallel-race winner and (if so) which carrier won.
+ * Returns the most recently started undecided race for the
+ * correlation — fs-events is the only writer of decided_at so a
+ * correlation typically has at most one pending row anyway. */
+export function getRaceOutcomeByCorrelation(
+  correlationId: string,
+): CarrierRaceOutcome | undefined {
+  return getDb()
+    .prepare(
+      `SELECT * FROM carrier_race_outcomes
+        WHERE correlation_id = ?
+          AND winner_carrier_id IS NULL
+        ORDER BY started_at DESC
+        LIMIT 1`,
+    )
+    .get(correlationId) as unknown as CarrierRaceOutcome | undefined;
+}
+
 export function recordRaceWinner(
   correlationId: string,
   winnerCarrierId: string,
