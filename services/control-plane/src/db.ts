@@ -5739,6 +5739,207 @@ export function getInboundQueuePosition(
   };
 }
 
+/* Iter 178 — Inbound-to-outbound callback rows. Each row is one
+ * caller who pressed the configured DTMF (default '9') while
+ * parked in the hold queue, asking the system to call them back
+ * when an agent is free. A future iter's outbound dispatcher
+ * worker will originate the outbound leg; iter 178 just
+ * captures the request and surfaces it on the supervisor floor. */
+export type CallbackRequestStatus =
+  | 'pending'
+  | 'dispatched'
+  | 'completed'
+  | 'expired'
+  | 'cancelled'
+  | 'failed';
+
+export interface CallbackRequestRow {
+  id: number;
+  call_id: string;
+  in_group_id: string;
+  from_phone: string;
+  to_phone: string | null;
+  requested_at: string;
+  status: CallbackRequestStatus;
+  attempts: number;
+  last_attempt_at: string | null;
+  dispatched_at: string | null;
+  dispatched_user_id: string | null;
+  completed_at: string | null;
+  expire_reason: string | null;
+  cancelled_by_user_id: string | null;
+  notes: string | null;
+}
+
+export function insertCallbackRequest(args: {
+  callId: string;
+  inGroupId: string;
+  fromPhone: string;
+  toPhone: string | null;
+  notes?: string | null;
+}): CallbackRequestRow {
+  const result = db()
+    .prepare(
+      `INSERT INTO callback_requests
+         (call_id, in_group_id, from_phone, to_phone, notes)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      args.callId,
+      args.inGroupId,
+      args.fromPhone,
+      args.toPhone,
+      args.notes ?? null,
+    );
+  const id = Number(result.lastInsertRowid);
+  return getCallbackRequestById(id) as CallbackRequestRow;
+}
+
+export function getCallbackRequestById(
+  id: number,
+): CallbackRequestRow | undefined {
+  return db()
+    .prepare(`SELECT * FROM callback_requests WHERE id = ?`)
+    .get(id) as unknown as CallbackRequestRow | undefined;
+}
+
+export interface CallbackRequestListItem extends CallbackRequestRow {
+  in_group_name: string | null;
+}
+
+/** Supervisor list — pending first (FIFO), then a tail of recent
+ * resolved rows for context. status='' returns all. */
+export function listCallbackRequests(
+  status: CallbackRequestStatus | '' = '',
+  limit: number = 200,
+): CallbackRequestListItem[] {
+  const rows =
+    status === ''
+      ? db()
+          .prepare(
+            `SELECT cr.*, ig.name AS in_group_name
+               FROM callback_requests cr
+               LEFT JOIN in_groups ig ON ig.id = cr.in_group_id
+              ORDER BY cr.requested_at DESC
+              LIMIT ?`,
+          )
+          .all(limit)
+      : db()
+          .prepare(
+            `SELECT cr.*, ig.name AS in_group_name
+               FROM callback_requests cr
+               LEFT JOIN in_groups ig ON ig.id = cr.in_group_id
+              WHERE cr.status = ?
+              ORDER BY cr.requested_at DESC
+              LIMIT ?`,
+          )
+          .all(status, limit);
+  return rows as unknown as CallbackRequestListItem[];
+}
+
+/** Pending-only, FIFO order. The future outbound-dispatch worker
+ * will pull from this. */
+export function listPendingCallbacks(
+  limit: number = 100,
+): CallbackRequestListItem[] {
+  return db()
+    .prepare(
+      `SELECT cr.*, ig.name AS in_group_name
+         FROM callback_requests cr
+         LEFT JOIN in_groups ig ON ig.id = cr.in_group_id
+        WHERE cr.status = 'pending'
+        ORDER BY cr.requested_at ASC
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as CallbackRequestListItem[];
+}
+
+/** Atomic claim — flips a pending row to dispatched. Returns
+ * true on success; false if the row was already claimed / not
+ * pending. Used by the future outbound worker. */
+export function markCallbackDispatched(
+  id: number,
+  userId: string,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE callback_requests
+          SET status = 'dispatched',
+              dispatched_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+              dispatched_user_id = ?,
+              attempts = attempts + 1,
+              last_attempt_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?
+          AND status = 'pending'`,
+    )
+    .run(userId, id);
+  return Number(result.changes) > 0;
+}
+
+export function completeCallback(id: number): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE callback_requests
+          SET status = 'completed',
+              completed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?
+          AND status IN ('dispatched', 'pending')`,
+    )
+    .run(id);
+  return Number(result.changes) > 0;
+}
+
+export function cancelCallback(
+  id: number,
+  cancelledByUserId: string,
+  reason: string,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE callback_requests
+          SET status = 'cancelled',
+              cancelled_by_user_id = ?,
+              expire_reason = ?
+        WHERE id = ?
+          AND status IN ('pending', 'dispatched')`,
+    )
+    .run(cancelledByUserId, reason, id);
+  return Number(result.changes) > 0;
+}
+
+export function expireOldCallbacks(
+  ttlMinutes: number,
+): number {
+  const result = db()
+    .prepare(
+      `UPDATE callback_requests
+          SET status = 'expired',
+              expire_reason = 'ttl_passed'
+        WHERE status = 'pending'
+          AND requested_at < datetime('now', '-' || ? || ' minutes')`,
+    )
+    .run(ttlMinutes);
+  return Number(result.changes);
+}
+
+/** Abuse-protection: count rows from this phone in the last
+ * N hours. Caller's API decides how to react (queue-poll
+ * surfaces a 429-equivalent action). */
+export function countRecentCallbacksForPhone(
+  fromPhone: string,
+  hours: number,
+): number {
+  const row = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM callback_requests
+        WHERE from_phone = ?
+          AND requested_at >= datetime('now', '-' || ? || ' hours')`,
+    )
+    .get(fromPhone, hours) as { n: number };
+  return row.n;
+}
+
 export function listActiveQueuedCalls(): SupervisorQueueRow[] {
   return db()
     .prepare(

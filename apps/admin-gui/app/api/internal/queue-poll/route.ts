@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  countRecentCallbacksForPhone,
   dispatchQueuedCall,
   expireQueuedCall,
   expireStaleQueuedCalls,
+  getCallbackDtmfDigit,
+  getCallbackEnabled,
   getInGroup,
   getInboundQueuePosition,
   getQueueAnnounceEnabled,
   getQueuedCallByCallId,
+  insertCallbackRequest,
   pickAvailableAgentForInGroup,
 } from '@dialeros/control-plane';
 
@@ -42,6 +46,10 @@ const BodySchema = z.object({
   // Optional reason caller hung up. When set we expire the row
   // and return action=abandoned so FS can release resources.
   hangup: z.boolean().optional(),
+  // Iter 178 — DTMF captured by the FS Lua. When this is the
+  // configured callback digit and callback.enabled is on, we
+  // create a callback_requests row and respond callback_accepted.
+  dtmf: z.string().min(1).max(1).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -72,6 +80,53 @@ export async function POST(req: NextRequest) {
   expireStaleQueuedCalls(600);
 
   const row = getQueuedCallByCallId(parsed.data.call_id);
+
+  // Iter 178 — Callback DTMF handling. When the caller pressed
+  // the configured digit, capture a callback_request row and
+  // tear down the queue session. We do this BEFORE the agent
+  // picker so a press is honoured even when an agent just freed
+  // up on the same tick.
+  if (parsed.data.dtmf && row && !row.expired_at && !row.dispatched_at) {
+    const enabled = getCallbackEnabled();
+    const expected = getCallbackDtmfDigit();
+    if (enabled && parsed.data.dtmf === expected) {
+      // Abuse-protection: max 3 callback requests per phone per
+      // hour. Beyond that we silently treat the press as a no-op
+      // — the caller stays on hold + a future iter could speak
+      // a "too many requests" prompt.
+      const recent = countRecentCallbacksForPhone(row.from_phone, 1);
+      if (recent < 3) {
+        const cb = insertCallbackRequest({
+          callId: row.call_id,
+          inGroupId: row.in_group_id,
+          fromPhone: row.from_phone,
+          toPhone: row.to_phone,
+        });
+        expireQueuedCall(row.call_id, 'callback_requested');
+        appendAudit({
+          actorUserId: null,
+          actorIp: null,
+          action: 'inbound.callback_requested',
+          targetType: 'in_group',
+          targetId: row.in_group_id,
+          payload: {
+            call_id: row.call_id,
+            from: row.from_phone,
+            to: row.to_phone,
+            callback_id: cb.id,
+            dtmf: parsed.data.dtmf,
+          },
+        });
+        return NextResponse.json({
+          action: 'callback_accepted',
+          callback_id: cb.id,
+        });
+      }
+    }
+  }
+
+  // (row already declared above)
+
   if (!row) {
     // FS is asking about a Call-ID we don't know about. Could be
     // a stale poll after the row was expired or never enqueued.
@@ -129,9 +184,9 @@ export async function POST(req: NextRequest) {
       : 'longest_idle';
   const agent = pickAvailableAgentForInGroup(row.in_group_id, strategy);
   if (!agent) {
-    // Iter 177 — enrich the hold response with the caller's
-    // position + ETA + announce flag so the FS Lua loop can
-    // speak it to the caller via the `say` engine.
+    // Iter 177 — position + ETA + announce flag.
+    // Iter 178 — callback_enabled + callback_dtmf so the FS Lua
+    // knows whether/which DTMF to listen for.
     const pos = getInboundQueuePosition(row.call_id);
     return NextResponse.json({
       action: 'hold',
@@ -141,6 +196,8 @@ export async function POST(req: NextRequest) {
       position: pos?.position ?? null,
       ahead: pos?.ahead ?? null,
       eta_seconds: pos?.eta_seconds ?? null,
+      callback_enabled: getCallbackEnabled(),
+      callback_dtmf: getCallbackDtmfDigit(),
     });
   }
 
@@ -163,7 +220,7 @@ export async function POST(req: NextRequest) {
         replay: true,
       });
     }
-    // Iter 177 — same enrichment as the no_agent_yet branch.
+    // Iter 177/178 — same enrichment.
     const pos = getInboundQueuePosition(row.call_id);
     return NextResponse.json({
       action: 'hold',
@@ -172,6 +229,8 @@ export async function POST(req: NextRequest) {
       position: pos?.position ?? null,
       ahead: pos?.ahead ?? null,
       eta_seconds: pos?.eta_seconds ?? null,
+      callback_enabled: getCallbackEnabled(),
+      callback_dtmf: getCallbackDtmfDigit(),
     });
   }
 

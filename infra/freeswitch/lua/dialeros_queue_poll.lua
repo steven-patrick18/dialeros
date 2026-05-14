@@ -31,6 +31,38 @@ local call_id = session:getVariable("uuid")
 local last_announced_position = nil
 local last_announced_at = -1
 
+-- Iter 178 — DTMF capture state. The on_dtmf callback fires
+-- on the session whenever the caller presses a key during
+-- playback. We stash the digit and inspect it in the poll
+-- loop; if it matches the configured callback DTMF, we POST
+-- a callback request and exit. The expected digit travels
+-- back from queue-poll on every hold response.
+local pressed_dtmf = nil
+local expected_callback_dtmf = nil
+local callback_enabled = false
+
+function on_dtmf(s, dtype, data)
+  if dtype == "dtmf" then
+    -- FS Lua passes a freeswitch.DTMF object; .digit is the
+    -- single-char string.
+    local digit = nil
+    if type(data) == "string" then
+      digit = data
+    elseif type(data) == "table" and data.digit then
+      digit = data.digit
+    elseif type(data) == "userdata" and data.getDigit then
+      local ok, d = pcall(function() return data:getDigit() end)
+      if ok then digit = d end
+    end
+    if digit then
+      pressed_dtmf = digit
+    end
+  end
+  return ""
+end
+
+session:setInputCallback("on_dtmf", "")
+
 -- Start MOH on the caller's channel. playback is blocking, so we
 -- arm it as a non-blocking pre_answer + record_session would be —
 -- instead we just kick it on a thread and use sleep + poll loop.
@@ -58,6 +90,61 @@ while session:ready() and elapsed < MAX_WAIT_SEC do
       elseif j.action == "abandoned" or j.action == "unknown" then
         break
       elseif j.action == "hold" then
+        -- Iter 178 — remember the configured callback digit
+        -- across iterations; the press might come in any
+        -- moment, possibly right after we receive these flags.
+        callback_enabled = j.callback_enabled == true
+        if j.callback_dtmf and type(j.callback_dtmf) == "string" then
+          expected_callback_dtmf = j.callback_dtmf
+        end
+
+        -- Iter 178 — DTMF reaction. If the caller pressed the
+        -- configured digit and the feature is enabled, POST
+        -- the callback request to queue-poll, speak a
+        -- confirmation, and hang up. Re-using queue-poll keeps
+        -- the side-effect (create row + expire queue row) on
+        -- the server.
+        if
+          callback_enabled
+          and pressed_dtmf
+          and expected_callback_dtmf
+          and pressed_dtmf == expected_callback_dtmf
+          and session:ready()
+        then
+          local dtmf_payload = cjson.encode({
+            call_id = call_id,
+            dtmf = pressed_dtmf,
+          })
+          local dtmf_resp = api:execute(
+            "curl",
+            admin_url
+              .. "/api/internal/queue-poll content-type 'application/json' post '"
+              .. dtmf_payload
+              .. "'"
+          )
+          local dtmf_body = dtmf_resp and dtmf_resp:match("({.-})%s*$")
+          local accepted = false
+          if dtmf_body then
+            local dok, dj = pcall(cjson.decode, dtmf_body)
+            if dok and dj and dj.action == "callback_accepted" then
+              accepted = true
+            end
+          end
+          if accepted then
+            -- Confirmation prompt via standard FS sounds. The
+            -- "we will call you back" phrase isn't in the
+            -- default voice library, so we play a thank-you
+            -- and hang up; the caller's ANI is on file.
+            session:execute("playback", "ivr/ivr-thank_you.wav")
+            session:hangup("NORMAL_CLEARING")
+            return
+          end
+          -- Server didn't accept (abuse cap, disabled, etc).
+          -- Clear the press flag and stay on hold; caller may
+          -- try again later.
+          pressed_dtmf = nil
+        end
+
         -- Iter 177 — announce position + ETA when:
         --   * operator has the toggle on (j.announce == true)
         --   * we know our position

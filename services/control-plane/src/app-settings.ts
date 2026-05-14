@@ -78,6 +78,14 @@ export const APP_SETTING_KEYS = {
   // estimated wait via FS's `say` engine on position change
   // or every 60s, whichever comes first.
   queueAnnounceEnabled: 'queue.announce_enabled',
+  // Iter 178 — Inbound-to-outbound callback. Off by default;
+  // when on, the FS hold-queue Lua listens for the configured
+  // DTMF (callbackDtmfDigit, default '9') and, on a press,
+  // records a callback_request row + tears down the queue
+  // session. A future iter's worker originates the return leg.
+  callbackEnabled: 'callback.enabled',
+  callbackDtmfDigit: 'callback.dtmf_digit',
+  callbackTtlMinutes: 'callback.ttl_minutes',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -402,4 +410,49 @@ export function setQueueAnnounceEnabled(enabled: boolean): void {
     APP_SETTING_KEYS.queueAnnounceEnabled,
     enabled ? '1' : '0',
   );
+}
+
+// Iter 178 — Inbound-to-outbound callback toggles. Off by default.
+// callback.dtmf_digit defaults to '9'. callback.ttl_minutes is the
+// TTL the expireOldCallbacks sweeper uses (default 60 minutes).
+export function getCallbackEnabled(): boolean {
+  return getAppSetting(APP_SETTING_KEYS.callbackEnabled) === '1';
+}
+
+export function setCallbackEnabled(enabled: boolean): void {
+  setAppSetting(
+    APP_SETTING_KEYS.callbackEnabled,
+    enabled ? '1' : '0',
+  );
+}
+
+export function getCallbackDtmfDigit(): string {
+  const v = getAppSetting(APP_SETTING_KEYS.callbackDtmfDigit);
+  if (!v) return '9';
+  // Constrain to a single 0-9 / *# character; anything else
+  // means a setting got corrupted — fall back to '9'.
+  if (/^[0-9*#]$/.test(v)) return v;
+  return '9';
+}
+
+export function setCallbackDtmfDigit(digit: string): void {
+  if (!/^[0-9*#]$/.test(digit)) {
+    throw new Error('Invalid DTMF digit: ' + digit);
+  }
+  setAppSetting(APP_SETTING_KEYS.callbackDtmfDigit, digit);
+}
+
+export function getCallbackTtlMinutes(): number {
+  const v = getAppSetting(APP_SETTING_KEYS.callbackTtlMinutes);
+  if (!v) return 60;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 1 || n > 24 * 60) return 60;
+  return n;
+}
+
+export function setCallbackTtlMinutes(minutes: number): void {
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60) {
+    throw new Error('Invalid TTL minutes: ' + String(minutes));
+  }
+  setAppSetting(APP_SETTING_KEYS.callbackTtlMinutes, String(minutes));
 }

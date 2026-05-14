@@ -819,4 +819,39 @@ export const COLUMN_MIGRATIONS: string[] = [
   // 750). Operator tunes via the campaign Detail tab when a
   // specific carrier's machines have unusual greeting cadence.
   "ALTER TABLE campaigns ADD COLUMN voicemail_config TEXT",
+  // Iter 178 — Inbound-to-outbound callback. Caller parked in the
+  // hold queue presses the configured DTMF (default '9'); the
+  // queue-poll endpoint records the row here, expires the
+  // inbound_queue row with reason='callback_requested', and a
+  // future iter's worker will originate the outbound leg.
+  //
+  // status: 'pending' (just captured) | 'dispatched' (worker
+  //   originated the outbound leg) | 'completed' (caller
+  //   reconnected to an agent) | 'expired' (TTL passed without a
+  //   dispatch) | 'cancelled' (supervisor killed it) |
+  //   'failed' (origination failed)
+  //
+  // The row keeps from_phone (callback number — by default the
+  // caller's ANI) + the original in_group_id so the future
+  // worker can route the callback through the same queue.
+  `CREATE TABLE IF NOT EXISTS callback_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id TEXT NOT NULL,
+    in_group_id TEXT NOT NULL,
+    from_phone TEXT NOT NULL,
+    to_phone TEXT,
+    requested_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    dispatched_at TEXT,
+    dispatched_user_id TEXT,
+    completed_at TEXT,
+    expire_reason TEXT,
+    cancelled_by_user_id TEXT,
+    notes TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_callback_status ON callback_requests(status, requested_at)",
+  "CREATE INDEX IF NOT EXISTS idx_callback_phone ON callback_requests(from_phone, requested_at)",
+  "CREATE INDEX IF NOT EXISTS idx_callback_in_group ON callback_requests(in_group_id, status)",
 ];

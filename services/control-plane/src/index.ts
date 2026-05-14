@@ -897,3 +897,29 @@ export {
 } from './app-settings';
 export { getInboundQueuePosition } from './db';
 export type { InboundQueuePosition } from './db';
+
+// Iter 178 — Inbound-to-outbound callback
+export {
+  insertCallbackRequest,
+  getCallbackRequestById,
+  listCallbackRequests,
+  listPendingCallbacks,
+  markCallbackDispatched,
+  completeCallback,
+  cancelCallback,
+  expireOldCallbacks,
+  countRecentCallbacksForPhone,
+} from './db';
+export type {
+  CallbackRequestRow,
+  CallbackRequestListItem,
+  CallbackRequestStatus,
+} from './db';
+export {
+  getCallbackEnabled,
+  setCallbackEnabled,
+  getCallbackDtmfDigit,
+  setCallbackDtmfDigit,
+  getCallbackTtlMinutes,
+  setCallbackTtlMinutes,
+} from './app-settings';
