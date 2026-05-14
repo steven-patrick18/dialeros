@@ -6899,6 +6899,90 @@ export function setAgentStatus(
     .run(userId, status, reason);
 }
 
+/* Iter 175 — Skill DB ops. */
+export interface UserSkillRecord {
+  user_id: string;
+  skill: string;
+}
+export interface CampaignSkillRecord {
+  campaign_id: string;
+  skill: string;
+  required: number;
+}
+
+export function listUserSkillsFromDb(userId: string): UserSkillRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM user_skills WHERE user_id = ? ORDER BY skill`,
+    )
+    .all(userId) as unknown as UserSkillRecord[];
+}
+
+export function deleteUserSkillsForUser(userId: string): void {
+  db()
+    .prepare(`DELETE FROM user_skills WHERE user_id = ?`)
+    .run(userId);
+}
+
+export function insertUserSkillRows(
+  userId: string,
+  rows: Array<{ skill: string }>,
+): void {
+  if (rows.length === 0) return;
+  const conn = db();
+  const tx = conn.exec.bind(conn);
+  tx('BEGIN');
+  try {
+    const stmt = conn.prepare(
+      `INSERT INTO user_skills (user_id, skill) VALUES (?, ?)`,
+    );
+    for (const r of rows) stmt.run(userId, r.skill);
+    tx('COMMIT');
+  } catch (e) {
+    tx('ROLLBACK');
+    throw e;
+  }
+}
+
+export function listCampaignSkillsFromDb(
+  campaignId: string,
+): CampaignSkillRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM campaign_skills WHERE campaign_id = ? ORDER BY skill`,
+    )
+    .all(campaignId) as unknown as CampaignSkillRecord[];
+}
+
+export function deleteCampaignSkillsForCampaign(
+  campaignId: string,
+): void {
+  db()
+    .prepare(`DELETE FROM campaign_skills WHERE campaign_id = ?`)
+    .run(campaignId);
+}
+
+export function insertCampaignSkillRows(
+  campaignId: string,
+  rows: Array<{ skill: string; required: boolean }>,
+): void {
+  if (rows.length === 0) return;
+  const conn = db();
+  const tx = conn.exec.bind(conn);
+  tx('BEGIN');
+  try {
+    const stmt = conn.prepare(
+      `INSERT INTO campaign_skills (campaign_id, skill, required)
+       VALUES (?, ?, ?)`,
+    );
+    for (const r of rows) stmt.run(campaignId, r.skill, r.required ? 1 : 0);
+    tx('COMMIT');
+  } catch (e) {
+    tx('ROLLBACK');
+    throw e;
+  }
+}
+
 /**
  * Iter 40 — overload of getActiveAgentsForCampaign that filters out
  * agents currently in PAUSED status. The pacer uses this so paused
@@ -6911,15 +6995,58 @@ export function getAvailableAgentsForCampaign(
   if (rows.length === 0) return rows;
   const ids = rows.map((r) => r.id);
   const placeholders = ids.map(() => '?').join(',');
+
+  // Iter 40 — drop PAUSED.
   const paused = db()
     .prepare(
       `SELECT user_id FROM agent_status
        WHERE status = 'PAUSED' AND user_id IN (${placeholders})`,
     )
     .all(...ids) as Array<{ user_id: string }>;
-  if (paused.length === 0) return rows;
   const pausedSet = new Set(paused.map((p) => p.user_id));
-  return rows.filter((r) => !pausedSet.has(r.id));
+
+  // Iter 175 — drop agents lacking any required skill. Empty
+  // requirement set = no filtering (all attached agents
+  // remain eligible after the PAUSED drop).
+  const requiredSkills = db()
+    .prepare(
+      `SELECT skill FROM campaign_skills
+        WHERE campaign_id = ? AND required = 1`,
+    )
+    .all(campaignId) as Array<{ skill: string }>;
+  if (requiredSkills.length === 0) {
+    return rows.filter((r) => !pausedSet.has(r.id));
+  }
+
+  // Build user_id → set of their skills for fast membership check.
+  // One query joining user_skills against the attached agents'
+  // ids — sub-millisecond on any reasonable floor size.
+  const skillRows = db()
+    .prepare(
+      `SELECT user_id, skill FROM user_skills
+        WHERE user_id IN (${placeholders})`,
+    )
+    .all(...ids) as Array<{ user_id: string; skill: string }>;
+  const userSkillsMap = new Map<string, Set<string>>();
+  for (const s of skillRows) {
+    let set = userSkillsMap.get(s.user_id);
+    if (!set) {
+      set = new Set<string>();
+      userSkillsMap.set(s.user_id, set);
+    }
+    set.add(s.skill);
+  }
+
+  const required = requiredSkills.map((s) => s.skill);
+  return rows.filter((r) => {
+    if (pausedSet.has(r.id)) return false;
+    const has = userSkillsMap.get(r.id);
+    if (!has) return false;
+    for (const skill of required) {
+      if (!has.has(skill)) return false;
+    }
+    return true;
+  });
 }
 
 // =====================================================================

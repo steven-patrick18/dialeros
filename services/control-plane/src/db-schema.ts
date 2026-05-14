@@ -215,6 +215,28 @@ export const CREATE_TABLES_SQL = `
     CREATE INDEX IF NOT EXISTS idx_backup_verifications_ts
       ON backup_verifications(ts DESC);
 
+    -- Iter 175 — Skill-based routing v2.
+    -- user_skills: many-to-many of users → skill tags. Replaces
+    --   skill_tier for routing (tier stays for legacy reports).
+    -- campaign_skills: skills a campaign requires. Pacer's
+    --   getAvailableAgentsForCampaign filters out agents who
+    --   lack any required skill.
+    -- Skill is a free-form tag (UPPERCASE/digits/_/-).
+    CREATE TABLE IF NOT EXISTS user_skills (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      skill TEXT NOT NULL,
+      PRIMARY KEY (user_id, skill)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_skills_skill
+      ON user_skills(skill);
+
+    CREATE TABLE IF NOT EXISTS campaign_skills (
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      skill TEXT NOT NULL,
+      required INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (campaign_id, skill)
+    );
+
     -- Iter 174 — Per-campaign disposition palette. When set,
     -- the agent UI shows these codes instead of the iter-25
     -- hardcoded list; disposeAgentIntent uses lead_status_target

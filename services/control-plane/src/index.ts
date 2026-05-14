@@ -864,3 +864,20 @@ export type {
   LeadStatusTarget,
 } from './campaign-disposition';
 export type { CampaignDispositionRecord } from './db';
+
+// Iter 175 — Skill-based routing
+export {
+  SkillCodeSchema,
+  UserSkillsInputSchema,
+  CampaignSkillsInputSchema,
+  saveUserSkills,
+  getUserSkills,
+  saveCampaignRequiredSkills,
+  getCampaignRequiredSkills,
+  listAllSkillsInUse,
+} from './skills';
+export type {
+  UserSkillsInput,
+  CampaignSkillsInput,
+} from './skills';
+export type { UserSkillRecord, CampaignSkillRecord } from './db';

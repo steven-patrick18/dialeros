@@ -18,6 +18,8 @@ import { AttachmentsForm } from './attachments-form';
 import { PhonesPanel } from './phones-panel';
 import { AccessPanel } from './access-panel';
 import { UserActivityPanel } from './activity-panel';
+import { getUserSkills } from '@dialeros/control-plane';
+import { SkillEditor } from '@/components/skill-editor';
 
 const ROLES = ['admin', 'supervisor', 'operator', 'agent'] as const;
 const TIERS = ['new', 'certified', 'expert'] as const;
@@ -211,6 +213,15 @@ export default async function UserDetail({
           username={u.username}
           isSelf={isMe}
           isInactive={isInactive}
+        />
+      </div>
+      <div className="mt-6 border border-border rounded p-4 bg-card max-w-2xl">
+        <SkillEditor
+          initial={getUserSkills(u.id)}
+          endpoint={`/api/users/${u.id}/skills`}
+          fieldName="skills"
+          label="Skills (iter 175)"
+          helpText="UPPERCASE / digits / _ / -. Campaigns that require these skills will route to this agent."
         />
       </div>
     </div>
