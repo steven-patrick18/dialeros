@@ -820,3 +820,12 @@ export type {
   ConsentRevokeInput,
 } from './consent';
 export type { ConsentRecord } from './db';
+
+// Iter 169 — SMTP relay config
+export {
+  getSmtpConfig,
+  setSmtpConfig,
+  renderMsmtprc,
+  MSMTPRC_PATH,
+} from './app-settings';
+export type { SmtpConfig } from './app-settings';

@@ -58,6 +58,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/cluster/nodes', label: 'Cluster Nodes' },
       { href: '/settings/telephony', label: 'Telephony settings' },
       { href: '/settings/recording-retention', label: 'Recording retention' },
+      { href: '/settings/smtp', label: 'SMTP / email' },
       { href: '/settings/wrapup-enforcement', label: 'Wrap-up enforcement' },
       { href: '/settings/frequency-caps', label: 'Frequency caps (TCPA)' },
       { href: '/settings/domain', label: 'Domain & TLS' },

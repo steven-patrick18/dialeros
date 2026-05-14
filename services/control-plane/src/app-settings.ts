@@ -62,6 +62,17 @@ export const APP_SETTING_KEYS = {
   // Iter 167 — Per-CID frequency cap (anti-robocall TCPA pair).
   freqCapCidCount: 'freq_cap.cid_count',
   freqCapCidWindowHours: 'freq_cap.cid_window_hours',
+  // Iter 169 — SMTP relay config for the iter-131 daily report
+  // + future operator-side notifications. Persisted encrypted
+  // (same store as signalwire-token + pacing thresholds);
+  // rendered to /etc/msmtprc when the admin saves so the
+  // system MTA picks up changes live, no restart needed.
+  smtpHost: 'smtp.host',
+  smtpPort: 'smtp.port',
+  smtpUser: 'smtp.user',
+  smtpPassword: 'smtp.password',
+  smtpFrom: 'smtp.from',
+  smtpStartTls: 'smtp.starttls',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -281,4 +292,94 @@ export function setFreqCapCidWindowHours(n: number): void {
     APP_SETTING_KEYS.freqCapCidWindowHours,
     String(clamped),
   );
+}
+
+// Iter 169 — SMTP config getters/setters. Password is stored in the
+// encrypted app_settings table (same encryptSecret/decryptSecret
+// path as the other secrets); the host/port/user/from/starttls
+// values are also encrypted-at-rest even though they're not
+// secret, just for table-shape uniformity.
+
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  /** Plaintext at runtime (after decrypt). NEVER echo back through
+   *  GET — the API surfaces a "password_set: boolean" flag instead. */
+  password: string;
+  from: string;
+  starttls: boolean;
+}
+
+export function getSmtpConfig(): SmtpConfig {
+  const port = parseInt(getAppSetting(APP_SETTING_KEYS.smtpPort) ?? '587', 10);
+  return {
+    host: getAppSetting(APP_SETTING_KEYS.smtpHost) ?? '',
+    port: Number.isFinite(port) && port > 0 ? port : 587,
+    user: getAppSetting(APP_SETTING_KEYS.smtpUser) ?? '',
+    password: getAppSetting(APP_SETTING_KEYS.smtpPassword) ?? '',
+    from: getAppSetting(APP_SETTING_KEYS.smtpFrom) ?? '',
+    starttls:
+      (getAppSetting(APP_SETTING_KEYS.smtpStartTls) ?? '1') === '1',
+  };
+}
+
+export function setSmtpConfig(
+  cfg: Omit<Partial<SmtpConfig>, "password"> & { password?: string | null },
+): void {
+  if (cfg.host !== undefined) {
+    setAppSetting(APP_SETTING_KEYS.smtpHost, cfg.host);
+  }
+  if (cfg.port !== undefined) {
+    setAppSetting(APP_SETTING_KEYS.smtpPort, String(cfg.port));
+  }
+  if (cfg.user !== undefined) {
+    setAppSetting(APP_SETTING_KEYS.smtpUser, cfg.user);
+  }
+  if (cfg.password !== undefined && cfg.password !== null) {
+    // Empty string is a deliberate clear; the GUI passes
+    // password: null to mean "don't touch" and an empty string
+    // to mean "wipe the password".
+    setAppSetting(APP_SETTING_KEYS.smtpPassword, cfg.password);
+  }
+  if (cfg.from !== undefined) {
+    setAppSetting(APP_SETTING_KEYS.smtpFrom, cfg.from);
+  }
+  if (cfg.starttls !== undefined) {
+    setAppSetting(
+      APP_SETTING_KEYS.smtpStartTls,
+      cfg.starttls ? '1' : '0',
+    );
+  }
+}
+
+/** Render the current SMTP config to /etc/msmtprc. Caller is
+ *  responsible for catching any fs error (e.g. when the file
+ *  isn't group-writable because install-smtp.sh hasn't run).
+ *  Intentionally NOT exported through index.ts — the API route
+ *  imports it directly so the I/O surface area stays small. */
+export const MSMTPRC_PATH = '/etc/msmtprc';
+
+export function renderMsmtprc(cfg: SmtpConfig): string {
+  const lines: string[] = [
+    '# /etc/msmtprc — managed by DialerOS admin-gui (iter 169).',
+    '# Hand edits will be overwritten on the next save from',
+    '# /settings/smtp.',
+    '',
+    'defaults',
+    'auth           on',
+    `tls            ${cfg.starttls ? 'on' : 'off'}`,
+    `tls_starttls   ${cfg.starttls ? 'on' : 'off'}`,
+    'tls_trust_file /etc/ssl/certs/ca-certificates.crt',
+    'logfile        /var/log/msmtp.log',
+    '',
+    'account        default',
+    `host           ${cfg.host || 'smtp.example.invalid'}`,
+    `port           ${cfg.port || 587}`,
+    `from           ${cfg.from || 'dialeros@example.invalid'}`,
+    `user           ${cfg.user || 'CHANGEME'}`,
+    `password       ${cfg.password || 'CHANGEME'}`,
+    '',
+  ];
+  return lines.join('\n');
 }
