@@ -977,3 +977,17 @@ export {
   listRecordingsByNode,
 } from './db';
 export type { RecordingNodeRollup } from './db';
+
+// Iter 183 — Parallel race-to-answer SIP forking
+export {
+  parseRoutePlanParallelCarriers,
+  setRoutePlanParallelRace,
+  recordRaceStart,
+  recordRaceWinner,
+  listRaceOutcomes,
+  getCarrierRaceStats,
+} from './db';
+export type {
+  CarrierRaceOutcome,
+  CarrierRaceStat,
+} from './db';

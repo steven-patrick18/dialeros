@@ -933,4 +933,31 @@ export const COLUMN_MIGRATIONS: string[] = [
   "ALTER TABLE dial_intents ADD COLUMN recording_node_id TEXT",
   "ALTER TABLE dial_intents ADD COLUMN recording_bytes INTEGER",
   "CREATE INDEX IF NOT EXISTS idx_dial_intents_recording_node ON dial_intents(recording_node_id) WHERE recording_path IS NOT NULL",
+  // Iter 183 — Parallel race-to-answer SIP forking. Two-to-four
+  // carriers race the same INVITE in parallel; whichever returns
+  // 200 OK first wins, the loser legs get CANCEL'd by FS.
+  // VOICEMAIL-DROP CAMPAIGNS ONLY — the pacer enforces this
+  // (live-agent races would dual-ring a human, which is a UX +
+  // compliance trap). parallel_carriers_json is a JSON array of
+  // carrier IDs (length 2-4); empty / null = legacy single-carrier
+  // behaviour.
+  "ALTER TABLE route_plans ADD COLUMN parallel_race_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE route_plans ADD COLUMN parallel_carriers_json TEXT NOT NULL DEFAULT '[]'",
+  // Per-race outcome row, written at originate-time (winner +
+  // PDD patched in by fs-events on CHANNEL_ANSWER). Powers the
+  // /reports/carrier-race-stats per-carrier win-rate report.
+  `CREATE TABLE IF NOT EXISTS carrier_race_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    correlation_id TEXT NOT NULL,
+    campaign_id TEXT NOT NULL,
+    route_plan_id TEXT NOT NULL,
+    raced_carriers_json TEXT NOT NULL,
+    winner_carrier_id TEXT,
+    winner_pdd_ms INTEGER,
+    started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    decided_at TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_race_correlation ON carrier_race_outcomes(correlation_id)",
+  "CREATE INDEX IF NOT EXISTS idx_race_winner ON carrier_race_outcomes(winner_carrier_id) WHERE winner_carrier_id IS NOT NULL",
+  "CREATE INDEX IF NOT EXISTS idx_race_campaign ON carrier_race_outcomes(campaign_id, started_at)",
 ];

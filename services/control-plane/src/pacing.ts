@@ -28,6 +28,9 @@ import {
   getCampaignAbandonRate,
   inFlightForCarrier,
   insertDialIntent,
+  type RoutePlanRecord,
+  parseRoutePlanParallelCarriers,
+  recordRaceStart,
   getSelfNode,
   listCampaignsFromDb,
   listCarriersForRoutePlanFromDb,
@@ -185,6 +188,39 @@ function applyTransform(
  * to (enabled + accepts destination + below port cap) and round-robins.
  * Falls through to the next tier when nothing in this one is usable.
  * Returns null when every tier is exhausted. */
+/* Iter 183 — Parallel race-to-answer carrier selection. Reads
+ * plan.parallel_carriers_json, applies the same prefix + port-cap
+ * gates as pickCarrierForPlan, returns the carriers that survived
+ * (up to 4). Caller must verify the campaign qualifies (voicemail
+ * / audio_drop only). The plan's primary_carrier_id and
+ * parallel_carriers_json overlap fine — duplicate gateways in a
+ * comma-joined originate just race the same carrier against
+ * itself, which still tests carrier latency variance. */
+function pickParallelCarriers(
+  plan: RoutePlanRecord,
+  destination: string,
+): CarrierRecord[] {
+  const ids = parseRoutePlanParallelCarriers(plan);
+  if (ids.length < 2) return [];
+  const picked: CarrierRecord[] = [];
+  for (const carrierId of ids) {
+    const carrier = getCarrierFromDb(carrierId);
+    if (!carrier) continue;
+    if (carrier.enabled !== 1) continue;
+    if (!carrierAcceptsDestination(carrier, destination)) continue;
+    // Use the same port-cap as the single-carrier picker. We look
+    // up the per-(plan, carrier) cap row; if there's no row for
+    // this carrier on this plan, fall back to a generous default.
+    const allRows = listCarriersForRoutePlanFromDb(plan.id);
+    const row = allRows.find((r) => r.carrier_id === carrierId);
+    const portCap = row?.ports ?? 100;
+    if (inFlightForCarrier(carrier.id) >= portCap) continue;
+    picked.push(carrier);
+    if (picked.length >= 4) break;
+  }
+  return picked;
+}
+
 function pickCarrierForPlan(
   planId: string,
   destination: string,
@@ -737,6 +773,10 @@ export async function paceCampaignOnce(
   // silently lost — the row ends up stuck at DIALING forever.
   let bgapiParams: {
     gateway: string;
+    // Iter 183 — when populated (length >= 2), the originate is
+    // a parallel race; gateway above stays as the primary
+    // fallback in case the race list resolves empty downstream.
+    gateways?: string[];
     dialDestination: string;
     computedBridgeTarget: string;
     bridgeApp: string;
@@ -951,8 +991,27 @@ export async function paceCampaignOnce(
     // stuck at DIALING forever. Pre-inserting with the
     // correlation_id closes the race; the originate result is
     // patched onto the same row right after the await.
+    // Iter 183 — Parallel race-to-answer for voicemail-drop +
+    // audio-drop campaigns. We pre-compute the racing carrier
+    // list here; the actual gateways list flows into bgapiParams
+    // and the bgapi dial-string is built comma-joined below.
+    // Live-agent campaigns ALWAYS take the single-leg path —
+    // dual-ringing a human is a UX trap.
+    let racedCarriers: CarrierRecord[] = [];
+    let raceGateways: string[] | undefined;
+    if (
+      (campaign.amd_action === 'voicemail' ||
+        campaign.amd_action === 'audio_drop') &&
+      plan.parallel_race_enabled
+    ) {
+      racedCarriers = pickParallelCarriers(plan, transformed);
+      if (racedCarriers.length >= 2) {
+        raceGateways = racedCarriers.map((c) => `dialeros-${c.id}`);
+      }
+    }
     bgapiParams = {
       gateway,
+      gateways: raceGateways,
       dialDestination,
       computedBridgeTarget,
       bridgeApp,
@@ -1005,8 +1064,41 @@ export async function paceCampaignOnce(
       const skipOriginateRecording =
         campaign.amd_action === 'voicemail' ||
         campaign.amd_action === 'detect';
+      // Iter 183 — if this is a parallel race, register the
+      // outcome row BEFORE bgapi so the listener has somewhere
+      // to write the winner when CHANNEL_ANSWER arrives. We
+      // also emit an audit-event with race metadata for TCPA
+      // defensibility (this is one call attempt despite N legs).
+      if (
+        bgapiParams.gateways &&
+        bgapiParams.gateways.length >= 2 &&
+        correlationId
+      ) {
+        recordRaceStart({
+          correlationId,
+          campaignId,
+          routePlanId: plan.id,
+          racedCarrierIds: bgapiParams.gateways.map((gw: string) => gw.replace(/^dialeros-/, '')),
+        });
+        appendAudit({
+          actorUserId: null,
+          actorIp: null,
+          action: 'pacing.parallel_race',
+          targetType: 'dial_intent',
+          targetId: String(intent.id),
+          payload: {
+            correlation_id: correlationId,
+            campaign_id: campaignId,
+            route_plan_id: plan.id,
+            raced_carriers: bgapiParams.gateways.map((gw: string) => gw.replace(/^dialeros-/, '')),
+            count_as_attempts: 1,
+            amd_action: campaign.amd_action,
+          },
+        });
+      }
       const jobUuid = await bgapiOriginate({
         gateway: bgapiParams.gateway,
+        gateways: bgapiParams.gateways,
         destination: bgapiParams.dialDestination,
         callerIdNumber: cid ?? undefined,
         correlationId,
@@ -1468,6 +1560,11 @@ export type { DialIntentRecord, CampaignRecord };
 
 interface BgapiOptions {
   gateway: string;
+  // Iter 183 — parallel race-to-answer. When present (length>=2),
+  // the dial-string is built as a comma-joined originate; the
+  // `gateway` field above is the primary fallback for single-leg
+  // mode.
+  gateways?: string[];
   destination: string;
   callerIdNumber?: string;
   /** Iter 33 — set as channel variable so hangup events can find the row. */
@@ -1571,7 +1668,16 @@ function bgapiOriginate(opts: BgapiOptions): Promise<string> {
     for (const kv of opts.extraChannelVars) channelVars.push(kv);
   }
   const vars = `{${channelVars.join(',')}}`;
-  const dial = `${vars}sofia/gateway/${opts.gateway}/${opts.destination}`;
+  // Iter 183 — parallel race-to-answer. When opts.gateways has
+  // 2+ entries, build a comma-joined dial-string so FS forks
+  // simultaneously and the loser legs get CANCEL'd on first
+  // 200 OK. Single gateway path unchanged.
+  const targets = (opts.gateways && opts.gateways.length >= 2)
+    ? opts.gateways
+        .map((gw) => `sofia/gateway/${gw}/${opts.destination}`)
+        .join(',')
+    : `sofia/gateway/${opts.gateway}/${opts.destination}`;
+  const dial = `${vars}${targets}`;
   const cmd = `bgapi originate ${dial} ${opts.app}`;
 
   return new Promise((resolve, reject) => {

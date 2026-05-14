@@ -886,6 +886,13 @@ export interface RoutePlanRecord {
   enabled: number;
   created_at: string;
   updated_at: string;
+  // Iter 183 — Parallel race-to-answer. When parallel_race_enabled
+  // is 1 AND parallel_carriers_json has 2-4 carrier IDs AND the
+  // campaign is amd_action IN ('voicemail', 'audio_drop'), the
+  // pacer issues a comma-joined originate so FS races the legs
+  // in parallel. Loser legs get CANCEL'd by FS automatically.
+  parallel_race_enabled: number;
+  parallel_carriers_json: string;
 }
 
 export function insertRoutePlan(rec: {
@@ -947,6 +954,188 @@ export function deleteRoutePlanFromDb(id: string): boolean {
 // route_plan_carriers (iter 74) — many-to-many carriers per plan with
 // priority + port allocation.
 // =====================================================================
+
+/* Iter 183 — Parallel race-to-answer helpers. Pacer reads this
+ * on every tick to decide single-leg vs comma-joined originate.
+ * The guard against live-agent campaigns is enforced inside
+ * pacing.ts (this layer is purely a value getter). */
+export function parseRoutePlanParallelCarriers(
+  plan: RoutePlanRecord,
+): string[] {
+  if (!plan.parallel_race_enabled) return [];
+  try {
+    const arr = JSON.parse(plan.parallel_carriers_json);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((s): s is string => typeof s === 'string' && s.length > 0)
+      .slice(0, 4);
+  } catch {
+    return [];
+  }
+}
+
+export function setRoutePlanParallelRace(
+  planId: string,
+  enabled: boolean,
+  carrierIds: string[],
+): boolean {
+  if (carrierIds.length > 4) {
+    throw new Error('parallel race supports at most 4 carriers');
+  }
+  const result = db()
+    .prepare(
+      `UPDATE route_plans
+          SET parallel_race_enabled = ?,
+              parallel_carriers_json = ?,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?`,
+    )
+    .run(
+      enabled ? 1 : 0,
+      JSON.stringify(carrierIds),
+      planId,
+    );
+  return Number(result.changes) > 0;
+}
+
+/* Iter 183 — Race-outcome telemetry. recordRaceStart is called
+ * by the pacer right before bgapi originate; recordRaceWinner
+ * by fs-events when CHANNEL_ANSWER fires on one of the legs. The
+ * winner's gateway name (sip_gateway channel var) maps back to
+ * the carrier_id via the existing carrier-id-to-gateway pattern
+ * 'dialeros-<carrierId>'. */
+export interface CarrierRaceOutcome {
+  id: number;
+  correlation_id: string;
+  campaign_id: string;
+  route_plan_id: string;
+  raced_carriers_json: string;
+  winner_carrier_id: string | null;
+  winner_pdd_ms: number | null;
+  started_at: string;
+  decided_at: string | null;
+}
+
+export function recordRaceStart(args: {
+  correlationId: string;
+  campaignId: string;
+  routePlanId: string;
+  racedCarrierIds: string[];
+}): number {
+  const result = db()
+    .prepare(
+      `INSERT INTO carrier_race_outcomes
+         (correlation_id, campaign_id, route_plan_id, raced_carriers_json)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(
+      args.correlationId,
+      args.campaignId,
+      args.routePlanId,
+      JSON.stringify(args.racedCarrierIds),
+    );
+  return Number(result.lastInsertRowid);
+}
+
+export function recordRaceWinner(
+  correlationId: string,
+  winnerCarrierId: string,
+  pddMs: number,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE carrier_race_outcomes
+          SET winner_carrier_id = ?,
+              winner_pdd_ms = ?,
+              decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE correlation_id = ?
+          AND winner_carrier_id IS NULL`,
+    )
+    .run(winnerCarrierId, pddMs, correlationId);
+  return Number(result.changes) > 0;
+}
+
+export function listRaceOutcomes(limit = 200): CarrierRaceOutcome[] {
+  return db()
+    .prepare(
+      `SELECT * FROM carrier_race_outcomes
+        ORDER BY started_at DESC
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as CarrierRaceOutcome[];
+}
+
+export interface CarrierRaceStat {
+  carrier_id: string;
+  races_in: number;       // races this carrier participated in
+  races_won: number;
+  avg_pdd_ms: number | null;
+  min_pdd_ms: number | null;
+  max_pdd_ms: number | null;
+}
+
+/* Aggregate per-carrier race performance over the last N days.
+ * 'races_in' counts every carrier_race_outcomes row whose
+ * raced_carriers_json contains the carrier; 'races_won' counts
+ * rows where winner_carrier_id matches. Win-rate UI = won/in. */
+export function getCarrierRaceStats(days = 7): CarrierRaceStat[] {
+  const since = new Date(Date.now() - days * 86400 * 1000).toISOString();
+  const rows = db()
+    .prepare(
+      `SELECT raced_carriers_json, winner_carrier_id, winner_pdd_ms
+         FROM carrier_race_outcomes
+        WHERE started_at >= ?`,
+    )
+    .all(since) as Array<{
+      raced_carriers_json: string;
+      winner_carrier_id: string | null;
+      winner_pdd_ms: number | null;
+    }>;
+  const acc = new Map<string, CarrierRaceStat>();
+  for (const r of rows) {
+    let carriers: string[] = [];
+    try {
+      const parsed = JSON.parse(r.raced_carriers_json);
+      if (Array.isArray(parsed)) {
+        carriers = parsed.filter((s): s is string => typeof s === 'string');
+      }
+    } catch {
+      /* skip */
+    }
+    for (const cid of carriers) {
+      if (!acc.has(cid)) {
+        acc.set(cid, {
+          carrier_id: cid,
+          races_in: 0,
+          races_won: 0,
+          avg_pdd_ms: null,
+          min_pdd_ms: null,
+          max_pdd_ms: null,
+        });
+      }
+      const s = acc.get(cid)!;
+      s.races_in += 1;
+      if (r.winner_carrier_id === cid) {
+        s.races_won += 1;
+        if (r.winner_pdd_ms != null) {
+          // Streaming avg.
+          if (s.avg_pdd_ms == null) {
+            s.avg_pdd_ms = r.winner_pdd_ms;
+            s.min_pdd_ms = r.winner_pdd_ms;
+            s.max_pdd_ms = r.winner_pdd_ms;
+          } else {
+            s.avg_pdd_ms =
+              (s.avg_pdd_ms * (s.races_won - 1) + r.winner_pdd_ms) /
+              s.races_won;
+            s.min_pdd_ms = Math.min(s.min_pdd_ms!, r.winner_pdd_ms);
+            s.max_pdd_ms = Math.max(s.max_pdd_ms!, r.winner_pdd_ms);
+          }
+        }
+      }
+    }
+  }
+  return [...acc.values()].sort((a, b) => b.races_won - a.races_won);
+}
 
 export interface RoutePlanCarrierRecord {
   id: string;

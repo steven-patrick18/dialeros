@@ -11,11 +11,13 @@ import {
   listCidGroups,
   parseCidGroupIds,
   parseCidPool,
+  parseRoutePlanParallelCarriers,
 } from '@dialeros/control-plane';
 import { AttachmentPicker } from '@/components/attachment-picker';
 import { CarriersTableEditor } from '@/components/carriers-table-editor';
 import { InlineCardForm } from '@/components/inline-card-form';
 import { DeleteRoutePlanButton } from './delete-button';
+import { ParallelRaceEditor } from './parallel-race-editor';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +51,10 @@ export default async function RoutePlanDetail({
       in_flight: inFlightForCarrier(r.carrier_id),
     };
   });
+
+  // Iter 183 — parallel race state for the editor below.
+  const parallelCarrierIds = parseRoutePlanParallelCarriers(plan);
+  const parallelEnabled = plan.parallel_race_enabled === 1;
 
   const exampleNumber = '+14155551234';
   const transformed = applyTransform(
@@ -261,6 +267,15 @@ export default async function RoutePlanDetail({
           value={new Date(plan.created_at).toLocaleString()}
         />
       </dl>
+
+      <div className="mt-8 max-w-4xl">
+        <ParallelRaceEditor
+          planId={plan.id}
+          carriers={allCarriers.map((c) => ({ id: c.id, name: c.name }))}
+          initialEnabled={parallelEnabled}
+          initialCarrierIds={parallelCarrierIds}
+        />
+      </div>
 
       <div className="mt-8 max-w-4xl flex items-center gap-4">
         <DeleteRoutePlanButton id={plan.id} name={plan.name} />

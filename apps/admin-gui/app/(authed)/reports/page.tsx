@@ -75,6 +75,14 @@ export default async function ReportsPage() {
           → Recordings by node (cross-cluster storage rollup)
         </a>
       </p>
+      <p className="text-sm mb-6">
+        <a
+          href="/reports/carrier-race-stats"
+          className="text-link hover:underline"
+        >
+          → Carrier race stats (parallel race-to-answer win rates + PDD)
+        </a>
+      </p>
 
       {/* Top stat strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">
