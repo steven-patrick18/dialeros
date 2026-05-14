@@ -3803,6 +3803,193 @@ export interface AgentTodayScoreboard {
   talk_time_ms_today: number;
   dispositions_today: number;
 }
+/* Iter 173 — Window-able agent productivity. Same shape per agent
+ * regardless of window; rolling 30-day / 7-day / today are all
+ * just different sinceIso. avg_talk_ms / avg_wrap_ms use the
+ * per-call duration_ms (iter-33 already records this on every
+ * answered call) and dispositioned_at - hangup_at for wrap. Auto
+ * codes (iter 146: A/NA/B/CC/OE/AM/...) are still counted —
+ * regulators sometimes want gross volume, not just agent-touched.
+ *
+ * For "agent-only" breakdowns the caller filters disposition_origin
+ * client-side; the SQL emits everything and lets the page render
+ * the split.
+ */
+export interface AgentProductivityRow {
+  user_id: string;
+  username: string;
+  display_name: string | null;
+  calls_attempted: number;
+  calls_answered: number;
+  calls_dispositioned: number;
+  agent_dispositioned: number;
+  auto_dispositioned: number;
+  talk_time_ms: number;
+  avg_talk_ms: number;
+  wrap_time_ms_total: number;
+  avg_wrap_ms: number;
+}
+
+export function getAgentProductivity(
+  userId: string,
+  sinceIso: string,
+  untilIso?: string,
+): AgentProductivityRow | undefined {
+  const where = [
+    'di.assigned_user_id = ?',
+    "di.kind != 'simulated'",
+    'di.ts >= ?',
+  ];
+  const vals: unknown[] = [userId, sinceIso];
+  if (untilIso) {
+    where.push('di.ts < ?');
+    vals.push(untilIso);
+  }
+  const r = db()
+    .prepare(
+      `SELECT
+         u.username, u.display_name,
+         COUNT(*) AS calls_attempted,
+         SUM(CASE WHEN di.answered_at IS NOT NULL THEN 1 ELSE 0 END)
+           AS calls_answered,
+         SUM(CASE WHEN di.dispositioned_at IS NOT NULL THEN 1 ELSE 0 END)
+           AS calls_dispositioned,
+         SUM(CASE WHEN di.disposition_origin = 'agent' THEN 1 ELSE 0 END)
+           AS agent_dispositioned,
+         SUM(CASE WHEN di.disposition_origin = 'auto' THEN 1 ELSE 0 END)
+           AS auto_dispositioned,
+         COALESCE(SUM(CASE WHEN di.answered_at IS NOT NULL THEN di.duration_ms ELSE 0 END), 0)
+           AS talk_time_ms,
+         COALESCE(SUM(
+           CASE WHEN di.dispositioned_at IS NOT NULL AND di.hangup_at IS NOT NULL
+                  AND di.disposition_origin = 'agent'
+                THEN
+                  MAX(0,
+                    CAST(
+                      (strftime('%s', di.dispositioned_at) -
+                       strftime('%s', di.hangup_at)) * 1000
+                      AS INTEGER
+                    )
+                  )
+                ELSE 0 END
+         ), 0) AS wrap_time_ms_total
+         FROM dial_intents di
+         JOIN users u ON u.id = di.assigned_user_id
+        WHERE ${where.join(' AND ')}`,
+    )
+    .get(...(vals as never[])) as {
+    username?: string;
+    display_name?: string | null;
+    calls_attempted?: number;
+    calls_answered?: number;
+    calls_dispositioned?: number;
+    agent_dispositioned?: number;
+    auto_dispositioned?: number;
+    talk_time_ms?: number;
+    wrap_time_ms_total?: number;
+  } | undefined;
+  if (!r || !r.username) return undefined;
+  const calls_answered = r.calls_answered ?? 0;
+  const agent_dispositioned = r.agent_dispositioned ?? 0;
+  return {
+    user_id: userId,
+    username: r.username,
+    display_name: r.display_name ?? null,
+    calls_attempted: r.calls_attempted ?? 0,
+    calls_answered,
+    calls_dispositioned: r.calls_dispositioned ?? 0,
+    agent_dispositioned,
+    auto_dispositioned: r.auto_dispositioned ?? 0,
+    talk_time_ms: r.talk_time_ms ?? 0,
+    avg_talk_ms:
+      calls_answered > 0
+        ? Math.round((r.talk_time_ms ?? 0) / calls_answered)
+        : 0,
+    wrap_time_ms_total: r.wrap_time_ms_total ?? 0,
+    avg_wrap_ms:
+      agent_dispositioned > 0
+        ? Math.round((r.wrap_time_ms_total ?? 0) / agent_dispositioned)
+        : 0,
+  };
+}
+
+/* Iter 173 — Same shape, all agents in one query. Skips agents
+ * with zero calls in the window so a 50-seat floor with 5 active
+ * agents shows just the 5 rows. */
+export function listAgentProductivity(
+  sinceIso: string,
+  untilIso?: string,
+): AgentProductivityRow[] {
+  const where = [
+    "di.kind != 'simulated'",
+    'di.ts >= ?',
+    'di.assigned_user_id IS NOT NULL',
+  ];
+  const vals: unknown[] = [sinceIso];
+  if (untilIso) {
+    where.push('di.ts < ?');
+    vals.push(untilIso);
+  }
+  const rows = db()
+    .prepare(
+      `SELECT
+         di.assigned_user_id AS user_id,
+         u.username, u.display_name,
+         COUNT(*) AS calls_attempted,
+         SUM(CASE WHEN di.answered_at IS NOT NULL THEN 1 ELSE 0 END)
+           AS calls_answered,
+         SUM(CASE WHEN di.dispositioned_at IS NOT NULL THEN 1 ELSE 0 END)
+           AS calls_dispositioned,
+         SUM(CASE WHEN di.disposition_origin = 'agent' THEN 1 ELSE 0 END)
+           AS agent_dispositioned,
+         SUM(CASE WHEN di.disposition_origin = 'auto' THEN 1 ELSE 0 END)
+           AS auto_dispositioned,
+         COALESCE(SUM(CASE WHEN di.answered_at IS NOT NULL THEN di.duration_ms ELSE 0 END), 0)
+           AS talk_time_ms,
+         COALESCE(SUM(
+           CASE WHEN di.dispositioned_at IS NOT NULL AND di.hangup_at IS NOT NULL
+                  AND di.disposition_origin = 'agent'
+                THEN
+                  MAX(0,
+                    CAST(
+                      (strftime('%s', di.dispositioned_at) -
+                       strftime('%s', di.hangup_at)) * 1000
+                      AS INTEGER
+                    )
+                  )
+                ELSE 0 END
+         ), 0) AS wrap_time_ms_total
+         FROM dial_intents di
+         JOIN users u ON u.id = di.assigned_user_id
+        WHERE ${where.join(' AND ')}
+        GROUP BY di.assigned_user_id
+        ORDER BY calls_attempted DESC`,
+    )
+    .all(...(vals as never[])) as Array<{
+    user_id: string;
+    username: string;
+    display_name: string | null;
+    calls_attempted: number;
+    calls_answered: number;
+    calls_dispositioned: number;
+    agent_dispositioned: number;
+    auto_dispositioned: number;
+    talk_time_ms: number;
+    wrap_time_ms_total: number;
+  }>;
+  return rows.map((r) => ({
+    ...r,
+    avg_talk_ms:
+      r.calls_answered > 0
+        ? Math.round(r.talk_time_ms / r.calls_answered)
+        : 0,
+    avg_wrap_ms:
+      r.agent_dispositioned > 0
+        ? Math.round(r.wrap_time_ms_total / r.agent_dispositioned)
+        : 0,
+  }));
+}
+
 export function agentTodayScoreboard(userId: string): AgentTodayScoreboard {
   const dayStart = new Date();
   dayStart.setUTCHours(0, 0, 0, 0);

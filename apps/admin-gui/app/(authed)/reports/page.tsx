@@ -51,6 +51,14 @@ export default async function ReportsPage() {
           → TCPA compliance report (rolling 30-day, FCC abandon-rate audit)
         </a>
       </p>
+      <p className="text-sm mb-6">
+        <a
+          href="/reports/agents"
+          className="text-link hover:underline"
+        >
+          → Agent productivity (per-agent talk + wrap + dispo, configurable window)
+        </a>
+      </p>
 
       {/* Top stat strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">

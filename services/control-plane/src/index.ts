@@ -839,3 +839,10 @@ export type { BackupVerificationRecord } from './db';
 
 // Iter 172 — FS event listener state
 export { getFsEventListenerState } from './fs-events';
+
+// Iter 173 — Agent productivity
+export {
+  getAgentProductivity,
+  listAgentProductivity,
+} from './db';
+export type { AgentProductivityRow } from './db';
