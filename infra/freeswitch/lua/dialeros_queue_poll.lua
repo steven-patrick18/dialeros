@@ -17,9 +17,19 @@ local QUEUE_POLL_SEC = 3
 local MAX_WAIT_SEC = 600        -- 10 min; mirrors expireStaleQueuedCalls
 local MOH_STREAM = "local_stream://moh"
 
+-- Iter 177 — Queue position announcement cadence. We re-announce
+-- whenever the caller's position changes, OR every ANNOUNCE_HEARTBEAT_SEC
+-- as a reassurance heartbeat. The first poll where we know a
+-- position triggers an immediate announce.
+local ANNOUNCE_HEARTBEAT_SEC = 60
+
 local admin_url = session:getVariable("dialeros_admin_url") or "http://127.0.0.1:3000"
 local token = session:getVariable("dialeros_queue_token") or ""
 local call_id = session:getVariable("uuid")
+
+-- Track announcement state across poll iterations.
+local last_announced_position = nil
+local last_announced_at = -1
 
 -- Start MOH on the caller's channel. playback is blocking, so we
 -- arm it as a non-blocking pre_answer + record_session would be —
@@ -47,8 +57,35 @@ while session:ready() and elapsed < MAX_WAIT_SEC do
         return
       elseif j.action == "abandoned" or j.action == "unknown" then
         break
+      elseif j.action == "hold" then
+        -- Iter 177 — announce position + ETA when:
+        --   * operator has the toggle on (j.announce == true)
+        --   * we know our position
+        --   * AND either the position has changed since last
+        --     announce, or we've heartbeat'd past the
+        --     ANNOUNCE_HEARTBEAT_SEC threshold.
+        if j.announce and j.position and session:ready() then
+          local pos = tonumber(j.position)
+          local heartbeat_due =
+            (elapsed - last_announced_at) >= ANNOUNCE_HEARTBEAT_SEC
+          if pos and (pos ~= last_announced_position or heartbeat_due) then
+            -- Pause MOH and speak: "Your position in queue is N.
+            -- Estimated wait time is M seconds."
+            session:execute(
+              "say",
+              "en NUMBER pronounced " .. tostring(pos)
+            )
+            if j.eta_seconds and tonumber(j.eta_seconds) then
+              session:execute(
+                "say",
+                "en NUMBER pronounced " .. tostring(j.eta_seconds)
+              )
+            end
+            last_announced_position = pos
+            last_announced_at = elapsed
+          end
+        end
       end
-      -- action=hold → fall through and continue the loop
     end
   end
 

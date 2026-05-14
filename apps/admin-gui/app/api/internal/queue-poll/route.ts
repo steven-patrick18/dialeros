@@ -6,6 +6,8 @@ import {
   expireQueuedCall,
   expireStaleQueuedCalls,
   getInGroup,
+  getInboundQueuePosition,
+  getQueueAnnounceEnabled,
   getQueuedCallByCallId,
   pickAvailableAgentForInGroup,
 } from '@dialeros/control-plane';
@@ -127,10 +129,18 @@ export async function POST(req: NextRequest) {
       : 'longest_idle';
   const agent = pickAvailableAgentForInGroup(row.in_group_id, strategy);
   if (!agent) {
+    // Iter 177 — enrich the hold response with the caller's
+    // position + ETA + announce flag so the FS Lua loop can
+    // speak it to the caller via the `say` engine.
+    const pos = getInboundQueuePosition(row.call_id);
     return NextResponse.json({
       action: 'hold',
       reason: 'no_agent_yet',
       waited_ms: Date.now() - Date.parse(row.enqueued_at),
+      announce: getQueueAnnounceEnabled(),
+      position: pos?.position ?? null,
+      ahead: pos?.ahead ?? null,
+      eta_seconds: pos?.eta_seconds ?? null,
     });
   }
 
@@ -153,7 +163,16 @@ export async function POST(req: NextRequest) {
         replay: true,
       });
     }
-    return NextResponse.json({ action: 'hold', reason: 'lost_race' });
+    // Iter 177 — same enrichment as the no_agent_yet branch.
+    const pos = getInboundQueuePosition(row.call_id);
+    return NextResponse.json({
+      action: 'hold',
+      reason: 'lost_race',
+      announce: getQueueAnnounceEnabled(),
+      position: pos?.position ?? null,
+      ahead: pos?.ahead ?? null,
+      eta_seconds: pos?.eta_seconds ?? null,
+    });
   }
 
   appendAudit({

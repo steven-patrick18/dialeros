@@ -73,6 +73,11 @@ export const APP_SETTING_KEYS = {
   smtpPassword: 'smtp.password',
   smtpFrom: 'smtp.from',
   smtpStartTls: 'smtp.starttls',
+  // Iter 177 — Queue position announcement toggle. When on,
+  // the FS hold-queue Lua speaks the caller's position +
+  // estimated wait via FS's `say` engine on position change
+  // or every 60s, whichever comes first.
+  queueAnnounceEnabled: 'queue.announce_enabled',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -382,4 +387,19 @@ export function renderMsmtprc(cfg: SmtpConfig): string {
     '',
   ];
   return lines.join('\n');
+}
+
+// Iter 177 — Queue position announce toggle. Off by default —
+// operators opt in via /settings/queue-announce. The FS Lua
+// poll loop reads this through the queue-poll response so we
+// don't need a separate channel-var fetch.
+export function getQueueAnnounceEnabled(): boolean {
+  return getAppSetting(APP_SETTING_KEYS.queueAnnounceEnabled) === '1';
+}
+
+export function setQueueAnnounceEnabled(enabled: boolean): void {
+  setAppSetting(
+    APP_SETTING_KEYS.queueAnnounceEnabled,
+    enabled ? '1' : '0',
+  );
 }

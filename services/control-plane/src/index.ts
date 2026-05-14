@@ -889,3 +889,11 @@ export {
   listFlaggedCalls,
 } from './db';
 export type { FlaggedCallRow } from './db';
+
+// Iter 177 — Queue position announce
+export {
+  getQueueAnnounceEnabled,
+  setQueueAnnounceEnabled,
+} from './app-settings';
+export { getInboundQueuePosition } from './db';
+export type { InboundQueuePosition } from './db';

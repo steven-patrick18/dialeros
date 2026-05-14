@@ -5672,6 +5672,73 @@ export interface SupervisorQueueRow {
   dispatched_at: string | null;
   dispatched_extension: string | null;
 }
+/* Iter 177 — Queue position + ETA for the announcing Lua loop.
+ * Position is 1-indexed (1 = next-up). ahead is the count of
+ * callers ahead of this one in the same in-group. eta_seconds
+ * is a coarse estimate: position × rolling-avg-wait-seconds
+ * for the in_group's recent dispatched calls. */
+export interface InboundQueuePosition {
+  call_id: string;
+  in_group_id: string;
+  position: number;
+  ahead: number;
+  eta_seconds: number;
+  rolling_avg_wait_seconds: number;
+}
+
+export function getInboundQueuePosition(
+  callId: string,
+): InboundQueuePosition | undefined {
+  const row = db()
+    .prepare(
+      `SELECT call_id, in_group_id, enqueued_at
+         FROM inbound_queue
+        WHERE call_id = ? AND active = 1`,
+    )
+    .get(callId) as
+    | { call_id: string; in_group_id: string; enqueued_at: string }
+    | undefined;
+  if (!row) return undefined;
+
+  // Count active rows enqueued before this one in the same in-group.
+  const aheadRow = db()
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM inbound_queue
+        WHERE in_group_id = ?
+          AND active = 1
+          AND enqueued_at < ?`,
+    )
+    .get(row.in_group_id, row.enqueued_at) as { n: number };
+
+  // Rolling-avg wait seconds: average over recently-dispatched
+  // calls on this in-group in the last 30 minutes. Fallback to
+  // 30s when there's no history (cold start).
+  const avgRow = db()
+    .prepare(
+      `SELECT AVG(strftime('%s', dispatched_at) - strftime('%s', enqueued_at))
+              AS avg_wait
+         FROM inbound_queue
+        WHERE in_group_id = ?
+          AND dispatched_at IS NOT NULL
+          AND dispatched_at >= datetime('now', '-30 minutes')`,
+    )
+    .get(row.in_group_id) as { avg_wait: number | null };
+  const avg = avgRow.avg_wait && avgRow.avg_wait > 0 ? avgRow.avg_wait : 30;
+
+  const position = aheadRow.n + 1;
+  const eta = Math.round(position * avg);
+
+  return {
+    call_id: row.call_id,
+    in_group_id: row.in_group_id,
+    position,
+    ahead: aheadRow.n,
+    eta_seconds: eta,
+    rolling_avg_wait_seconds: Math.round(avg),
+  };
+}
+
 export function listActiveQueuedCalls(): SupervisorQueueRow[] {
   return db()
     .prepare(
