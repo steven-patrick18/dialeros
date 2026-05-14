@@ -98,6 +98,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/settings/backups', label: 'Backups' },
       { href: '/settings/timers', label: 'Timer health' },
       { href: '/settings/holidays', label: 'Holidays' },
+      { href: '/settings/crm', label: 'CRM' },
       { href: '/settings/database', label: 'Database' },
       { href: '/settings/domain', label: 'Domain & TLS' },
     ],

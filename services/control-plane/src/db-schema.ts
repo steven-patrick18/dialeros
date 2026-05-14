@@ -960,4 +960,27 @@ export const COLUMN_MIGRATIONS: string[] = [
   "CREATE INDEX IF NOT EXISTS idx_race_correlation ON carrier_race_outcomes(correlation_id)",
   "CREATE INDEX IF NOT EXISTS idx_race_winner ON carrier_race_outcomes(winner_carrier_id) WHERE winner_carrier_id IS NOT NULL",
   "CREATE INDEX IF NOT EXISTS idx_race_campaign ON carrier_race_outcomes(campaign_id, started_at)",
+  // Iter 185 — External CRM API keys. Per-org registry of CRM
+  // connections. api_key_encrypted reuses the same envelope-
+  // encryption the SMTP password + SignalWire token use
+  // (services/control-plane/src/secrets.ts). provider_type is
+  // one of 'generic' (operator hand-rolls the request template)
+  // or 'hubspot' (built-in HubSpot v3 contacts search by phone).
+  // request_template_json is only consulted for provider_type=
+  // 'generic'; built-in providers ignore it. Only one row per
+  // org is enabled at any time — enforced by setCrmProviderEnabled
+  // which disables siblings inside a single statement.
+  `CREATE TABLE IF NOT EXISTS crm_providers (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
+    provider_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    api_key_encrypted TEXT,
+    request_template_json TEXT,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_crm_providers_org ON crm_providers(org_id, enabled)",
 ];

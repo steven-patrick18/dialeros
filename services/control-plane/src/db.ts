@@ -42,6 +42,12 @@ const DB_PATH =
 
 let _db: DatabaseSync | null = null;
 
+// Iter 185 - exposed for modules that need raw db access
+// (crm.ts, etc). Prefer named helpers when possible.
+export function getDb(): DatabaseSync {
+  return db();
+}
+
 function db(): DatabaseSync {
   if (_db) return _db;
   mkdirSync(dirname(DB_PATH), { recursive: true });

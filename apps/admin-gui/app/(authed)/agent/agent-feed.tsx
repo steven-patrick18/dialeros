@@ -1,5 +1,7 @@
 'use client';
 
+import { CrmLookupButton } from './crm-lookup';
+
 import { useEffect, useRef, useState } from 'react';
 
 interface AgentIntent {
@@ -225,6 +227,8 @@ function Row({
             {playing ? '▣' : '▶'} rec
           </button>
         )}
+        {/* Iter 185 — CRM lookup. No-op render when no provider enabled. */}
+        <CrmLookupButton phone={intent.transformed_phone} />
       </div>
       {playing && intent.recording_path && (
         <div className="mt-1 ml-12">

@@ -996,3 +996,23 @@ export type {
 // into the schema migration list for the /settings/database
 // admin status surface.
 export { COLUMN_MIGRATIONS, CREATE_TABLES_SQL } from './db-schema';
+
+// Iter 185 — External CRM API keys
+export {
+  listCrmProviders,
+  getCrmProvider,
+  getEnabledCrmProvider,
+  insertCrmProvider,
+  updateCrmProvider,
+  setCrmProviderEnabled,
+  deleteCrmProvider,
+  toSafe as crmProviderToSafe,
+  crmLookupByPhone,
+  CrmProviderTypeSchema,
+} from './crm';
+export type {
+  CrmProviderRow,
+  CrmProviderSafe,
+  CrmProviderType,
+  CrmContactResult,
+} from './crm';
