@@ -37,6 +37,9 @@ export default async function EditInGroupPage({
           entry_call_menu_id: g.entry_call_menu_id ?? null,
           overflow_call_menu_id: g.overflow_call_menu_id ?? null,
           after_hours_call_menu_id: g.after_hours_call_menu_id ?? null,
+          // Iter 180 — business hours + timezone.
+          business_hours_json: g.business_hours_json ?? null,
+          timezone: g.timezone || 'UTC',
         }}
       />
     </div>

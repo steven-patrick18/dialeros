@@ -865,4 +865,28 @@ export const COLUMN_MIGRATIONS: string[] = [
   // (in_group_id, priority ASC, enqueued_at ASC) restricted to
   // still-waiting rows (no dispatched, no expired).
   "CREATE INDEX IF NOT EXISTS idx_inbound_queue_priority ON inbound_queue(in_group_id, priority, enqueued_at) WHERE dispatched_at IS NULL AND expired_at IS NULL",
+  // Iter 180 — Business hours + timezone on in-groups. NULL
+  // business_hours_json means "24/7 open" (default for legacy
+  // rows). When non-NULL, JSON shape:
+  //   { mon: {open:"09:00",close:"17:00"} | null, tue: ..., ... }
+  // Each day-of-week key (mon..sun) is either an {open, close}
+  // window (HH:MM 24h) or null = closed that day.
+  // timezone is an IANA name (e.g. 'America/New_York'); default
+  // 'UTC' so legacy rows still behave deterministically.
+  "ALTER TABLE in_groups ADD COLUMN business_hours_json TEXT",
+  "ALTER TABLE in_groups ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'",
+  // Iter 180 — Org-wide holiday calendar. A holiday_date that
+  // matches today (in the in-group's timezone) forces after-hours
+  // routing for every in-group. Enabled flag lets ops disable a
+  // holiday without losing the row (e.g. business decides to open
+  // on a federal holiday). YYYY-MM-DD calendar dates, no time.
+  `CREATE TABLE IF NOT EXISTS holidays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    holiday_date TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (holiday_date)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_holidays_date_enabled ON holidays(holiday_date, enabled)",
 ];

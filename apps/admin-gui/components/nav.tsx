@@ -96,6 +96,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/settings/smtp', label: 'SMTP / email' },
       { href: '/settings/backups', label: 'Backups' },
       { href: '/settings/timers', label: 'Timer health' },
+      { href: '/settings/holidays', label: 'Holidays' },
       { href: '/settings/domain', label: 'Domain & TLS' },
     ],
   },

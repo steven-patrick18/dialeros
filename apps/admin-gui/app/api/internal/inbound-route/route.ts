@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
   appendAudit,
+  closedReason,
   enqueueInboundCall,
+  getActiveHolidayDateSet,
   getDidPriority,
+  parseBusinessHoursJson,
   findDidOwner,
   findInboundReturnMatch,
   getCampaignInGroups,
@@ -138,6 +141,38 @@ export async function POST(req: NextRequest) {
       to: toNorm,
       in_group_id: ig.id,
     });
+  }
+
+  // Iter 180 — After-hours / holiday check. When the in-group is
+  // closed (outside its business_hours_json window, on a day it
+  // doesn't operate, or a calendar date listed in holidays), we
+  // route to after_hours_call_menu_id if set (typical: announce +
+  // voicemail), or reject the call with a specific reason
+  // Kamailio can map to its own 'sorry we're closed' prompt.
+  {
+    const schedule = parseBusinessHoursJson(ig.business_hours_json);
+    const reason = closedReason({
+      schedule,
+      timezone: ig.timezone || 'UTC',
+      holidayDates: getActiveHolidayDateSet(),
+    });
+    if (reason !== 'open') {
+      if (ig.after_hours_call_menu_id) {
+        return NextResponse.json({
+          action: 'call_menu',
+          call_menu_id: ig.after_hours_call_menu_id,
+          reason,
+          to: toNorm,
+          in_group_id: ig.id,
+        });
+      }
+      return NextResponse.json({
+        action: 'reject',
+        reason,
+        to: toNorm,
+        in_group_id: ig.id,
+      });
+    }
   }
 
   // Iter 155 — entry-time call menu. When the in-group has

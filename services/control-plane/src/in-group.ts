@@ -198,6 +198,13 @@ export const InGroupUpdateInputSchema = z
       .nullable()
       .optional()
       .or(z.literal('').transform(() => null)),
+    // Iter 180 — business hours + tz. The JSON shape is enforced
+    // by parseBusinessHoursJson in the API route; here we accept
+    // any string-or-null for simplicity. timezone is a free-form
+    // IANA name; we validate at use-site via Intl.DateTimeFormat
+    // throwing on invalid zones.
+    business_hours_json: z.string().nullable().optional(),
+    timezone: z.string().min(1).max(64).optional(),
   })
   .refine(
     (d) => {
@@ -270,6 +277,13 @@ export function updateInGroup(
   }
   if (input.after_hours_call_menu_id !== undefined) {
     updates.after_hours_call_menu_id = input.after_hours_call_menu_id;
+  }
+  // Iter 180 — business hours + tz.
+  if (input.business_hours_json !== undefined) {
+    updates.business_hours_json = input.business_hours_json;
+  }
+  if (input.timezone !== undefined) {
+    updates.timezone = input.timezone;
   }
   return updateInGroupFields(id, updates);
 }

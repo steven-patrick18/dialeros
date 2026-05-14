@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { BusinessHoursEditor } from './business-hours-editor';
 
 const TYPES = ['inbound_queue', 'transfer_target', 'both'] as const;
 const WHITELIST_MODES = ['none', 'static', 'cluster_wide_leads'] as const;
@@ -27,6 +28,9 @@ interface GroupState {
   entry_call_menu_id: string | null;
   overflow_call_menu_id: string | null;
   after_hours_call_menu_id: string | null;
+  // Iter 180 — business hours + tz.
+  business_hours_json: string | null;
+  timezone: string;
 }
 
 interface CallMenuOpt {
@@ -37,6 +41,12 @@ interface CallMenuOpt {
 export function EditInGroupForm({ group }: { group: GroupState }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
+  // Iter 180 — business hours editor state. Held here so it can
+  // be folded into the form's POST body alongside the other fields.
+  const [businessHoursJson, setBusinessHoursJson] = useState<string | null>(
+    group.business_hours_json,
+  );
+  const [timezone, setTimezone] = useState<string>(group.timezone || 'UTC');
   const [error, setError] = useState<string | null>(null);
   const [whitelistMode, setWhitelistMode] = useState<WL>(
     group.whitelist_mode as WL,
@@ -86,6 +96,9 @@ export function EditInGroupForm({ group }: { group: GroupState }) {
       after_hours_call_menu_id: String(
         fd.get('after_hours_call_menu_id') ?? '',
       ),
+      // Iter 180 — business hours + tz from the editor state.
+      business_hours_json: businessHoursJson,
+      timezone,
     };
     if (whitelistMode === 'static') {
       body.whitelist_static = staticList;
@@ -266,6 +279,17 @@ export function EditInGroupForm({ group }: { group: GroupState }) {
             ))}
           </select>
         </Field>
+      </Section>
+
+      <Section title="Business hours">
+        <BusinessHoursEditor
+          initialBusinessHoursJson={group.business_hours_json}
+          initialTimezone={group.timezone}
+          onChange={(json, tz) => {
+            setBusinessHoursJson(json);
+            setTimezone(tz);
+          }}
+        />
       </Section>
 
       <label className="flex items-center gap-2 text-sm">

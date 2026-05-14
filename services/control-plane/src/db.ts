@@ -4188,6 +4188,10 @@ export interface InGroupRecord {
   overflow_call_menu_id: string | null;
   after_hours_call_menu_id: string | null;
   entry_call_menu_id: string | null;
+  // Iter 180 — business hours JSON + IANA timezone for the
+  // after-hours router. NULL business_hours_json = 24/7 open.
+  business_hours_json: string | null;
+  timezone: string;
 }
 
 /* Iter 176 — QA flag helpers. Live monitoring (iter 65 / iter 176)
@@ -6836,6 +6840,9 @@ export function updateInGroupFields(
     entry_call_menu_id: string | null;
     overflow_call_menu_id: string | null;
     after_hours_call_menu_id: string | null;
+    // Iter 180 — business hours + timezone.
+    business_hours_json: string | null;
+    timezone: string;
   }>,
 ): boolean {
   const fields: string[] = [];
@@ -7699,4 +7706,71 @@ export function deleteRemoteAgentFromDb(id: string): boolean {
     .prepare(`DELETE FROM remote_agents WHERE id = ?`)
     .run(id);
   return Number(result.changes) > 0;
+}
+
+/* Iter 180 — Org-wide holiday calendar. A row matches today
+ * (by calendar date in the in-group's tz) → that in-group is
+ * forced to after-hours routing regardless of schedule. The
+ * enabled flag lets ops disable a holiday without losing the
+ * row (e.g. business decides to stay open this year). */
+export interface HolidayRow {
+  id: number;
+  holiday_date: string;
+  name: string;
+  enabled: number;
+  created_at: string;
+}
+
+export function listHolidays(): HolidayRow[] {
+  return db()
+    .prepare(
+      `SELECT * FROM holidays ORDER BY holiday_date ASC`,
+    )
+    .all() as unknown as HolidayRow[];
+}
+
+export function insertHoliday(args: {
+  holidayDate: string;
+  name: string;
+}): HolidayRow {
+  // YYYY-MM-DD validation at the API layer; this helper trusts
+  // its caller. ON CONFLICT keeps the call idempotent so a
+  // duplicate POST doesn't 500.
+  db()
+    .prepare(
+      `INSERT INTO holidays (holiday_date, name)
+       VALUES (?, ?)
+       ON CONFLICT(holiday_date) DO UPDATE SET name = excluded.name`,
+    )
+    .run(args.holidayDate, args.name);
+  return db()
+    .prepare(`SELECT * FROM holidays WHERE holiday_date = ?`)
+    .get(args.holidayDate) as unknown as HolidayRow;
+}
+
+export function deleteHoliday(id: number): boolean {
+  const result = db()
+    .prepare(`DELETE FROM holidays WHERE id = ?`)
+    .run(id);
+  return Number(result.changes) > 0;
+}
+
+export function setHolidayEnabled(id: number, enabled: boolean): boolean {
+  const result = db()
+    .prepare(`UPDATE holidays SET enabled = ? WHERE id = ?`)
+    .run(enabled ? 1 : 0, id);
+  return Number(result.changes) > 0;
+}
+
+/** Hot-path: the set of active holiday date strings, cached by
+ * the caller for the duration of one inbound-route invocation.
+ * Holidays are infrequent edits + the table is tiny, so a fresh
+ * SELECT per call is fine. */
+export function getActiveHolidayDateSet(): Set<string> {
+  const rows = db()
+    .prepare(
+      `SELECT holiday_date FROM holidays WHERE enabled = 1`,
+    )
+    .all() as Array<{ holiday_date: string }>;
+  return new Set(rows.map((r) => r.holiday_date));
 }

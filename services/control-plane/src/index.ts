@@ -932,3 +932,27 @@ export {
   isHighestPriorityWaiter,
 } from './db';
 export type { DidWithPriority } from './db';
+
+// Iter 180 — After-hours rules + holidays
+export {
+  listHolidays,
+  insertHoliday,
+  deleteHoliday,
+  setHolidayEnabled,
+  getActiveHolidayDateSet,
+} from './db';
+export type { HolidayRow } from './db';
+export {
+  parseBusinessHoursJson,
+  isOpenNow,
+  closedReason,
+  localizeInstant,
+  BusinessHoursScheduleSchema,
+  BusinessHoursDaySchema,
+} from './business-hours';
+export type {
+  BusinessHoursSchedule,
+  BusinessHoursDay,
+  BusinessHoursContext,
+  DayKey,
+} from './business-hours';
