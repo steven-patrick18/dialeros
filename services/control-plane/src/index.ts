@@ -991,3 +991,8 @@ export type {
   CarrierRaceOutcome,
   CarrierRaceStat,
 } from './db';
+
+// Iter 184 — Postgres export tooling needs visibility
+// into the schema migration list for the /settings/database
+// admin status surface.
+export { COLUMN_MIGRATIONS, CREATE_TABLES_SQL } from './db-schema';

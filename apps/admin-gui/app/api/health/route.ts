@@ -57,14 +57,28 @@ export async function GET() {
 }
 
 async function probeDb(): Promise<SubsystemReport> {
+  // Iter 184 — surface configured DB backend. DIALEROS_DB_BACKEND
+  // defaults to 'sqlite'. The actual pg query backend lands in
+  // iter 188; today operators can dump their sqlite via the
+  // /settings/database CLI for a future migration.
+  const backend =
+    (process.env.DIALEROS_DB_BACKEND as 'sqlite' | 'postgres') ?? 'sqlite';
   try {
     const s = statSync(DB_PATH);
-    return { status: 'ok', size_bytes: s.size, path: DB_PATH };
+    return {
+      status: 'ok',
+      size_bytes: s.size,
+      path: DB_PATH,
+      backend,
+      postgres_url_configured: Boolean(process.env.DATABASE_URL),
+    };
   } catch (e) {
     return {
       status: 'down',
       detail: e instanceof Error ? e.message : 'stat failed',
       path: DB_PATH,
+      backend,
+      postgres_url_configured: Boolean(process.env.DATABASE_URL),
     };
   }
 }
