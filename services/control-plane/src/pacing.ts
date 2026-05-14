@@ -28,6 +28,7 @@ import {
   getCampaignAbandonRate,
   inFlightForCarrier,
   insertDialIntent,
+  getSelfNode,
   listCampaignsFromDb,
   listCarriersForRoutePlanFromDb,
   listCidsInGroupFromDb,
@@ -973,6 +974,11 @@ export async function paceCampaignOnce(
     originate_error: null,
     correlation_id: correlationId,
     recording_path: recordingPath,
+    // Iter 182 — stamp the owning node so the admin GUI can tell
+    // whether a recording is local or on another cluster node.
+    // recordingPath itself is a path on this same node's disk
+    // (pacer writes to local FS), so self-id is correct.
+    recording_node_id: recordingPath ? (getSelfNode()?.id ?? null) : null,
     remote_agent_id: remoteAgent?.id ?? null,
     carrier_id: pickedCarrierId,
   });

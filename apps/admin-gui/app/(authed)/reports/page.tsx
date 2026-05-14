@@ -67,6 +67,14 @@ export default async function ReportsPage() {
           → Flagged for QA (calls flagged during live monitoring)
         </a>
       </p>
+      <p className="text-sm mb-6">
+        <a
+          href="/reports/recordings"
+          className="text-link hover:underline"
+        >
+          → Recordings by node (cross-cluster storage rollup)
+        </a>
+      </p>
 
       {/* Top stat strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">

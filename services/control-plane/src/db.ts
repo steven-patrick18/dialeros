@@ -260,6 +260,19 @@ export function nodeHasRole(node: NodeRecord, role: NodeRole): boolean {
   return parseNodeRoles(node).includes(role);
 }
 
+/* Iter 182 — Returns this node's row from the nodes table —
+ * the one marked is_self=1 during cluster bootstrap. Used to stamp
+ * recording_node_id on outbound dial_intents so the admin GUI can
+ * later tell whether a recording lives locally or on another
+ * cluster node. Returns undefined when no node is marked self
+ * (e.g. fresh DB or a misconfigured cluster); callers must
+ * tolerate this and leave the column NULL. */
+export function getSelfNode(): NodeRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM nodes WHERE is_self = 1 LIMIT 1`)
+    .get() as unknown as NodeRecord | undefined;
+}
+
 export function findNodeByHost(host: string): NodeRecord | undefined {
   return db()
     .prepare(`SELECT * FROM nodes WHERE host = ? LIMIT 1`)
@@ -779,7 +792,7 @@ export function insertCarrier(rec: {
         id, name, host, port, transport, auth_mode,
         digest_username, digest_password_encrypted, ip_acl,
         codecs, max_channels, max_cps, mos_threshold, enabled
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
@@ -1831,14 +1844,16 @@ export function insertDialIntent(rec: {
   originate_error?: string | null;
   correlation_id?: string | null;
   recording_path?: string | null;
+  // Iter 182 — node owning the .wav file (FK nodes.id).
+  recording_node_id?: string | null;
   remote_agent_id?: string | null;
   carrier_id?: string | null;
 }): DialIntentRecord {
   const result = db()
     .prepare(
       `INSERT INTO dial_intents
-         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id, recording_path, remote_agent_id, carrier_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (campaign_id, lead_id, route_plan_id, phone, transformed_phone, cid_used, kind, assigned_user_id, call_uuid, originate_error, correlation_id, recording_path, recording_node_id, remote_agent_id, carrier_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.campaign_id,
@@ -1853,6 +1868,7 @@ export function insertDialIntent(rec: {
       rec.originate_error ?? null,
       rec.correlation_id ?? null,
       rec.recording_path ?? null,
+      rec.recording_node_id ?? null,
       rec.remote_agent_id ?? null,
       rec.carrier_id ?? null,
     );
@@ -2653,6 +2669,46 @@ export function listAutoDispositionCandidates(
         LIMIT ?`,
     )
     .all(limit) as unknown as AutoDispositionCandidate[];
+}
+
+/* Iter 182 — Update a recording row with its final size after FS
+ * record_session closes the .wav. Caller is the FS-event listener
+ * or a periodic file-stat sweep; either way it makes the
+ * /reports/recordings rollup show real numbers without scanning
+ * the recordings dir on every render. */
+export function setRecordingBytes(intentId: number, bytes: number): boolean {
+  const result = db()
+    .prepare(`UPDATE dial_intents SET recording_bytes = ? WHERE id = ?`)
+    .run(bytes, intentId);
+  return Number(result.changes) > 0;
+}
+
+/* Iter 182 — Per-node recording rollup for the /reports/recordings
+ * page. Rows where recording_node_id IS NULL get bucketed under
+ * '__unknown__' so they're visible (legacy or pre-iter-182). */
+export interface RecordingNodeRollup {
+  recording_node_id: string;
+  count: number;
+  total_bytes: number;
+  bytes_known: number;
+  bytes_unknown: number;
+}
+export function listRecordingsByNode(): RecordingNodeRollup[] {
+  return db()
+    .prepare(
+      `SELECT COALESCE(recording_node_id, '__unknown__') AS recording_node_id,
+              COUNT(*) AS count,
+              COALESCE(SUM(recording_bytes), 0) AS total_bytes,
+              SUM(CASE WHEN recording_bytes IS NOT NULL THEN 1 ELSE 0 END)
+                AS bytes_known,
+              SUM(CASE WHEN recording_bytes IS NULL THEN 1 ELSE 0 END)
+                AS bytes_unknown
+         FROM dial_intents
+        WHERE recording_path IS NOT NULL
+        GROUP BY COALESCE(recording_node_id, '__unknown__')
+        ORDER BY count DESC`,
+    )
+    .all() as unknown as RecordingNodeRollup[];
 }
 
 /* Iter 144 — bulk-NULL recording_path on rows whose .wav file

@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { resolve, normalize } from 'node:path';
-import { getDialIntentById } from '@dialeros/control-plane';
+import {
+  getDialIntentById,
+  getNodeFromDb,
+  getSelfNode,
+} from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -38,6 +42,34 @@ export async function GET(
   if (!intent || !intent.recording_path) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
+
+  // Iter 182 — Cross-cluster recording check. If the recording
+  // lives on another node, we can't stream it from local disk.
+  // For now we 409 with a structured payload pointing at the
+  // owning node; an upcoming iter wires an SSH-stream proxy
+  // through the existing cluster bootstrap key.
+  const recIntent = intent as typeof intent & {
+    recording_node_id?: string | null;
+  };
+  if (recIntent.recording_node_id) {
+    const self = getSelfNode();
+    if (!self || recIntent.recording_node_id !== self.id) {
+      const owner = getNodeFromDb(recIntent.recording_node_id);
+      return NextResponse.json(
+        {
+          error: 'recording_on_remote_node',
+          recording_node_id: recIntent.recording_node_id,
+          owner_host: owner?.host ?? null,
+          owner_name: owner?.name ?? null,
+          recording_path: recIntent.recording_path,
+          message:
+            'This recording lives on another cluster node. Fetch it from there until the cross-node proxy ships.',
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   // Authz: admin → any; otherwise only if assigned to caller.
   if (me.role !== 'admin' && intent.assigned_user_id !== me.id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });

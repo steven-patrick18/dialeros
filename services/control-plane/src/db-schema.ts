@@ -919,4 +919,18 @@ export const COLUMN_MIGRATIONS: string[] = [
   "ALTER TABLE users ADD COLUMN org_id TEXT",
   "UPDATE users SET org_id = 'default' WHERE org_id IS NULL",
   "CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)",
+  // Iter 182 — Cross-cluster recording awareness. Each recording's
+  // .wav lives on the node whose FreeSWITCH ran the call. In
+  // single-node deploys this is the admin-gui node (current),
+  // but multi-node clusters need to know WHICH node owns the
+  // file. recording_node_id is set at insertDialIntent time
+  // from getSelfNode()?.id (the pacer's local node).
+  //
+  // recording_bytes caches the file size at record-finish so the
+  // /reports/recordings rollup doesn't have to stat every file.
+  // NULL = unknown yet (file still being written, or pre-iter-182
+  // legacy row).
+  "ALTER TABLE dial_intents ADD COLUMN recording_node_id TEXT",
+  "ALTER TABLE dial_intents ADD COLUMN recording_bytes INTEGER",
+  "CREATE INDEX IF NOT EXISTS idx_dial_intents_recording_node ON dial_intents(recording_node_id) WHERE recording_path IS NOT NULL",
 ];

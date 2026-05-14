@@ -969,3 +969,11 @@ export {
   countUsersPerOrg,
 } from './db';
 export type { OrgRecord } from './db';
+
+// Iter 182 — Cross-cluster recording awareness
+export {
+  getSelfNode,
+  setRecordingBytes,
+  listRecordingsByNode,
+} from './db';
+export type { RecordingNodeRollup } from './db';
