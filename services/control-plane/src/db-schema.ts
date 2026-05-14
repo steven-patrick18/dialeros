@@ -193,6 +193,30 @@ export const CREATE_TABLES_SQL = `
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Iter 168 — Consent records. Searchable "they said yes" log
+    -- for TCPA defensibility. Operators record express consent
+    -- (written / oral / prior business) with evidence pointers.
+    -- Revocation is a first-class state with its own timestamp.
+    CREATE TABLE IF NOT EXISTS consent_records (
+      id TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      consent_type TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_ref TEXT,
+      granted_at TEXT NOT NULL,
+      revoked_at TEXT,
+      notes TEXT,
+      granted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      lead_id TEXT REFERENCES leads(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_consent_records_phone
+      ON consent_records(phone);
+    CREATE INDEX IF NOT EXISTS idx_consent_records_active
+      ON consent_records(phone, revoked_at);
+
     -- Iter 157 — Per-campaign short survey. One survey per
     -- campaign (UNIQUE constraint). Questions are ordered and
     -- have a type that drives the agent wrap-up UI widget.

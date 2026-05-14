@@ -799,3 +799,24 @@ export {
   setFreqCapCidWindowHours,
 } from './app-settings';
 export { countRecentDialsForCid } from './db';
+
+// Iter 168 — Consent records
+export {
+  ConsentTypeSchema,
+  ConsentSourceSchema,
+  ConsentRecordInputSchema,
+  ConsentRevokeInputSchema,
+  createConsentRecord,
+  listConsentRecords,
+  getConsentRecord,
+  revokeConsentRecord,
+  deleteConsentRecord,
+  hasActiveConsent,
+} from './consent';
+export type {
+  ConsentType,
+  ConsentSource,
+  ConsentRecordInput,
+  ConsentRevokeInput,
+} from './consent';
+export type { ConsentRecord } from './db';

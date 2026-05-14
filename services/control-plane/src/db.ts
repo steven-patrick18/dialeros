@@ -4003,6 +4003,144 @@ export interface InGroupRecord {
   entry_call_menu_id: string | null;
 }
 
+/* Iter 168 — Consent record DB ops. Wholesale-replace not needed
+ * — each consent is its own immutable row; revocation is an
+ * UPDATE that sets revoked_at without touching the original
+ * granted_at. */
+export interface ConsentRecord {
+  id: string;
+  phone: string;
+  consent_type: string;
+  source: string;
+  source_ref: string | null;
+  granted_at: string;
+  revoked_at: string | null;
+  notes: string | null;
+  granted_by_user_id: string | null;
+  lead_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function insertConsentRecord(rec: {
+  id: string;
+  phone: string;
+  consent_type: string;
+  source: string;
+  source_ref: string | null;
+  granted_at: string;
+  revoked_at: string | null;
+  notes: string | null;
+  granted_by_user_id: string | null;
+  lead_id: string | null;
+}): void {
+  db()
+    .prepare(
+      `INSERT INTO consent_records
+         (id, phone, consent_type, source, source_ref,
+          granted_at, revoked_at, notes,
+          granted_by_user_id, lead_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rec.id,
+      rec.phone,
+      rec.consent_type,
+      rec.source,
+      rec.source_ref,
+      rec.granted_at,
+      rec.revoked_at,
+      rec.notes,
+      rec.granted_by_user_id,
+      rec.lead_id,
+    );
+}
+
+export function getConsentRecordFromDb(
+  id: string,
+): ConsentRecord | undefined {
+  return db()
+    .prepare(`SELECT * FROM consent_records WHERE id = ?`)
+    .get(id) as unknown as ConsentRecord | undefined;
+}
+
+export function listConsentRecordsFromDb(
+  activeOnly: boolean,
+  limit: number,
+): ConsentRecord[] {
+  const where = activeOnly ? 'WHERE revoked_at IS NULL' : '';
+  return db()
+    .prepare(
+      `SELECT * FROM consent_records ${where}
+        ORDER BY granted_at DESC
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as ConsentRecord[];
+}
+
+export function searchConsentRecords(
+  phone: string,
+  activeOnly: boolean,
+  limit: number,
+): ConsentRecord[] {
+  const where = activeOnly
+    ? 'WHERE phone = ? AND revoked_at IS NULL'
+    : 'WHERE phone = ?';
+  return db()
+    .prepare(
+      `SELECT * FROM consent_records ${where}
+        ORDER BY granted_at DESC
+        LIMIT ?`,
+    )
+    .all(phone, limit) as unknown as ConsentRecord[];
+}
+
+export function updateConsentRecordFields(
+  id: string,
+  fields: { revoked_at?: string | null; notes?: string | null },
+): boolean {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (fields.revoked_at !== undefined) {
+    sets.push('revoked_at = ?');
+    vals.push(fields.revoked_at);
+  }
+  if (fields.notes !== undefined) {
+    sets.push('notes = ?');
+    vals.push(fields.notes);
+  }
+  if (sets.length === 0) return false;
+  sets.push('updated_at = CURRENT_TIMESTAMP');
+  vals.push(id);
+  const r = db()
+    .prepare(
+      `UPDATE consent_records SET ${sets.join(', ')} WHERE id = ?`,
+    )
+    .run(...(vals as never[]));
+  return Number(r.changes) > 0;
+}
+
+export function deleteConsentRecordFromDb(id: string): boolean {
+  const r = db()
+    .prepare(`DELETE FROM consent_records WHERE id = ?`)
+    .run(id);
+  return Number(r.changes) > 0;
+}
+
+/* Iter 168 — Fast "is there active consent for this phone?" check
+ * for any future pacer integration. Uses the
+ * idx_consent_records_active index (phone, revoked_at). */
+export function hasActiveConsentForPhone(phone: string): boolean {
+  const r = db()
+    .prepare(
+      `SELECT 1 FROM consent_records
+        WHERE phone = ? AND revoked_at IS NULL
+        LIMIT 1`,
+    )
+    .get(phone);
+  return Boolean(r);
+}
+
 /* Iter 157 — Survey DB ops. Wholesale-replace-on-update pattern
  * for questions (delete-all-then-insert) so the admin UI saves
  * the entire question list as one transactional form post.
