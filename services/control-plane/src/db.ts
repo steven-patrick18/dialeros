@@ -4190,6 +4190,81 @@ export interface InGroupRecord {
   entry_call_menu_id: string | null;
 }
 
+/* Iter 174 — Per-campaign disposition palette DB ops. Wholesale
+ * delete-and-insert pattern mirrors iter-149 call menu options +
+ * iter-157 survey questions: the admin saves the whole palette,
+ * server replaces atomically. */
+export interface CampaignDispositionRecord {
+  id: number;
+  campaign_id: string;
+  code: string;
+  label: string;
+  lead_status_target: string;
+  is_callback: number;
+  ordering: number;
+  is_active: number;
+}
+
+export function listCampaignDispositionsFromDb(
+  campaignId: string,
+): CampaignDispositionRecord[] {
+  return db()
+    .prepare(
+      `SELECT * FROM campaign_dispositions
+        WHERE campaign_id = ?
+        ORDER BY ordering ASC, id ASC`,
+    )
+    .all(campaignId) as unknown as CampaignDispositionRecord[];
+}
+
+export function deleteCampaignDispositionsForCampaign(
+  campaignId: string,
+): void {
+  db()
+    .prepare(`DELETE FROM campaign_dispositions WHERE campaign_id = ?`)
+    .run(campaignId);
+}
+
+export function insertCampaignDispositionRows(
+  campaignId: string,
+  rows: Array<{
+    code: string;
+    label: string;
+    lead_status_target: string;
+    is_callback: boolean;
+    ordering: number;
+    is_active: boolean;
+  }>,
+): void {
+  if (rows.length === 0) return;
+  const conn = db();
+  const tx = conn.exec.bind(conn);
+  tx('BEGIN');
+  try {
+    const stmt = conn.prepare(
+      `INSERT INTO campaign_dispositions
+         (campaign_id, code, label, lead_status_target,
+          is_callback, ordering, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const r of rows) {
+      stmt.run(
+        campaignId,
+        r.code,
+        r.label,
+        r.lead_status_target,
+        r.is_callback ? 1 : 0,
+        r.ordering,
+        r.is_active ? 1 : 0,
+      );
+    }
+    tx('COMMIT');
+  } catch (e) {
+    tx('ROLLBACK');
+    throw e;
+  }
+}
+
 /* Iter 170 — Backup verification history. Two helpers:
  *   listBackupVerifications(limit) for the admin page
  *   getLatestBackupVerification() for the dashboard

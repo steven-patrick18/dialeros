@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { resolvePaletteLeadStatus } from './campaign-disposition';
+import { getDialIntentById } from './db';
 import { insertSurveyAnswers } from './db';
 import { getCampaignSurvey } from './survey';
 import { disposeIntent, type DialIntentRecord } from './db';
@@ -51,9 +53,19 @@ export const SurveyAnswerInputSchema = z.object({
   answer_text: z.string().max(2000).nullable(),
 });
 
+// Iter 174 — disposition field is permissive at write time: any
+// code matching the ViciDial-style format (UPPER/digits/_/-).
+// Server-side disposeAgentIntent validates against the union of
+// hardcoded codes + the campaign's iter-174 palette before
+// applying.
+const DispositionCodeSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[A-Z0-9_-]+$/);
 export const DisposeInputSchema = z
   .object({
-    disposition: DispositionSchema,
+    disposition: DispositionCodeSchema,
     callback_at: z.string().datetime().optional(),
     note: z.string().max(500).optional(),
     survey_answers: z.array(SurveyAnswerInputSchema).max(50).optional(),
@@ -86,7 +98,25 @@ export function disposeAgentIntent(args: {
   ip: string | null;
   input: DisposeInput;
 }): DisposeResult | undefined {
-  const newLeadStatus = DISPOSITION_TO_LEAD_STATUS[args.input.disposition];
+  // Iter 174 — look up the lead-status target for this disposition:
+  //   1. Try the campaign palette first (custom codes override
+  //      and may shadow hardcoded codes if the admin redefines).
+  //   2. Fall back to the iter-25 hardcoded mapping.
+  //   3. Reject when neither matches — agent UI shouldn't have
+  //      offered an unknown code; this is the server-side belt
+  //      against an old client or a manual API call.
+  const code = args.input.disposition;
+  let newLeadStatus: string | undefined;
+  const intentRow = getDialIntentById(args.intentId);
+  if (intentRow?.campaign_id) {
+    newLeadStatus = resolvePaletteLeadStatus(intentRow.campaign_id, code);
+  }
+  if (!newLeadStatus) {
+    newLeadStatus = (DISPOSITION_TO_LEAD_STATUS as Record<string, string>)[code];
+  }
+  if (!newLeadStatus) {
+    return undefined;
+  }
   const intent = disposeIntent({
     intentId: args.intentId,
     userId: args.userId,

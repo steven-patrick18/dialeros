@@ -320,6 +320,53 @@ function WrapUpDialog({
   const [error, setError] = useState<string | null>(null);
   const [autoSubmitted, setAutoSubmitted] = useState(false);
 
+  // Iter 174 — fetch the per-campaign disposition palette. Empty
+  // array = use hardcoded DISPOSITIONS fallback.
+  const [palette, setPalette] = useState<
+    {
+      code: string;
+      label: string;
+      lead_status_target: string;
+      is_callback: number;
+    }[] | null
+  >(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/campaigns/${intent.campaign_id}/dispositions`, {
+      credentials: 'same-origin',
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)))
+      .then(
+        (data: {
+          palette: {
+            code: string;
+            label: string;
+            lead_status_target: string;
+            is_callback: number;
+            is_active: number;
+          }[];
+        }) => {
+          if (cancelled) return;
+          setPalette(
+            data.palette
+              .filter((p) => p.is_active === 1)
+              .map((p) => ({
+                code: p.code,
+                label: p.label,
+                lead_status_target: p.lead_status_target,
+                is_callback: p.is_callback,
+              })),
+          );
+        },
+      )
+      .catch(() => {
+        if (!cancelled) setPalette([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [intent.campaign_id]);
+
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/campaigns/${intent.campaign_id}/survey`, {
@@ -527,11 +574,17 @@ function WrapUpDialog({
             className="input"
             disabled={submitting}
           >
-            {DISPOSITIONS.map((d) => (
-              <option key={d.code} value={d.code}>
-                {d.code} — {d.label}
-              </option>
-            ))}
+            {palette && palette.length > 0
+              ? palette.map((p) => (
+                  <option key={p.code} value={p.code}>
+                    {p.code} — {p.label}
+                  </option>
+                ))
+              : DISPOSITIONS.map((d) => (
+                  <option key={d.code} value={d.code}>
+                    {d.code} — {d.label}
+                  </option>
+                ))}
           </select>
         </div>
 

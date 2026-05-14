@@ -215,6 +215,25 @@ export const CREATE_TABLES_SQL = `
     CREATE INDEX IF NOT EXISTS idx_backup_verifications_ts
       ON backup_verifications(ts DESC);
 
+    -- Iter 174 — Per-campaign disposition palette. When set,
+    -- the agent UI shows these codes instead of the iter-25
+    -- hardcoded list; disposeAgentIntent uses lead_status_target
+    -- here instead of the hardcoded DISPOSITION_TO_LEAD_STATUS.
+    -- Empty palette = campaign falls back to the hardcoded list.
+    CREATE TABLE IF NOT EXISTS campaign_dispositions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      label TEXT NOT NULL,
+      lead_status_target TEXT NOT NULL,
+      is_callback INTEGER NOT NULL DEFAULT 0,
+      ordering INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(campaign_id, code)
+    );
+    CREATE INDEX IF NOT EXISTS idx_campaign_dispositions_campaign
+      ON campaign_dispositions(campaign_id);
+
     -- Iter 168 — Consent records. Searchable "they said yes" log
     -- for TCPA defensibility. Operators record express consent
     -- (written / oral / prior business) with evidence pointers.

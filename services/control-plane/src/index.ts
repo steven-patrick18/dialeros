@@ -846,3 +846,21 @@ export {
   listAgentProductivity,
 } from './db';
 export type { AgentProductivityRow } from './db';
+
+// Iter 174 — Per-campaign disposition palette
+export {
+  CampaignDispositionInputSchema,
+  CampaignDispositionPaletteSchema,
+  LEAD_STATUS_TARGETS,
+  LeadStatusTargetSchema,
+  saveCampaignDispositionPalette,
+  getCampaignDispositionPalette,
+  hasCustomDispositionPalette,
+  resolvePaletteLeadStatus,
+} from './campaign-disposition';
+export type {
+  CampaignDispositionInput,
+  CampaignDispositionPalette,
+  LeadStatusTarget,
+} from './campaign-disposition';
+export type { CampaignDispositionRecord } from './db';

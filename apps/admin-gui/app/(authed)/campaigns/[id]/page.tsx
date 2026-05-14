@@ -734,6 +734,23 @@ function DetailTab({
           }}
         />
 
+        {/* Iter 174 — Disposition palette (custom dispo codes
+            per campaign). */}
+        <Link
+          href={`/campaigns/${c.id}/dispositions`}
+          className="block border border-border rounded p-4 bg-card hover:bg-card-hover/40 transition-colors max-w-3xl"
+        >
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-base font-semibold">Disposition palette →</h2>
+            <span className="text-xs text-fg-subtle">iter 174</span>
+          </div>
+          <p className="text-fg-subtle text-sm mt-1">
+            Custom disposition codes for this campaign (PROMISE_TO_PAY,
+            REFUSED, etc.). Empty palette = falls back to floor-wide
+            hardcoded list.
+          </p>
+        </Link>
+
         {/* Iter 157 — per-campaign short survey. Quick link to the
             dedicated editor. iter 158 will surface "X questions /
             collected today" stats inline. */}
