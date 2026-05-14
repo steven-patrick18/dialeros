@@ -100,6 +100,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/settings/holidays', label: 'Holidays' },
       { href: '/settings/crm', label: 'CRM' },
       { href: '/settings/database', label: 'Database' },
+      { href: '/settings/carrier-race-auto-prune', label: 'Race auto-prune' },
       { href: '/settings/domain', label: 'Domain & TLS' },
     ],
   },

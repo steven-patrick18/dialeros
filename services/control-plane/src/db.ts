@@ -774,6 +774,8 @@ export interface CarrierRecord {
   dial_plan_rules: string | null;
   created_at: string;
   updated_at: string;
+  // Iter 187 — adaptive race auto-prune.
+  race_paused_until: string | null;
 }
 
 export function insertCarrier(rec: {
@@ -1104,6 +1106,54 @@ export interface CarrierRaceStat {
  * 'races_in' counts every carrier_race_outcomes row whose
  * raced_carriers_json contains the carrier; 'races_won' counts
  * rows where winner_carrier_id matches. Win-rate UI = won/in. */
+/* Iter 187 — Mark / clear race_paused_until on a carrier. The
+ * pacer's pickParallelCarriers reads this on every dial. The
+ * sweeper sets it; manual 'Resume now' clears it. */
+export function setCarrierRacePausedUntil(
+  carrierId: string,
+  pausedUntil: string | null,
+): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE carriers SET race_paused_until = ?,
+                           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?`,
+    )
+    .run(pausedUntil, carrierId);
+  return Number(result.changes) > 0;
+}
+
+/* Returns true when the carrier is currently paused (race_paused_until
+ * exists AND is in the future). Read by pickParallelCarriers. */
+export function isCarrierRacePaused(
+  carrier: { race_paused_until?: string | null },
+  now: Date = new Date(),
+): boolean {
+  const until = carrier.race_paused_until;
+  if (!until) return false;
+  const t = Date.parse(until);
+  if (!Number.isFinite(t)) return false;
+  return t > now.getTime();
+}
+
+export interface CarrierRacePauseRow {
+  id: string;
+  name: string;
+  race_paused_until: string;
+}
+
+export function listPausedRaceCarriers(): CarrierRacePauseRow[] {
+  return getDb()
+    .prepare(
+      `SELECT id, name, race_paused_until
+         FROM carriers
+        WHERE race_paused_until IS NOT NULL
+          AND race_paused_until > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        ORDER BY race_paused_until ASC`,
+    )
+    .all() as unknown as CarrierRacePauseRow[];
+}
+
 export function getCarrierRaceStats(days = 7): CarrierRaceStat[] {
   const since = new Date(Date.now() - days * 86400 * 1000).toISOString();
   const rows = db()

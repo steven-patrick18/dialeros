@@ -983,4 +983,12 @@ export const COLUMN_MIGRATIONS: string[] = [
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   "CREATE INDEX IF NOT EXISTS idx_crm_providers_org ON crm_providers(org_id, enabled)",
+  // Iter 187 — Adaptive carrier race auto-prune. When the iter-
+  // 186 winner detection accumulates enough data showing a
+  // carrier consistently losing races, the sweeper sets
+  // race_paused_until to (now + cooldown_minutes). The parallel-
+  // race picker (pickParallelCarriers) skips carriers where this
+  // is in the future. Single-leg dials still go through — only
+  // parallel-race participation is gated.
+  "ALTER TABLE carriers ADD COLUMN race_paused_until TEXT",
 ];

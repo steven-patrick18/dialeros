@@ -1018,3 +1018,25 @@ export type {
   CrmProviderType,
   CrmContactResult,
 } from './crm';
+
+// Iter 187 — Adaptive carrier race auto-prune
+export {
+  setCarrierRacePausedUntil,
+  isCarrierRacePaused,
+  listPausedRaceCarriers,
+} from './db';
+export type { CarrierRacePauseRow } from './db';
+export {
+  evaluateCarrierForPruning,
+  normalizeAutoPruneConfig,
+  DEFAULT_AUTO_PRUNE,
+} from './carrier-auto-prune';
+export type {
+  AutoPruneConfig,
+  CarrierRaceMetrics,
+  PruneDecision,
+} from './carrier-auto-prune';
+export {
+  getCarrierRaceAutoPruneConfig,
+  setCarrierRaceAutoPruneConfig,
+} from './app-settings';

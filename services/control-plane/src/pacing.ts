@@ -28,6 +28,9 @@ import {
   getCampaignAbandonRate,
   inFlightForCarrier,
   insertDialIntent,
+  isCarrierRacePaused,
+  getCarrierRaceStats,
+  setCarrierRacePausedUntil,
   type RoutePlanRecord,
   parseRoutePlanParallelCarriers,
   recordRaceStart,
@@ -50,6 +53,7 @@ import {
   type RemoteAgentRecord,
 } from './db';
 import { parseCidGroupIds, parseCidPool } from './route-plan';
+import { getCarrierRaceAutoPruneConfig } from "./app-settings";import { evaluateCarrierForPruning } from "./carrier-auto-prune";
 import { getVoicemailConfig } from './campaign';
 import {
   applyDialPlanRule,
@@ -208,6 +212,9 @@ function pickParallelCarriers(
     if (!carrier) continue;
     if (carrier.enabled !== 1) continue;
     if (!carrierAcceptsDestination(carrier, destination)) continue;
+    // Iter 187 — adaptive race auto-prune: skip carriers paused
+    // by the sweeper (consistently lost previous races / high PDD).
+    if (isCarrierRacePaused(carrier)) continue;
     // Use the same port-cap as the single-carrier picker. We look
     // up the per-(plan, carrier) cap row; if there's no row for
     // this carrier on this plan, fall back to a generous default.
@@ -1379,6 +1386,8 @@ export function resumeActivePacers(): { started: number } {
   // same boot path. Idempotent + delayed-start so crash loops don't
   // hammer the filesystem.
   ensureRecordingRetentionSweep();
+  // Iter 187 — race auto-prune sweeper (runs every 60s).
+  ensureAutoPruneSweeper();
   // Iter 77 — boot-time + periodic sweep for stale dial_intents.
   // Without this, a live call whose FS event listener missed the
   // CHANNEL_DESTROY can pin a remote-agent line / carrier port
@@ -1892,5 +1901,73 @@ export async function isUserRegistered(
     // semantics; right now a registered/not-registered binary is
     // enough for the warning banner.
     return false;
+  }
+}
+// Iter 187 — Adaptive race auto-prune sweeper. Runs every 60s.
+// Cheap query — only touches carriers with race outcomes in the
+// last 7 days; idempotent. Hooks into the pacer module so the
+// admin-gui process owns it (same place that owns the pacer
+// loop). When the auto-prune config is disabled this is a no-op.
+let _autoPruneSweepTimer: NodeJS.Timeout | null = null;
+function ensureAutoPruneSweeper(): void {
+  if (_autoPruneSweepTimer) return;
+  _autoPruneSweepTimer = setInterval(() => {
+    try {
+      void sweepCarrierRaceAutoPrune();
+    } catch (e) {
+      console.error('[pacing] auto-prune sweep failed:', e);
+    }
+  }, 60_000);
+  // Don't keep the process alive for this timer.
+  _autoPruneSweepTimer.unref();
+}
+
+async function sweepCarrierRaceAutoPrune(): Promise<void> {
+  const cfg = getCarrierRaceAutoPruneConfig();
+  if (!cfg.enabled) return;
+  const stats = getCarrierRaceStats(7);
+  const now = new Date();
+  for (const s of stats) {
+    const decision = evaluateCarrierForPruning(
+      {
+        carrier_id: s.carrier_id,
+        races_in: s.races_in,
+        races_won: s.races_won,
+        avg_pdd_ms: s.avg_pdd_ms,
+      },
+      cfg,
+      now,
+    );
+    if (decision.action === 'pause') {
+      // Only update if not already paused with a later until.
+      const carrier = getCarrierFromDb(s.carrier_id);
+      if (!carrier) continue;
+      const cur = carrier.race_paused_until
+        ? Date.parse(carrier.race_paused_until)
+        : 0;
+      const next = Date.parse(decision.until);
+      if (Number.isFinite(next) && next > cur) {
+        setCarrierRacePausedUntil(s.carrier_id, decision.until);
+        try {
+          appendAudit({
+            actorUserId: null,
+            actorIp: null,
+            action: 'carrier.race_paused',
+            targetType: 'carrier',
+            targetId: s.carrier_id,
+            payload: {
+              reason: decision.reason,
+              until: decision.until,
+              races_in: s.races_in,
+              races_won: s.races_won,
+              win_rate: s.races_won / Math.max(s.races_in, 1),
+              avg_pdd_ms: s.avg_pdd_ms,
+            },
+          });
+        } catch (e) {
+          console.error('[pacing] race-paused audit failed:', e);
+        }
+      }
+    }
   }
 }

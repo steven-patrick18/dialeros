@@ -86,6 +86,8 @@ export const APP_SETTING_KEYS = {
   callbackEnabled: 'callback.enabled',
   callbackDtmfDigit: 'callback.dtmf_digit',
   callbackTtlMinutes: 'callback.ttl_minutes',
+  // Iter 187 — Adaptive carrier race auto-prune config (JSON).
+  carrierRaceAutoPrune: 'carrier_race.auto_prune_config',
 } as const;
 
 export const RECORDING_RETENTION_DEFAULT_DAYS = 30;
@@ -455,4 +457,29 @@ export function setCallbackTtlMinutes(minutes: number): void {
     throw new Error('Invalid TTL minutes: ' + String(minutes));
   }
   setAppSetting(APP_SETTING_KEYS.callbackTtlMinutes, String(minutes));
+}
+
+// Iter 187 — Adaptive carrier race auto-prune config. Stored as
+// JSON in app_settings; normalizeAutoPruneConfig clamps any
+// out-of-range fields back to the default.
+import {
+  normalizeAutoPruneConfig,
+  type AutoPruneConfig,
+} from './carrier-auto-prune';
+export function getCarrierRaceAutoPruneConfig(): AutoPruneConfig {
+  const raw = getAppSetting(APP_SETTING_KEYS.carrierRaceAutoPrune);
+  if (!raw) return normalizeAutoPruneConfig(null);
+  try {
+    return normalizeAutoPruneConfig(JSON.parse(raw));
+  } catch {
+    return normalizeAutoPruneConfig(null);
+  }
+}
+
+export function setCarrierRaceAutoPruneConfig(cfg: AutoPruneConfig): void {
+  const normalized = normalizeAutoPruneConfig(cfg);
+  setAppSetting(
+    APP_SETTING_KEYS.carrierRaceAutoPrune,
+    JSON.stringify(normalized),
+  );
 }

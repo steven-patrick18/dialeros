@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import {
   getCarrier,
   getCarrierRaceStats,
+  isCarrierRacePaused,
   listRaceOutcomes,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
@@ -96,6 +97,14 @@ export default async function CarrierRaceStatsPage() {
                     <span className="font-mono text-xs text-fg-subtle">
                       {s.carrier_id}
                     </span>
+                    {c && isCarrierRacePaused(c) && (
+                      <span
+                        className="ml-2 inline-block px-2 py-0.5 text-[10px] uppercase tracking-wide rounded border bg-warn/15 text-warn border-warn/40"
+                        title={`Paused until ${c.race_paused_until}`}
+                      >
+                        paused
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2 tabular-nums">{s.races_in}</td>
                   <td className="px-3 py-2 tabular-nums">{s.races_won}</td>
