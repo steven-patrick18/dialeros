@@ -38,6 +38,35 @@ export function SupervisorBoard({ initial }: { initial: ActiveCall[] }) {
     return () => clearInterval(id);
   }, []);
 
+  async function flagForQa(intentId: number) {
+    const reason = prompt('Reason for flagging this call for QA?', '');
+    if (reason === null) return;
+    setBusyId(intentId);
+    setMsg({ tone: 'ok', text: 'Flagging…' });
+    try {
+      const res = await fetch('/api/supervisor/flag-call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          intent_id: intentId,
+          reason: reason || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setMsg({ tone: "err", text: j.error ?? "flag failed" });
+        return;
+      }
+      setMsg({
+        tone: 'ok',
+        text: 'Flagged — visible on /reports/flagged-calls.',
+      });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function eavesdrop(intentId: number, mode: Mode) {
     setBusyId(intentId);
     setMsg(null);
@@ -121,6 +150,12 @@ export function SupervisorBoard({ initial }: { initial: ActiveCall[] }) {
                       busy={busyId === c.id}
                       label="Barge"
                       tone="error"
+                    />
+                    <SupButton
+                      onClick={() => flagForQa(c.id)}
+                      busy={busyId === c.id}
+                      label="⚑ Flag"
+                      tone="warn"
                     />
                   </div>
                 </td>

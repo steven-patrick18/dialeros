@@ -881,3 +881,11 @@ export type {
   CampaignSkillsInput,
 } from './skills';
 export type { UserSkillRecord, CampaignSkillRecord } from './db';
+
+// Iter 176 — QA flag
+export {
+  setDialIntentQaFlag,
+  clearDialIntentQaFlag,
+  listFlaggedCalls,
+} from './db';
+export type { FlaggedCallRow } from './db';

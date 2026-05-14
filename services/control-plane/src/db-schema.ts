@@ -633,6 +633,13 @@ export const COLUMN_MIGRATIONS: string[] = [
   "ALTER TABLE call_menu_options ADD COLUMN dispo_code TEXT",
   "ALTER TABLE call_menu_options ADD COLUMN tod_start TEXT",
   "ALTER TABLE call_menu_options ADD COLUMN tod_end TEXT",
+  // Iter 176 — QA flag on dial_intents. Supervisors flag a
+  // call mid-monitor for later review; the /reports/flagged-calls
+  // page is the QA work queue.
+  "ALTER TABLE dial_intents ADD COLUMN flagged_for_qa INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE dial_intents ADD COLUMN flagged_at TEXT",
+  "ALTER TABLE dial_intents ADD COLUMN flagged_by_user_id TEXT",
+  "ALTER TABLE dial_intents ADD COLUMN flag_reason TEXT",
   "ALTER TABLE dial_intents ADD COLUMN dispositioned_at TEXT",
   "ALTER TABLE dial_intents ADD COLUMN callback_at TEXT",
   // iter 19: schedule-aware picker. Mirrors callback_at onto the lead

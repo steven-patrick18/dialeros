@@ -4190,6 +4190,83 @@ export interface InGroupRecord {
   entry_call_menu_id: string | null;
 }
 
+/* Iter 176 — QA flag helpers. Live monitoring (iter 65 / iter 176)
+ * supervisors flag a call mid-stream; the flagged-calls page
+ * picks them up. Idempotent: re-flagging a row preserves the
+ * earliest flagged_at + flagged_by. Clearing sets all four
+ * columns NULL. */
+export function setDialIntentQaFlag(
+  intentId: number,
+  flaggedByUserId: string,
+  reason: string | null,
+): boolean {
+  const r = db()
+    .prepare(
+      `UPDATE dial_intents
+          SET flagged_for_qa = 1,
+              flagged_at = COALESCE(flagged_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+              flagged_by_user_id = COALESCE(flagged_by_user_id, ?),
+              flag_reason = COALESCE(NULLIF(?, ''), flag_reason)
+        WHERE id = ?`,
+    )
+    .run(flaggedByUserId, reason ?? '', intentId);
+  return Number(r.changes) > 0;
+}
+
+export function clearDialIntentQaFlag(intentId: number): boolean {
+  const r = db()
+    .prepare(
+      `UPDATE dial_intents
+          SET flagged_for_qa = 0,
+              flagged_at = NULL,
+              flagged_by_user_id = NULL,
+              flag_reason = NULL
+        WHERE id = ?`,
+    )
+    .run(intentId);
+  return Number(r.changes) > 0;
+}
+
+export interface FlaggedCallRow {
+  id: number;
+  ts: string;
+  campaign_id: string;
+  campaign_name: string | null;
+  lead_id: string;
+  lead_phone: string;
+  lead_name: string | null;
+  agent_username: string | null;
+  disposition: string | null;
+  duration_ms: number | null;
+  recording_path: string | null;
+  flagged_at: string;
+  flagged_by_username: string | null;
+  flag_reason: string | null;
+}
+
+export function listFlaggedCalls(limit = 200): FlaggedCallRow[] {
+  return db()
+    .prepare(
+      `SELECT di.id, di.ts,
+              di.campaign_id, c.name AS campaign_name,
+              di.lead_id, l.phone AS lead_phone, l.name AS lead_name,
+              au.username AS agent_username,
+              di.disposition, di.duration_ms, di.recording_path,
+              di.flagged_at,
+              fu.username AS flagged_by_username,
+              di.flag_reason
+         FROM dial_intents di
+         JOIN leads l ON l.id = di.lead_id
+         LEFT JOIN campaigns c ON c.id = di.campaign_id
+         LEFT JOIN users au ON au.id = di.assigned_user_id
+         LEFT JOIN users fu ON fu.id = di.flagged_by_user_id
+        WHERE di.flagged_for_qa = 1
+        ORDER BY di.flagged_at DESC
+        LIMIT ?`,
+    )
+    .all(Math.max(1, Math.min(500, limit))) as unknown as FlaggedCallRow[];
+}
+
 /* Iter 174 — Per-campaign disposition palette DB ops. Wholesale
  * delete-and-insert pattern mirrors iter-149 call menu options +
  * iter-157 survey questions: the admin saves the whole palette,
