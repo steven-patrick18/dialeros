@@ -60,6 +60,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/settings/recording-retention', label: 'Recording retention' },
       { href: '/settings/smtp', label: 'SMTP / email' },
       { href: '/settings/backups', label: 'Backups' },
+      { href: '/settings/timers', label: 'Timer health' },
       { href: '/settings/wrapup-enforcement', label: 'Wrap-up enforcement' },
       { href: '/settings/frequency-caps', label: 'Frequency caps (TCPA)' },
       { href: '/settings/domain', label: 'Domain & TLS' },
