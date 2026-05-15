@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { gatherAllNodeLoad } from '@dialeros/control-plane';
+import { gatherAllNodeLoad, userHasPermission } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 
 export const runtime = 'nodejs';
@@ -15,9 +15,13 @@ export async function GET() {
   if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (me.role !== 'admin' && me.role !== 'supervisor') {
+  if (
+    me.role !== 'admin' &&
+    me.role !== 'supervisor' &&
+    !userHasPermission(me, 'cluster.view')
+  ) {
     return NextResponse.json(
-      { error: 'Admin or supervisor role required' },
+      { error: 'cluster.view permission required' },
       { status: 403 },
     );
   }

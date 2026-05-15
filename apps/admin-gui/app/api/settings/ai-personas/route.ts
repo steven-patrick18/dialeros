@@ -4,6 +4,7 @@ import {
   appendAudit,
   insertAiPersona,
   listAiPersonas,
+  userHasPermission,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -15,8 +16,8 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const me = await getCurrentUser();
   if (!me) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (me.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  if (me.role !== 'admin' && !userHasPermission(me, 'ai.manage')) {
+    return NextResponse.json({ error: 'ai.manage permission required' }, { status: 403 });
   }
   const rows = JSON.parse(
     JSON.stringify(listAiPersonas(me.org_id)),
@@ -27,8 +28,8 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const me = await getCurrentUser();
   if (!me) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (me.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  if (me.role !== 'admin' && !userHasPermission(me, 'ai.manage')) {
+    return NextResponse.json({ error: 'ai.manage permission required' }, { status: 403 });
   }
   let body: unknown;
   try {

@@ -1100,3 +1100,13 @@ export {
   parseProbeOutput,
 } from './node-load';
 export type { NodeLoadSnapshot } from './node-load';
+
+// Iter 192 — ViciDial-style user levels
+export {
+  USER_LEVELS,
+  userLevel,
+  userMeetsLevel,
+  defaultLevelForRole,
+  grantedPermissions,
+} from './permissions';
+export type { PermissionDef, UserLevelDef } from './permissions';

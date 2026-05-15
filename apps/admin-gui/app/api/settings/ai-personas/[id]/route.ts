@@ -5,6 +5,7 @@ import {
   deleteAiPersona,
   getAiPersona,
   updateAiPersona,
+  userHasPermission,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -20,8 +21,8 @@ export async function PATCH(
 ) {
   const me = await getCurrentUser();
   if (!me) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (me.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  if (me.role !== 'admin' && !userHasPermission(me, 'ai.manage')) {
+    return NextResponse.json({ error: 'ai.manage permission required' }, { status: 403 });
   }
   const { id } = await ctx.params;
   const existing = getAiPersona(id);
@@ -62,8 +63,8 @@ export async function DELETE(
 ) {
   const me = await getCurrentUser();
   if (!me) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (me.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
+  if (me.role !== 'admin' && !userHasPermission(me, 'ai.manage')) {
+    return NextResponse.json({ error: 'ai.manage permission required' }, { status: 403 });
   }
   const { id } = await ctx.params;
   const existing = getAiPersona(id);

@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
   PERMISSION_CATALOG,
+  USER_LEVELS,
   effectivePermissions,
+  userLevel,
   getUser,
   getUserCampaignIds,
   getUserInGroupIds,
@@ -145,11 +147,15 @@ export default async function UserDetail({
           userId={u.id}
           role={u.role}
           isAdmin={u.role === 'admin'}
+          canEdit={me.role === 'admin'}
           catalog={PERMISSION_CATALOG.map((p) => ({
             slug: p.slug,
             label: p.label,
             group: p.group,
+            minLevel: p.minLevel,
           }))}
+          userLevels={USER_LEVELS}
+          initialLevel={userLevel(u)}
           initialGranted={effectivePermissions(u)}
           initialOverridden={u.permissions !== null}
         />

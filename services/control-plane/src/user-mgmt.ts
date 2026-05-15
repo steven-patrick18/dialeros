@@ -79,6 +79,9 @@ export const UpdateUserInputSchema = z.object({
   // Iter 43 — explicit ACL grants. Pass null to clear the override
   // and fall back to the role's defaults.
   permissions: z.array(PermissionSlugSchema).nullable().optional(),
+  // Iter 192 — ViciDial-style level (admin-only, like role;
+  // non-admin editors get it stripped by the route guard).
+  user_level: z.number().int().min(1).max(9).optional(),
 });
 export type UpdateUserInput = z.infer<typeof UpdateUserInputSchema>;
 

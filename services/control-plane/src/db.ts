@@ -339,6 +339,8 @@ export interface UserRecord {
   permissions: string | null;
   created_at: string;
   updated_at: string;
+  // Iter 192 — ViciDial-style numeric access level (1-9).
+  user_level: number;
   // Iter 181 — Multi-org foundation. Every user belongs to one
   // org; legacy rows are backfilled to 'default' via migration.
   // string here (not nullable) because the migration UPDATE
@@ -376,7 +378,7 @@ export function insertUser(rec: {
 }): void {
   db()
     .prepare(
-      `INSERT INTO users (id, username, email, password_hash, role, display_name, skill_tier, org_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (id, username, email, password_hash, role, display_name, skill_tier, org_id, user_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
@@ -387,6 +389,8 @@ export function insertUser(rec: {
       rec.display_name ?? null,
       rec.skill_tier ?? 'new',
       rec.org_id ?? 'default',
+      // Iter 192 — level from role; 1 if unknown.
+      rec.role === 'admin' ? 9 : rec.role === 'supervisor' ? 6 : rec.role === 'operator' ? 5 : 1,
     );
 }
 
@@ -408,6 +412,7 @@ export function updateUserFields(
     password_hash: string;
     manual_dial: boolean;
     permissions: string | null;
+    user_level: number;
   }>,
 ): boolean {
   const fields: string[] = [];

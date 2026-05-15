@@ -3,17 +3,22 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-// Iter 43 — ViciDial-style ACL matrix. Renders a checkbox grid grouped
-// by resource (Users, Telephony, Campaigns, ...) with the user's
-// current effective permissions checked. Save sends the explicit array
-// to PATCH /api/users/[id]; "Reset to role default" sends null which
-// clears the override. Admins pass through this view but the
-// checkboxes stay disabled — admins implicitly have everything.
+// Iter 43 — ViciDial-style ACL matrix.
+// Iter 192 — adds the numeric user_level (1-9) selector + the
+// level gate: a ticked permission whose minLevel exceeds the
+// selected level renders inert (greyed, "needs L<n>") because
+// effectivePermissions() will not honour it server-side either.
+// Admins pass through read-only (implicit everything).
 
 interface CatalogEntry {
   slug: string;
   label: string;
   group: string;
+  minLevel: number;
+}
+interface LevelDef {
+  level: number;
+  label: string;
 }
 
 export function AccessPanel({
@@ -22,19 +27,26 @@ export function AccessPanel({
   catalog,
   initialGranted,
   initialOverridden,
+  initialLevel,
+  userLevels,
   isAdmin,
+  canEdit,
 }: {
   userId: string;
   role: string;
   catalog: CatalogEntry[];
   initialGranted: string[];
   initialOverridden: boolean;
+  initialLevel: number;
+  userLevels: LevelDef[];
   isAdmin: boolean;
+  canEdit: boolean;
 }) {
   const router = useRouter();
   const [granted, setGranted] = useState<Set<string>>(
     () => new Set(initialGranted),
   );
+  const [level, setLevel] = useState<number>(initialLevel);
   const [overridden, setOverridden] = useState(initialOverridden);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(
@@ -52,10 +64,11 @@ export function AccessPanel({
   }, [catalog]);
 
   const dirty = useMemo(() => {
+    if (level !== initialLevel) return true;
     if (granted.size !== initialGranted.length) return true;
     for (const s of granted) if (!initialGranted.includes(s)) return true;
     return false;
-  }, [granted, initialGranted]);
+  }, [granted, initialGranted, level, initialLevel]);
 
   function toggle(slug: string) {
     setMsg(null);
@@ -73,7 +86,10 @@ export function AccessPanel({
     const res = await fetch(`/api/users/${userId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions: Array.from(granted) }),
+      body: JSON.stringify({
+        permissions: Array.from(granted),
+        user_level: level,
+      }),
     });
     setBusy(false);
     if (!res.ok) {
@@ -89,7 +105,7 @@ export function AccessPanel({
   async function resetToRoleDefault() {
     if (
       !confirm(
-        `Clear the ACL override and fall back to the ${role} role's default permissions?`,
+        `Clear the ACL override and fall back to the ${role} role's default permissions? (user level is left unchanged)`,
       )
     ) {
       return;
@@ -111,12 +127,39 @@ export function AccessPanel({
     router.refresh();
   }
 
+  const editable = canEdit && !isAdmin;
+
   return (
     <div>
+      {/* User level */}
+      <div className="mb-4 flex items-center gap-3">
+        <label className="text-sm text-fg-subtle w-28">User level</label>
+        <select
+          value={level}
+          disabled={!canEdit || isAdmin || busy}
+          onChange={(e) => {
+            setMsg(null);
+            setLevel(Number(e.target.value));
+          }}
+          className="border border-border rounded bg-bg px-2 py-1 text-sm"
+        >
+          {userLevels.map((l) => (
+            <option key={l.level} value={l.level}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+        {isAdmin && (
+          <span className="text-xs text-fg-subtle">
+            admin = implicit level 9
+          </span>
+        )}
+      </div>
+
       {isAdmin && (
         <div className="mb-3 text-xs text-fg-subtle">
-          Admins implicitly have every permission. The matrix below is
-          read-only for admin accounts.
+          Admins implicitly have every permission at level 9. The
+          matrix below is read-only for admin accounts.
         </div>
       )}
       {!isAdmin && (
@@ -127,7 +170,7 @@ export function AccessPanel({
               <button
                 type="button"
                 onClick={resetToRoleDefault}
-                disabled={busy}
+                disabled={!editable || busy}
                 className="underline text-fg-muted hover:text-fg disabled:opacity-50"
               >
                 Reset to {role} defaults
@@ -136,6 +179,10 @@ export function AccessPanel({
           ) : (
             <>Showing the default permissions for the {role} role.</>
           )}
+          <span className="block mt-1">
+            A ticked permission is <strong>inert</strong> until the
+            user level meets its minimum (ViciDial pairing).
+          </span>
         </div>
       )}
 
@@ -147,19 +194,37 @@ export function AccessPanel({
             </h3>
             <ul className="space-y-1">
               {entries.map((p) => {
-                const checked = isAdmin || granted.has(p.slug);
+                const ticked = isAdmin || granted.has(p.slug);
+                const levelOk = isAdmin || level >= p.minLevel;
+                const inert = ticked && !levelOk;
                 return (
                   <li key={p.slug}>
-                    <label className="inline-flex items-start gap-2 text-sm">
+                    <label
+                      className={`inline-flex items-start gap-2 text-sm ${
+                        inert ? 'opacity-50' : ''
+                      }`}
+                    >
                       <input
                         type="checkbox"
-                        checked={checked}
-                        disabled={isAdmin || busy}
+                        checked={ticked}
+                        disabled={!editable || busy}
                         onChange={() => toggle(p.slug)}
                         className="mt-0.5 h-4 w-4"
                       />
                       <span>
-                        <span className="text-fg">{p.label}</span>
+                        <span className="text-fg">
+                          {p.label}
+                          {inert && (
+                            <span className="ml-2 text-[10px] uppercase tracking-wide px-1 py-0.5 rounded border border-warn/40 text-warn">
+                              needs L{p.minLevel}
+                            </span>
+                          )}
+                          {!ticked && !isAdmin && (
+                            <span className="ml-2 text-[10px] text-fg-muted">
+                              L{p.minLevel}+
+                            </span>
+                          )}
+                        </span>
                         <span className="block text-[11px] text-fg-subtle font-mono">
                           {p.slug}
                         </span>
@@ -178,11 +243,16 @@ export function AccessPanel({
           <button
             type="button"
             onClick={save}
-            disabled={!dirty || busy}
+            disabled={!editable || !dirty || busy}
             className="bg-accent hover:bg-accent-hover text-accent-fg px-3 py-1.5 rounded text-sm disabled:opacity-40"
           >
-            {busy ? 'Saving…' : 'Save permissions'}
+            {busy ? 'Saving…' : 'Save access'}
           </button>
+          {!canEdit && (
+            <span className="text-xs text-fg-subtle">
+              You lack users.access — read-only.
+            </span>
+          )}
           {msg && (
             <span
               className={`text-xs ${

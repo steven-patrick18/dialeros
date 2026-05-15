@@ -1065,4 +1065,13 @@ export const COLUMN_MIGRATIONS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
   "CREATE INDEX IF NOT EXISTS idx_ai_turns_session ON ai_call_turns(session_id, turn_index)",
+  // Iter 192 — ViciDial-style numeric user level (1-9). Nullable
+  // for the ALTER, backfilled immediately from role so every row
+  // has a sane value; permissions.ts also falls back to the
+  // role default if it's ever NULL.
+  "ALTER TABLE users ADD COLUMN user_level INTEGER",
+  "UPDATE users SET user_level = 9 WHERE user_level IS NULL AND role = 'admin'",
+  "UPDATE users SET user_level = 6 WHERE user_level IS NULL AND role = 'supervisor'",
+  "UPDATE users SET user_level = 5 WHERE user_level IS NULL AND role = 'operator'",
+  "UPDATE users SET user_level = 1 WHERE user_level IS NULL",
 ];

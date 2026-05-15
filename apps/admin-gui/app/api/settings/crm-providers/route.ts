@@ -4,6 +4,7 @@ import {
   crmProviderToSafe,
   insertCrmProvider,
   listCrmProviders,
+  userHasPermission,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -17,9 +18,9 @@ export async function GET() {
   if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (me.role !== 'admin') {
+  if (me.role !== 'admin' && !userHasPermission(me, 'crm.manage')) {
     return NextResponse.json(
-      { error: 'Admin role required' },
+      { error: 'crm.manage permission required' },
       { status: 403 },
     );
   }
@@ -32,9 +33,9 @@ export async function POST(req: NextRequest) {
   if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (me.role !== 'admin') {
+  if (me.role !== 'admin' && !userHasPermission(me, 'crm.manage')) {
     return NextResponse.json(
-      { error: 'Admin role required' },
+      { error: 'crm.manage permission required' },
       { status: 403 },
     );
   }

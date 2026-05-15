@@ -5,6 +5,7 @@ import {
   getCrmProvider,
   setCrmProviderEnabled,
   updateCrmProvider,
+  userHasPermission,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 
@@ -22,9 +23,9 @@ export async function PATCH(
   if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (me.role !== 'admin') {
+  if (me.role !== 'admin' && !userHasPermission(me, 'crm.manage')) {
     return NextResponse.json(
-      { error: 'Admin role required' },
+      { error: 'crm.manage permission required' },
       { status: 403 },
     );
   }
@@ -117,9 +118,9 @@ export async function DELETE(
   if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (me.role !== 'admin') {
+  if (me.role !== 'admin' && !userHasPermission(me, 'crm.manage')) {
     return NextResponse.json(
-      { error: 'Admin role required' },
+      { error: 'crm.manage permission required' },
       { status: 403 },
     );
   }

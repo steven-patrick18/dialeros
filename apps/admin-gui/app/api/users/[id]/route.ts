@@ -40,6 +40,7 @@ export async function GET(
     is_active: u.is_active === 1,
     manual_dial: u.manual_dial === 1,
     permissions: effectivePermissions(u),
+    user_level: u.user_level,
     permissions_overridden: u.permissions !== null,
     created_at: u.created_at,
     updated_at: u.updated_at,
@@ -109,6 +110,7 @@ export async function PATCH(
     delete parsed.data.role;
     delete parsed.data.password;
     delete parsed.data.permissions;
+    delete parsed.data.user_level;
   }
 
   const result = updateUser(id, parsed.data);
