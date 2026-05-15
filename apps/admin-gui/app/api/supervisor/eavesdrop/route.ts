@@ -5,6 +5,8 @@ import {
   extensionForUser,
   getDialIntentById,
   getPrimaryPhone,
+  liveAgentSnapshot,
+  userHasPermission,
 } from '@dialeros/control-plane';
 import { clientIp, getCurrentUser } from '@/lib/session';
 import { eslApi } from '@/lib/esl';
@@ -23,23 +25,35 @@ export const dynamic = 'force-dynamic';
 //   whisper  — supervisor talks; only the agent hears (a-leg)
 //   barge    — full 3-way; supervisor on the bridge with both legs
 
-const Body = z.object({
-  intent_id: z.number().int().positive(),
-  mode: z.enum(['monitor', 'whisper', 'barge']),
-});
+const Body = z
+  .object({
+    // Iter 193 — either target a specific call (legacy, call-
+    // centric) OR an agent (ViciDial-style: monitor whoever
+    // they're talking to right now; resolves to their current
+    // live intent).
+    intent_id: z.number().int().positive().optional(),
+    agent_user_id: z.string().min(1).optional(),
+    mode: z.enum(['monitor', 'whisper', 'barge']),
+  })
+  .refine((b) => b.intent_id != null || b.agent_user_id != null, {
+    message: 'intent_id or agent_user_id required',
+  });
+
+// Iter 193 — per-mode permission. Supervisors keep working
+// (role default grants all three from iter 192); a non-
+// supervisor can now be granted listen-only without whisper/
+// barge. Admin implicit via userHasPermission.
+const MODE_PERMISSION = {
+  monitor: 'monitor.listen',
+  whisper: 'monitor.whisper',
+  barge: 'monitor.barge',
+} as const;
 
 export async function POST(req: NextRequest) {
   const me = await getCurrentUser();
   if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  if (me.role !== 'admin' && me.role !== 'supervisor') {
-    return NextResponse.json(
-      { error: 'Admin or supervisor role required' },
-      { status: 403 },
-    );
-  }
-
   const raw = await req.json().catch(() => ({}));
   const parsed = Body.safeParse(raw);
   if (!parsed.success) {
@@ -49,11 +63,61 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const intent = getDialIntentById(parsed.data.intent_id);
+  // Per-mode permission gate (iter 192 slugs). Admin implicit.
+  const perm = MODE_PERMISSION[parsed.data.mode];
+  if (!userHasPermission(me, perm)) {
+    return NextResponse.json(
+      { error: `${perm} permission required` },
+      { status: 403 },
+    );
+  }
+
+  // Resolve the target intent. Agent-centric: look up the agent's
+  // current live call from the snapshot. If the agent is paused /
+  // idle (no live intent), return a structured 409 so the board
+  // can say 'no live call to monitor yet' rather than erroring
+  // opaquely — the supervisor watches the roster + the button
+  // auto-arms when the agent's call connects (2s poll).
+  let intentId = parsed.data.intent_id ?? null;
+  if (parsed.data.agent_user_id) {
+    const row = liveAgentSnapshot().find(
+      (r) => r.user_id === parsed.data.agent_user_id,
+    );
+    if (!row) {
+      return NextResponse.json(
+        { error: 'agent_not_found' },
+        { status: 404 },
+      );
+    }
+    if (!row.call_intent_id) {
+      return NextResponse.json(
+        {
+          error: 'agent_has_no_live_call',
+          agent_state: row.status,
+          pause_reason: row.pause_reason ?? null,
+        },
+        { status: 409 },
+      );
+    }
+    intentId = row.call_intent_id;
+  }
+
+  if (intentId == null) {
+    return NextResponse.json(
+      { error: 'no target resolved' },
+      { status: 400 },
+    );
+  }
+
+  const intent = getDialIntentById(intentId);
   if (!intent) {
     return NextResponse.json({ error: 'Intent not found' }, { status: 404 });
   }
-  if (!intent.call_uuid || !intent.answered_at || intent.hangup_at) {
+  // Iter 193 — relaxed liveness: require a live channel
+  // (call_uuid present, not hung up). answered_at may be null for
+  // a call caught while still ringing — eavesdrop attaches to the
+  // channel either way.
+  if (!intent.call_uuid || intent.hangup_at) {
     return NextResponse.json(
       { error: 'Call is no longer live.' },
       { status: 409 },
@@ -92,7 +156,12 @@ export async function POST(req: NextRequest) {
       action: 'supervisor.eavesdrop',
       targetType: 'dial_intent',
       targetId: String(intent.id),
-      payload: { mode: parsed.data.mode, target_uuid: intent.call_uuid },
+      payload: {
+        mode: parsed.data.mode,
+        target_uuid: intent.call_uuid,
+        via: parsed.data.agent_user_id ? 'agent' : 'intent',
+        agent_user_id: parsed.data.agent_user_id ?? null,
+      },
     });
     return NextResponse.json({
       ok: true,
