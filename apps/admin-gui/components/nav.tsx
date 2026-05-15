@@ -65,6 +65,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/route-plans', label: 'Route Plans' },
       { href: '/cid-groups', label: 'CID Groups' },
       { href: '/cluster/nodes', label: 'Cluster Nodes' },
+      { href: '/cluster/load', label: 'Cluster Load' },
     ],
   },
   {

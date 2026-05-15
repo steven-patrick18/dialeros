@@ -1092,3 +1092,11 @@ export type {
   SessionGuardLimits,
   GuardDecision,
 } from './ai-session-guard';
+
+// Iter 191 — Real-time per-node load dashboard
+export {
+  gatherNodeLoad,
+  gatherAllNodeLoad,
+  parseProbeOutput,
+} from './node-load';
+export type { NodeLoadSnapshot } from './node-load';
