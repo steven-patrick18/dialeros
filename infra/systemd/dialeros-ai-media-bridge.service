@@ -1,0 +1,45 @@
+# Iter 190 — AI media bridge daemon. aiohttp WebSocket server
+# FreeSWITCH's mod_audio_stream connects to when a call leg is
+# routed into the AI agent. STT-only in iter 190 (transcribe +
+# log caller turns); iter 191 adds the LLM reply + TTS playback.
+#
+# Lightweight vs the Coqui daemon — no model held resident here
+# (whisper-cli is spawned per utterance). 512M ceiling is plenty.
+
+[Unit]
+Description=DialerOS AI media bridge (FS audio fork -> whisper STT)
+After=network-online.target dialeros-admin.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dialeros
+Group=dialeros
+WorkingDirectory=/opt/dialeros
+ExecStart=/opt/dialeros/.coqui-venv/bin/python /opt/dialeros/scripts/ai-media-bridge.py
+Restart=on-failure
+RestartSec=10
+
+Environment=AI_BRIDGE_HOST=127.0.0.1
+Environment=AI_BRIDGE_PORT=11124
+Environment=WHISPER_BIN=/usr/local/bin/whisper-cli
+Environment=WHISPER_MODEL=/var/lib/dialeros/ai/models/ggml-base.en.bin
+Environment=ADMIN_URL=http://127.0.0.1:1111
+Environment=AI_BRIDGE_SAMPLE_RATE=8000
+EnvironmentFile=-/etc/dialeros/admin.env
+
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/tmp
+ReadOnlyPaths=/opt/dialeros /var/lib/dialeros/ai
+
+MemoryMax=512M
+TasksMax=64
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dialeros-ai-media-bridge
+
+[Install]
+WantedBy=multi-user.target

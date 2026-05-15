@@ -8221,3 +8221,140 @@ export function countUsersPerOrg(): Record<string, number> {
   for (const r of rows) out[r.org_id] = r.n;
   return out;
 }
+
+/* Iter 190 — AI call session + turn tracking. Written by the
+ * media-bridge daemon through the token-gated
+ * /api/internal/ai-session/* endpoints (same trust model as the
+ * iter-137 ai-worker). */
+export interface AiCallSessionRow {
+  id: string;
+  dial_intent_id: number | null;
+  persona_id: string;
+  call_uuid: string | null;
+  from_phone: string | null;
+  status: string;
+  turn_count: number;
+  started_at: string;
+  ended_at: string | null;
+  end_reason: string | null;
+}
+
+export interface AiCallTurnRow {
+  id: number;
+  session_id: string;
+  turn_index: number;
+  role: string;
+  text: string;
+  audio_ms: number | null;
+  stt_ms: number | null;
+  llm_ms: number | null;
+  tts_ms: number | null;
+  created_at: string;
+}
+
+export function startAiCallSession(args: {
+  id: string;
+  dialIntentId: number | null;
+  personaId: string;
+  callUuid: string | null;
+  fromPhone: string | null;
+}): AiCallSessionRow {
+  getDb()
+    .prepare(
+      `INSERT INTO ai_call_sessions
+         (id, dial_intent_id, persona_id, call_uuid, from_phone)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO NOTHING`,
+    )
+    .run(
+      args.id,
+      args.dialIntentId,
+      args.personaId,
+      args.callUuid,
+      args.fromPhone,
+    );
+  return getDb()
+    .prepare(`SELECT * FROM ai_call_sessions WHERE id = ?`)
+    .get(args.id) as unknown as AiCallSessionRow;
+}
+
+export function appendAiCallTurn(args: {
+  sessionId: string;
+  turnIndex: number;
+  role: string;
+  text: string;
+  audioMs?: number | null;
+  sttMs?: number | null;
+  llmMs?: number | null;
+  ttsMs?: number | null;
+}): number {
+  const d = getDb();
+  const result = d
+    .prepare(
+      `INSERT INTO ai_call_turns
+         (session_id, turn_index, role, text, audio_ms, stt_ms, llm_ms, tts_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      args.sessionId,
+      args.turnIndex,
+      args.role,
+      args.text,
+      args.audioMs ?? null,
+      args.sttMs ?? null,
+      args.llmMs ?? null,
+      args.ttsMs ?? null,
+    );
+  d.prepare(
+    `UPDATE ai_call_sessions
+        SET turn_count = (
+          SELECT COUNT(*) FROM ai_call_turns WHERE session_id = ?
+        )
+      WHERE id = ?`,
+  ).run(args.sessionId, args.sessionId);
+  return Number(result.lastInsertRowid);
+}
+
+export function endAiCallSession(
+  sessionId: string,
+  endReason: string,
+  status = 'completed',
+): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE ai_call_sessions
+          SET status = ?,
+              end_reason = ?,
+              ended_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ? AND ended_at IS NULL`,
+    )
+    .run(status, endReason, sessionId);
+  return Number(result.changes) > 0;
+}
+
+export function getAiCallSession(
+  id: string,
+): AiCallSessionRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM ai_call_sessions WHERE id = ?`)
+    .get(id) as unknown as AiCallSessionRow | undefined;
+}
+
+export function listAiCallSessions(limit = 100): AiCallSessionRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM ai_call_sessions
+        ORDER BY started_at DESC LIMIT ?`,
+    )
+    .all(limit) as unknown as AiCallSessionRow[];
+}
+
+export function listAiCallTurns(sessionId: string): AiCallTurnRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM ai_call_turns
+        WHERE session_id = ?
+        ORDER BY turn_index ASC, id ASC`,
+    )
+    .all(sessionId) as unknown as AiCallTurnRow[];
+}

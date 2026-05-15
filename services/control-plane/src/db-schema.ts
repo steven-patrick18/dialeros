@@ -1027,4 +1027,42 @@ export const COLUMN_MIGRATIONS: string[] = [
   // is enabled, a future iter routes the campaign's answered legs
   // into the AI loop instead of an agent bridge.
   "ALTER TABLE campaigns ADD COLUMN ai_persona_id TEXT",
+  // Iter 190 — AI call session tracking. The media bridge daemon
+  // POSTs session lifecycle + each transcribed turn through the
+  // token-gated /api/internal/ai-session/* endpoints (same
+  // pattern as the iter-137 ai-worker). status: 'active' (loop
+  // running) | 'completed' (clean hangup) | 'escalated'
+  // (transferred to a human) | 'aborted' (guardrail / error).
+  `CREATE TABLE IF NOT EXISTS ai_call_sessions (
+    id TEXT PRIMARY KEY,
+    dial_intent_id INTEGER,
+    persona_id TEXT NOT NULL,
+    call_uuid TEXT,
+    from_phone TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    turn_count INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    ended_at TEXT,
+    end_reason TEXT
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_ai_sessions_status ON ai_call_sessions(status, started_at)",
+  "CREATE INDEX IF NOT EXISTS idx_ai_sessions_intent ON ai_call_sessions(dial_intent_id)",
+  // role: 'caller' (STT of what the human said) | 'ai' (what the
+  // persona replied). audio_ms is the utterance duration; stt_ms
+  // / llm_ms / tts_ms are per-stage latencies (NULL on the
+  // caller row + until iter 191 wires LLM/TTS). text is the
+  // transcript / reply.
+  `CREATE TABLE IF NOT EXISTS ai_call_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    turn_index INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    audio_ms INTEGER,
+    stt_ms INTEGER,
+    llm_ms INTEGER,
+    tts_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_ai_turns_session ON ai_call_turns(session_id, turn_index)",
 ];

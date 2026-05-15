@@ -1071,3 +1071,24 @@ export type {
   AiStackHealth,
   PersonaTestResult,
 } from './ai-persona';
+
+// Iter 190 — AI call session tracking
+export {
+  startAiCallSession,
+  appendAiCallTurn,
+  endAiCallSession,
+  getAiCallSession,
+  listAiCallSessions,
+  listAiCallTurns,
+} from './db';
+export type { AiCallSessionRow, AiCallTurnRow } from './db';
+export {
+  evaluateSessionGuard,
+  matchesEscalationKeyword,
+  normalizeForMatch,
+} from './ai-session-guard';
+export type {
+  SessionGuardState,
+  SessionGuardLimits,
+  GuardDecision,
+} from './ai-session-guard';
