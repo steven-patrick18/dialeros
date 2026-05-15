@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getBuildInfo } from '@dialeros/control-plane';
 import { statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { statfs } from 'node:fs/promises';
@@ -50,6 +51,9 @@ export async function GET() {
     {
       status: overall,
       ts: new Date().toISOString(),
+      // Iter 188 — version + build provenance so uptime monitors
+      // can alert on an unexpected deployed version.
+      build: getBuildInfo(),
       subsystems: report,
     },
     { status: code },

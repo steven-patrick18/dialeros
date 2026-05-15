@@ -100,6 +100,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/settings/holidays', label: 'Holidays' },
       { href: '/settings/crm', label: 'CRM' },
       { href: '/settings/database', label: 'Database' },
+      { href: '/settings/release-check', label: 'Release check' },
       { href: '/settings/carrier-race-auto-prune', label: 'Race auto-prune' },
       { href: '/settings/domain', label: 'Domain & TLS' },
     ],
@@ -180,6 +181,9 @@ export function Nav({
         >
           {loggingOut ? 'Signing out…' : 'Sign out'}
         </button>
+        <div className="text-[10px] text-fg-subtle/60 pt-1 tabular-nums">
+          DialerOS v1.0.0
+        </div>
       </div>
     </nav>
   );

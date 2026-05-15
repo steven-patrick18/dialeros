@@ -1,7 +1,7 @@
 {
   "name": "dialeros",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "packageManager": "pnpm@10.33.4",
   "scripts": {
     "dev": "turbo run dev",

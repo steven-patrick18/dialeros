@@ -1040,3 +1040,14 @@ export {
   getCarrierRaceAutoPruneConfig,
   setCarrierRaceAutoPruneConfig,
 } from './app-settings';
+
+// Iter 188 — 1.0 release polish
+export { DIALEROS_VERSION, getBuildInfo } from './version';
+export type { BuildInfo } from './version';
+export { evaluateReadiness } from './release-readiness';
+export type {
+  ReadinessFacts,
+  ReadinessReport,
+  ReadinessCheck,
+  CheckLevel,
+} from './release-readiness';
