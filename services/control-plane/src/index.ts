@@ -1051,3 +1051,23 @@ export type {
   ReadinessCheck,
   CheckLevel,
 } from './release-readiness';
+
+// Iter 189 — Phase K: AI Agent personas
+export {
+  listAiPersonas,
+  getAiPersona,
+  insertAiPersona,
+  updateAiPersona,
+  deleteAiPersona,
+  parseEscalationKeywords,
+  probeAiStack,
+  personaTextTurn,
+  AiPersonaInputSchema,
+  TtsEngineSchema,
+} from './ai-persona';
+export type {
+  AiPersonaRow,
+  AiPersonaInput,
+  AiStackHealth,
+  PersonaTestResult,
+} from './ai-persona';

@@ -991,4 +991,40 @@ export const COLUMN_MIGRATIONS: string[] = [
   // is in the future. Single-leg dials still go through — only
   // parallel-race participation is gated.
   "ALTER TABLE carriers ADD COLUMN race_paused_until TEXT",
+  // Iter 189 — Phase K: AI Agent personas. Pure configuration in
+  // this iter — the real-time STT→LLM→TTS conversational loop +
+  // FreeSWITCH media bridge land in iter 190+. A persona binds:
+  //   - system_prompt: the LLM role/script/guardrails
+  //   - greeting: first utterance when the call connects
+  //   - llm_model: Ollama model tag (default qwen2.5:3b — matches
+  //     the iter-137 post-call worker default)
+  //   - stt_model: whisper.cpp model (default base.en)
+  //   - tts_engine + tts_voice: piper voice name OR coqui
+  //     (iter-162 XTTS-v2 daemon) cloned-speaker ref
+  //   - max_turns / max_call_seconds: hard runtime guardrails
+  //   - escalation_keywords_json: caller phrases that force an
+  //     immediate human transfer (e.g. "speak to a person",
+  //     "lawyer", "stop calling")
+  `CREATE TABLE IF NOT EXISTS ai_personas (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    system_prompt TEXT NOT NULL,
+    greeting TEXT NOT NULL,
+    llm_model TEXT NOT NULL DEFAULT 'qwen2.5:3b',
+    stt_model TEXT NOT NULL DEFAULT 'base.en',
+    tts_engine TEXT NOT NULL DEFAULT 'piper',
+    tts_voice TEXT,
+    max_turns INTEGER NOT NULL DEFAULT 20,
+    max_call_seconds INTEGER NOT NULL DEFAULT 300,
+    escalation_keywords_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_ai_personas_org ON ai_personas(org_id, enabled)",
+  // Campaign binding — when ai_persona_id is set AND the persona
+  // is enabled, a future iter routes the campaign's answered legs
+  // into the AI loop instead of an agent bridge.
+  "ALTER TABLE campaigns ADD COLUMN ai_persona_id TEXT",
 ];
