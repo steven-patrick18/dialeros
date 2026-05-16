@@ -1,0 +1,46 @@
+<!--
+  Iter 195 — DialerOS AI agent dialplan extension.
+
+  The pacer routes a persona-bound campaign's ANSWERED leg here
+  (bridgeApp = &execute_extension(dialeros-ai-agent XML default))
+  instead of bridging to a human. The leg:
+
+    1. answers (if not already)
+    2. starts mod_audio_stream forking its audio (8k mono L16)
+       to the AI media-bridge daemon over a localhost WebSocket
+    3. parks — the daemon drives the conversation: STT (whisper)
+       -> LLM (Ollama) -> TTS (Coqui), streaming replies back
+       over the same WS, which mod_audio_stream plays to the
+       caller. The bound persona's guardrails (max_turns /
+       max_call_seconds / escalation keywords) end or escalate
+       the session server-side; when the daemon closes the WS
+       this extension falls through to the fallback.
+
+  REQUIRES mod_audio_stream (scripts/install-audio-fork.sh,
+  operator step). Until that .so is compiled + loaded this
+  extension is inert — the pacer gate (ai.live_enabled, default
+  OFF) ensures no call is ever routed here before the operator
+  has installed the module and flipped the switch.
+
+  Channel vars set by the pacer before this runs:
+    dialeros_ai_persona_id   — which persona drives the call
+    dialeros_correlation_id  — links to the dial_intent row
+
+  The metadata arg to audio_stream is the JSON the daemon
+  expects as its first frame ({uuid, persona_id, ...}).
+-->
+<include>
+  <extension name="dialeros-ai-agent">
+    <condition field="destination_number" expression="^dialeros-ai-agent$">
+      <action application="answer"/>
+      <action application="set" data="hangup_after_bridge=true"/>
+      <!-- 30 min hard ceiling as a belt-and-braces backstop;
+           the persona's max_call_seconds normally ends it far
+           sooner via the daemon. -->
+      <action application="sched_hangup" data="+1800 normal_clearing"/>
+      <action application="audio_stream"
+              data="start ws://127.0.0.1:11124/ws mono 8k {&quot;uuid&quot;:&quot;${uuid}&quot;,&quot;persona_id&quot;:&quot;${dialeros_ai_persona_id}&quot;,&quot;correlation_id&quot;:&quot;${dialeros_correlation_id}&quot;,&quot;from&quot;:&quot;${caller_id_number}&quot;}"/>
+      <action application="park"/>
+    </condition>
+  </extension>
+</include>

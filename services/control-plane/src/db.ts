@@ -6818,6 +6818,10 @@ export interface CampaignRecord {
   // Iter 140 — JSON override of wait-for-beep dialplan params.
   // NULL = use the iter-139 baked-in defaults.
   voicemail_config: string | null;
+  // Iter 189/195 — bound AI persona. When set + enabled +
+  // ai.live_enabled, the pacer routes the answered leg to the
+  // dialeros-ai-agent extension instead of an agent bridge.
+  ai_persona_id: string | null;
   created_at: string;
   updated_at: string;
 }

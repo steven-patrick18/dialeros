@@ -1121,3 +1121,8 @@ export type {
   ConversationTurn,
   OllamaMessage,
 } from './ai-conversation';
+
+// Iter 195 — AI call routing
+export { shouldRouteCallToAi } from './ai-routing';
+export type { AiRoutingInput } from './ai-routing';
+export { getAiLiveEnabled, setAiLiveEnabled } from './app-settings';

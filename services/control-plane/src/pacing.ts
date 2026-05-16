@@ -53,6 +53,9 @@ import {
   type RemoteAgentRecord,
 } from './db';
 import { parseCidGroupIds, parseCidPool } from './route-plan';
+import { getAiLiveEnabled } from './app-settings';
+import { shouldRouteCallToAi } from './ai-routing';
+import { getAiPersona } from './ai-persona';
 import { getCarrierRaceAutoPruneConfig } from "./app-settings";import { evaluateCarrierForPruning } from "./carrier-auto-prune";
 import { getVoicemailConfig } from './campaign';
 import {
@@ -905,7 +908,31 @@ export async function paceCampaignOnce(
         `dialeros_recording_notice_path=${campaign.recording_notice_audio_path}`,
       );
     }
-    if (campaign.amd_action === 'drop') {
+    // Iter 195 — AI agent gate. Strict (ai-routing.ts):
+    // ai.live_enabled + bound enabled persona + conversational
+    // amd path. Replaces the agent bridge with the
+    // dialeros-ai-agent extension; the media-bridge daemon
+    // drives STT->LLM->TTS. Default-off + persona-binding means
+    // zero behaviour change until the operator opts in.
+    const aiPersona =
+      (campaign as { ai_persona_id?: string | null }).ai_persona_id
+        ? getAiPersona(
+            (campaign as { ai_persona_id: string }).ai_persona_id,
+          )
+        : undefined;
+    const routeToAi = shouldRouteCallToAi({
+      liveEnabled: getAiLiveEnabled(),
+      aiPersonaId:
+        (campaign as { ai_persona_id?: string | null }).ai_persona_id ??
+        null,
+      personaEnabled: aiPersona?.enabled === 1,
+      amdAction: campaign.amd_action,
+    });
+    if (routeToAi && aiPersona) {
+      amdChannelVars.push(`dialeros_ai_persona_id=${aiPersona.id}`);
+      bridgeApp =
+        '&execute_extension(dialeros-ai-agent XML default)';
+    } else if (campaign.amd_action === 'drop') {
       bridgeApp = '&hangup';
     } else if (
       campaign.amd_action === 'call_menu' &&

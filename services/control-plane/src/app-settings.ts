@@ -86,6 +86,10 @@ export const APP_SETTING_KEYS = {
   callbackEnabled: 'callback.enabled',
   callbackDtmfDigit: 'callback.dtmf_digit',
   callbackTtlMinutes: 'callback.ttl_minutes',
+  // Iter 195 — master switch for live AI agent calls.
+  // Default off; flip on only after install-audio-fork.sh
+  // compiles mod_audio_stream.
+  aiLiveEnabled: 'ai.live_enabled',
   // Iter 187 — Adaptive carrier race auto-prune config (JSON).
   carrierRaceAutoPrune: 'carrier_race.auto_prune_config',
 } as const;
@@ -482,4 +486,12 @@ export function setCarrierRaceAutoPruneConfig(cfg: AutoPruneConfig): void {
     APP_SETTING_KEYS.carrierRaceAutoPrune,
     JSON.stringify(normalized),
   );
+}
+
+// Iter 195 — AI live-call master switch.
+export function getAiLiveEnabled(): boolean {
+  return getAppSetting(APP_SETTING_KEYS.aiLiveEnabled) === '1';
+}
+export function setAiLiveEnabled(on: boolean): void {
+  setAppSetting(APP_SETTING_KEYS.aiLiveEnabled, on ? '1' : '0');
 }

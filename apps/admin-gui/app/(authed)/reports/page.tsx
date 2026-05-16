@@ -83,6 +83,14 @@ export default async function ReportsPage() {
           → Carrier race stats (parallel race-to-answer win rates + PDD)
         </a>
       </p>
+      <p className="text-sm mb-6">
+        <a
+          href="/reports/ai-calls"
+          className="text-link hover:underline"
+        >
+          → AI calls (transcripts + STT/LLM/TTS latency · Phase K)
+        </a>
+      </p>
 
       {/* Top stat strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mb-6">
