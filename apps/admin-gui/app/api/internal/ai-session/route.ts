@@ -16,6 +16,7 @@ import {
   listAiCallTurns,
   parseEscalationKeywords,
   rankBySimilarity,
+  resolveTransfer,
   startAiCallSession,
 } from '@dialeros/control-plane';
 
@@ -213,7 +214,18 @@ export async function POST(req: NextRequest) {
     // must NEVER break because retrieval hiccuped. Inert by
     // default: no scoped memory -> no embed call -> the prompt
     // is byte-identical to pre-204.
+    // Iter 205 — one embedding, TWO consumers. The static
+    // keyword guard already ran above; now (when the Master
+    // store has anything in scope) embed the caller line ONCE
+    // and use it for BOTH (a) learned transfer rules and (b)
+    // iter-204 knowledge retrieval. Best-effort: ANY failure
+    // degrades to no-transfer + no-knowledge — a live call must
+    // NEVER break on a retrieval hiccup. Inert by default: no
+    // scoped memory -> no embed -> loop byte-identical to
+    // pre-204.
     let knowledge: string | null = null;
+    let learnedTransfer: { reason: string; score: number } | null =
+      null;
     try {
       let scopeType = 'global';
       let scopeId = '';
@@ -228,34 +240,86 @@ export async function POST(req: NextRequest) {
       if (cands.length > 0) {
         const q = await embed(callerText);
         if (q.ok) {
-          const ranked = rankBySimilarity(
-            q.vector,
-            cands
-              .map((mem) => {
-                let vec: number[] = [];
-                try {
-                  vec = JSON.parse(mem.embedding ?? '[]');
-                } catch {
-                  vec = [];
-                }
-                return { item: mem, vector: vec };
-              })
-              .filter((cv) => cv.vector.length > 0),
-            3,
-            0.5,
+          const scored = cands
+            .map((mem) => {
+              let vec: number[] = [];
+              try {
+                vec = JSON.parse(mem.embedding ?? '[]');
+              } catch {
+                vec = [];
+              }
+              return { item: mem, vector: vec };
+            })
+            .filter((cv) => cv.vector.length > 0);
+          // (a) Learned transfer (iter 205) — rank ONLY the
+          // transfer_rule rows; a close paraphrase of a prior
+          // real escalation hands off now.
+          const tRules = scored.filter(
+            (cv) => cv.item.kind === 'transfer_rule',
           );
-          knowledge = buildRetrievalBlock(
-            ranked.map((h) => ({
-              title: h.item.title,
-              content: h.item.content,
-              score: h.score,
-            })),
-          );
+          if (tRules.length > 0) {
+            const tRanked = rankBySimilarity(q.vector, tRules, 1);
+            const dec = resolveTransfer(
+              tRanked.map((h) => ({
+                reason: h.item.title,
+                score: h.score,
+              })),
+            );
+            if (dec.transfer) {
+              learnedTransfer = {
+                reason: dec.reason,
+                score: dec.score,
+              };
+            }
+          }
+          // (b) Knowledge retrieval (iter 204) — skip the
+          // transfer_rule rows (triggers, not facts). Skipped
+          // entirely when we are about to transfer.
+          if (!learnedTransfer) {
+            const ranked = rankBySimilarity(
+              q.vector,
+              scored.filter(
+                (cv) => cv.item.kind !== 'transfer_rule',
+              ),
+              3,
+              0.5,
+            );
+            knowledge = buildRetrievalBlock(
+              ranked.map((h) => ({
+                title: h.item.title,
+                content: h.item.content,
+                score: h.score,
+              })),
+            );
+          }
         }
       }
     } catch (e) {
-      console.warn('[ai-session] retrieval skipped:', e);
+      console.warn('[ai-session] retrieval/transfer skipped:', e);
       knowledge = null;
+      learnedTransfer = null;
+    }
+
+    // Iter 205 — a LEARNED transfer fires the SAME escalate seam
+    // the keyword guard uses: media-bridge closes the WS, FS
+    // bridges a human via the bound campaign fallback (iter
+    // 190/192). The matched rule's scope was recorded when it
+    // was mined; routing to a SPECIFIC in-group via new dialplan
+    // is deliberately deferred — this iter ships the learned
+    // DECISION, not new FreeSWITCH plumbing.
+    if (learnedTransfer) {
+      endAiCallSession(
+        sessionId,
+        `escalate:learned:${learnedTransfer.reason}`,
+        'escalated',
+      );
+      return NextResponse.json({
+        action: 'escalate',
+        reason: 'learned_transfer',
+        matched: learnedTransfer.reason,
+        score: learnedTransfer.score,
+        learned: true,
+      });
     }
 
     const messages = buildOllamaMessages(

@@ -1120,6 +1120,10 @@ export const COLUMN_MIGRATIONS: string[] = [
   // into the RAG exemplar store (idempotent guard for the
   // QA sweep). NULL = not promoted.
   "ALTER TABLE ai_call_sessions ADD COLUMN exemplar_promoted_at TEXT",
+  // Iter 205 — set once an escalated call has been mined
+  // into a learned transfer_rule (idempotent guard for the
+  // transfer-learning sweep). NULL = not yet mined.
+  "ALTER TABLE ai_call_sessions ADD COLUMN transfer_mined_at TEXT",
   "CREATE INDEX IF NOT EXISTS idx_ai_sessions_unscored ON ai_call_sessions(qa_scored_at, ended_at) WHERE qa_scored_at IS NULL AND ended_at IS NOT NULL",
   // Iter 192 — ViciDial-style numeric user level (1-9). Nullable
   // for the ALTER, backfilled immediately from role so every row

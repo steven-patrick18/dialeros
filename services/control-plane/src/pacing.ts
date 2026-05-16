@@ -65,6 +65,8 @@ import {
   setExemplarPromoted,
   insertAiMemory,
   getDialIntentById,
+  setTransferMined,
+  listEscalatedUnminedAiSessions,
 } from './db';
 import { embed, EMBED_MODEL } from './ai-memory';
 import {
@@ -72,6 +74,10 @@ import {
   shouldPromoteExemplar,
   EXEMPLAR_MIN_SCORE,
 } from './ai-rag';
+import {
+  buildTransferSignalText,
+  shouldLearnTransferRule,
+} from './ai-transfer';
 import { getCarrierRaceAutoPruneConfig } from "./app-settings";import { evaluateCarrierForPruning } from "./carrier-auto-prune";
 import { getVoicemailConfig } from './campaign';
 import {
@@ -2049,6 +2055,9 @@ function ensureAiQaSweeper(): void {
     void sweepAiQa().catch((e) =>
       console.error('[pacing] ai-qa sweep failed:', e),
     );
+    void sweepTransferLearning().catch((e) =>
+      console.error('[pacing] transfer-learn sweep failed:', e),
+    );
   }, 120_000);
   _aiQaSweepTimer.unref();
 }
@@ -2157,6 +2166,84 @@ async function sweepAiQa(): Promise<void> {
       });
     } catch (e) {
       console.error('[pacing] ai-qa audit failed:', e);
+    }
+  }
+}
+
+/* Iter 205 — learn-when-to-transfer. Mine escalated AI calls
+ * (a human WAS needed) into embeddable transfer_rule memories
+ * scoped to the call's campaign (or global for inbound). The
+ * Worker loop then semantically matches future callers against
+ * these — proactively handing off on the paraphrases the
+ * static keyword list (iter 190) can't enumerate. Idempotent
+ * (setTransferMined claims atomically) + best-effort. */
+async function sweepTransferLearning(): Promise<void> {
+  const pending = listEscalatedUnminedAiSessions(5);
+  for (const s of pending) {
+    const turns = listAiCallTurns(s.id).map((t) => ({
+      role: t.role,
+      text: t.text,
+    }));
+    const signalText = buildTransferSignalText(turns);
+    if (
+      !shouldLearnTransferRule({
+        status: s.status,
+        alreadyMined: s.transfer_mined_at != null,
+        signalText,
+      })
+    ) {
+      // No usable signal — claim it so we never re-scan it.
+      setTransferMined(s.id);
+      continue;
+    }
+    let scopeType = 'global';
+    let scopeId = '';
+    if (s.dial_intent_id != null) {
+      const di = getDialIntentById(s.dial_intent_id);
+      if (di?.campaign_id) {
+        scopeType = 'campaign';
+        scopeId = di.campaign_id;
+      }
+    }
+    const emb = await embed(signalText);
+    if (!emb.ok) {
+      // Ollama down — leave unmined; next sweep retries.
+      console.warn(
+        `[pacing] transfer-learn embed failed ${s.id}: ${emb.detail}`,
+      );
+      continue;
+    }
+    // Atomic claim BEFORE insert so two racing sweeps (or a
+    // restart mid-sweep) can never double-learn the same call.
+    if (!setTransferMined(s.id)) continue;
+    const reason = s.end_reason || 'escalated';
+    insertAiMemory({
+      id: randomUUID(),
+      scopeType,
+      scopeId,
+      kind: 'transfer_rule',
+      title: reason,
+      content: signalText,
+      embedding: emb.vector,
+      embedModel: EMBED_MODEL,
+      source: `ai_call_session:${s.id}`,
+    });
+    try {
+      appendAudit({
+        actorUserId: null,
+        actorIp: null,
+        action: 'ai.transfer_rule_learned',
+        targetType: 'ai_call_session',
+        targetId: s.id,
+        payload: {
+          reason,
+          scope_type: scopeType,
+          scope_id: scopeId,
+          persona_id: s.persona_id,
+        },
+      });
+    } catch (e) {
+      console.error('[pacing] transfer-learn audit failed:', e);
     }
   }
 }

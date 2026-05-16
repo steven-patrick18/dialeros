@@ -1203,3 +1203,19 @@ export {
 } from './ai-rag';
 export type { RetrievalHit } from './ai-rag';
 export { setExemplarPromoted } from './db';
+
+// Iter 205 — learn-when-to-transfer
+export {
+  resolveTransfer,
+  buildTransferSignalText,
+  shouldLearnTransferRule,
+  TRANSFER_MIN_SCORE,
+} from './ai-transfer';
+export type {
+  TransferRuleHit,
+  TransferDecision,
+} from './ai-transfer';
+export {
+  setTransferMined,
+  listEscalatedUnminedAiSessions,
+} from './db';

@@ -8478,6 +8478,8 @@ export interface AiCallSessionRow {
   qa_scored_at: string | null;
   // Iter 204 — exemplar curation timestamp (null = not promoted).
   exemplar_promoted_at: string | null;
+  // Iter 205 — transfer-learning mine timestamp (null = not mined).
+  transfer_mined_at: string | null;
 }
 
 export interface AiCallTurnRow {
@@ -8641,6 +8643,43 @@ export function setExemplarPromoted(id: string): boolean {
         .run(id).changes,
     ) > 0
   );
+}
+
+/* Iter 205 — atomically claim an escalated session for
+ * the transfer-learning corpus. Returns true only if it
+ * stamped (column was NULL) so the re-entrant sweep / two
+ * racing sweeps mine it exactly once. */
+export function setTransferMined(id: string): boolean {
+  return (
+    Number(
+      getDb()
+        .prepare(
+          `UPDATE ai_call_sessions
+              SET transfer_mined_at =
+                  strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE id = ? AND transfer_mined_at IS NULL`,
+        )
+        .run(id).changes,
+    ) > 0
+  );
+}
+
+/* Iter 205 — escalated sessions not yet mined into a
+ * transfer_rule (oldest first, bounded) — feeds the
+ * Master transfer-learning sweep. */
+export function listEscalatedUnminedAiSessions(
+  limit = 5,
+): AiCallSessionRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM ai_call_sessions
+        WHERE ended_at IS NOT NULL
+          AND status = 'escalated'
+          AND transfer_mined_at IS NULL
+        ORDER BY ended_at ASC
+        LIMIT ?`,
+    )
+    .all(limit) as unknown as AiCallSessionRow[];
 }
 
 export function listAiCallTurns(sessionId: string): AiCallTurnRow[] {
