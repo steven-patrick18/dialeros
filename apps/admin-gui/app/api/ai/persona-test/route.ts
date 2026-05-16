@@ -26,6 +26,8 @@ export async function POST(req: NextRequest) {
   const o = body as {
     system_prompt?: unknown;
     greeting?: unknown;
+    agent_name?: unknown;
+    agent_title?: unknown;
     model?: unknown;
     history?: unknown;
     customer_line?: unknown;
@@ -57,6 +59,10 @@ export async function POST(req: NextRequest) {
   const result = await personaTextTurn({
     systemPrompt: o.system_prompt,
     greeting: o.greeting,
+    agentName:
+      typeof o.agent_name === 'string' ? o.agent_name : null,
+    agentTitle:
+      typeof o.agent_title === 'string' ? o.agent_title : null,
     model: typeof o.model === 'string' && o.model ? o.model : 'qwen2.5:3b',
     history,
     customerLine: o.customer_line,

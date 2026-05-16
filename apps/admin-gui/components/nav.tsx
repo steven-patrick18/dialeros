@@ -103,6 +103,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/settings/database', label: 'Database' },
       { href: '/settings/release-check', label: 'Release check' },
       { href: '/settings/ai-personas', label: 'AI personas' },
+      { href: '/settings/ai-master', label: 'Master AI' },
       { href: '/settings/carrier-race-auto-prune', label: 'Race auto-prune' },
       { href: '/settings/domain', label: 'Domain & TLS' },
     ],

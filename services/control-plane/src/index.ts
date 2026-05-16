@@ -1147,3 +1147,13 @@ export {
 // Iter 198 — persona A/B testing
 export { pickAbPersona, summarizeAbResults } from './ai-ab';
 export type { AbSessionRow, AbVariantStat } from './ai-ab';
+
+// Iter 199 — identity discipline + Master skeleton
+export {
+  buildIdentityGuard,
+  applyIdentity,
+  scrubIdentityLeak,
+} from './ai-identity';
+export type { ScrubResult } from './ai-identity';
+export { getAiMaster, setAiMasterEnabled } from './ai-master';
+export type { AiMasterRow } from './ai-master';

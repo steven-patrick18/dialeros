@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import {
   appendAiCallTurn,
   buildOllamaMessages,
+  scrubIdentityLeak,
   callerTurnCount,
   endAiCallSession,
   evaluateSessionGuard,
@@ -199,7 +200,12 @@ export async function POST(req: NextRequest) {
     }
 
     const messages = buildOllamaMessages(
-      { system_prompt: persona.system_prompt, greeting: persona.greeting },
+      {
+        system_prompt: persona.system_prompt,
+        greeting: persona.greeting,
+        agent_name: persona.agent_name,
+        agent_title: persona.agent_title,
+      },
       turns,
       callerText,
     );
@@ -212,17 +218,22 @@ export async function POST(req: NextRequest) {
         detail: out.detail,
       });
     }
+    const scrubbed = scrubIdentityLeak(
+      out.reply,
+      persona.agent_name ?? '',
+      persona.agent_title,
+    ).text;
     const nextIndex = turns.length + 1;
     appendAiCallTurn({
       sessionId,
       turnIndex: nextIndex,
       role: 'ai',
-      text: out.reply,
+      text: scrubbed,
       llmMs: out.ms,
     });
     return NextResponse.json({
       action: 'speak',
-      reply: out.reply,
+      reply: scrubbed,
       tts_engine: persona.tts_engine,
       tts_voice: persona.tts_voice,
       llm_ms: out.ms,

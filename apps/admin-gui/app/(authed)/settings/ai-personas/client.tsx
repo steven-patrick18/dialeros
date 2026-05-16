@@ -9,6 +9,8 @@ interface Persona {
   enabled: number;
   system_prompt: string;
   greeting: string;
+  agent_name: string | null;
+  agent_title: string | null;
   llm_model: string;
   stt_model: string;
   tts_engine: string;
@@ -29,6 +31,8 @@ type TestResult =
 
 const BLANK = {
   name: '',
+  agent_name: '',
+  agent_title: '',
   system_prompt:
     'You are a friendly outbound appointment-setting agent for Acme Roofing. Keep replies under 2 sentences. Never claim to be human if asked directly. If the caller is hostile or asks to be removed, acknowledge and end politely.',
   greeting:
@@ -95,6 +99,8 @@ export function AiPersonasClient({
     }
     setForm({
       name: p.name,
+      agent_name: p.agent_name ?? '',
+      agent_title: p.agent_title ?? '',
       system_prompt: p.system_prompt,
       greeting: p.greeting,
       llm_model: p.llm_model,
@@ -111,6 +117,8 @@ export function AiPersonasClient({
   function payload() {
     return {
       name: form.name,
+      agent_name: form.agent_name || null,
+      agent_title: form.agent_title || null,
       system_prompt: form.system_prompt,
       greeting: form.greeting,
       llm_model: form.llm_model,
@@ -180,6 +188,8 @@ export function AiPersonasClient({
         body: JSON.stringify({
           system_prompt: form.system_prompt,
           greeting: form.greeting,
+          agent_name: form.agent_name || null,
+          agent_title: form.agent_title || null,
           model: form.llm_model,
           history: convo,
           customer_line: line,
@@ -252,6 +262,24 @@ export function AiPersonasClient({
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
           />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              className="border border-border rounded bg-bg px-2 py-1 text-sm"
+              placeholder="Agent name it states (e.g. Sarah)"
+              value={form.agent_name}
+              onChange={(e) =>
+                setForm({ ...form, agent_name: e.target.value })
+              }
+            />
+            <input
+              className="border border-border rounded bg-bg px-2 py-1 text-sm"
+              placeholder="Designation (e.g. Senior Advisor)"
+              value={form.agent_title}
+              onChange={(e) =>
+                setForm({ ...form, agent_title: e.target.value })
+              }
+            />
+          </div>
           <textarea
             className="w-full border border-border rounded bg-bg px-2 py-1 text-xs font-mono"
             rows={6}

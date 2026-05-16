@@ -1023,6 +1023,21 @@ export const COLUMN_MIGRATIONS: string[] = [
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   "CREATE INDEX IF NOT EXISTS idx_ai_personas_org ON ai_personas(org_id, enabled)",
+  // Iter 199 — identity discipline. The agent presents
+  // ONLY this name/title; never 'AI'. NULL → falls back
+  // to persona.name in code.
+  "ALTER TABLE ai_personas ADD COLUMN agent_name TEXT",
+  "ALTER TABLE ai_personas ADD COLUMN agent_title TEXT",
+  // Iter 199 — global Master AI (Phase L). One row,
+  // id=\'global\'. config_json grows in iters 200+.
+  `CREATE TABLE IF NOT EXISTS ai_master (
+    id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    config_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  "INSERT OR IGNORE INTO ai_master (id) VALUES ('global')",
   // Campaign binding — when ai_persona_id is set AND the persona
   // is enabled, a future iter routes the campaign's answered legs
   // into the AI loop instead of an agent bridge.

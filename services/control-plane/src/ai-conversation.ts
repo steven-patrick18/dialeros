@@ -30,8 +30,15 @@ export interface OllamaMessage {
  * but the system prompt + greeting are always retained. */
 export const MAX_HISTORY_TURNS = 16;
 
+import { applyIdentity } from './ai-identity';
+
 export function buildOllamaMessages(
-  persona: { system_prompt: string; greeting: string },
+  persona: {
+    system_prompt: string;
+    greeting: string;
+    agent_name?: string | null;
+    agent_title?: string | null;
+  },
   history: ConversationTurn[],
   callerText: string,
   maxHistory: number = MAX_HISTORY_TURNS,
@@ -51,7 +58,14 @@ export function buildOllamaMessages(
     mapped.length > maxHistory ? mapped.slice(-maxHistory) : mapped;
 
   return [
-    { role: 'system', content: persona.system_prompt },
+    {
+      role: 'system',
+      content: applyIdentity(
+        persona.system_prompt,
+        persona.agent_name ?? '',
+        persona.agent_title ?? null,
+      ),
+    },
     { role: 'assistant', content: persona.greeting },
     ...tail,
     { role: 'user', content: callerText },

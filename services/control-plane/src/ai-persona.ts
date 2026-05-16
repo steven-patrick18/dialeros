@@ -12,6 +12,7 @@
 // actionable "install via scripts/install-ai-stack.sh" message.
 
 import { randomUUID } from 'crypto';
+import { applyIdentity, scrubIdentityLeak } from './ai-identity';
 import { getDb } from './db';
 import { z } from 'zod';
 
@@ -22,6 +23,8 @@ export interface AiPersonaRow {
   enabled: number;
   system_prompt: string;
   greeting: string;
+  agent_name: string | null;
+  agent_title: string | null;
   llm_model: string;
   stt_model: string;
   tts_engine: string;
@@ -40,6 +43,8 @@ export const AiPersonaInputSchema = z.object({
   enabled: z.boolean().optional(),
   system_prompt: z.string().min(1).max(8000),
   greeting: z.string().min(1).max(1000),
+  agent_name: z.string().max(80).nullable().optional(),
+  agent_title: z.string().max(80).nullable().optional(),
   llm_model: z.string().min(1).max(80).optional(),
   stt_model: z.string().min(1).max(40).optional(),
   tts_engine: TtsEngineSchema.optional(),
@@ -73,9 +78,10 @@ export function insertAiPersona(
     .prepare(
       `INSERT INTO ai_personas
          (id, org_id, name, enabled, system_prompt, greeting,
+          agent_name, agent_title,
           llm_model, stt_model, tts_engine, tts_voice,
           max_turns, max_call_seconds, escalation_keywords_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -84,6 +90,8 @@ export function insertAiPersona(
       input.enabled ? 1 : 0,
       input.system_prompt,
       input.greeting,
+      input.agent_name ?? null,
+      input.agent_title ?? null,
       input.llm_model ?? 'qwen2.5:3b',
       input.stt_model ?? 'base.en',
       input.tts_engine ?? 'piper',
@@ -110,6 +118,10 @@ export function updateAiPersona(
   if (input.system_prompt !== undefined)
     set('system_prompt', input.system_prompt);
   if (input.greeting !== undefined) set('greeting', input.greeting);
+  if (input.agent_name !== undefined)
+    set('agent_name', input.agent_name ?? null);
+  if (input.agent_title !== undefined)
+    set('agent_title', input.agent_title ?? null);
   if (input.llm_model !== undefined) set('llm_model', input.llm_model);
   if (input.stt_model !== undefined) set('stt_model', input.stt_model);
   if (input.tts_engine !== undefined) set('tts_engine', input.tts_engine);
@@ -215,9 +227,18 @@ export async function personaTextTurn(args: {
   model: string;
   history: Array<{ role: 'assistant' | 'user'; content: string }>;
   customerLine: string;
+  agentName?: string | null;
+  agentTitle?: string | null;
 }): Promise<PersonaTestResult> {
   const messages = [
-    { role: 'system' as const, content: args.systemPrompt },
+    {
+      role: 'system' as const,
+      content: applyIdentity(
+        args.systemPrompt,
+        args.agentName ?? '',
+        args.agentTitle ?? null,
+      ),
+    },
     // Seed the convo with the greeting as the assistant's opener
     // so the model has the same context the call loop will give it.
     { role: 'assistant' as const, content: args.greeting },
