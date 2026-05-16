@@ -62,7 +62,16 @@ import {
   listUnscoredEndedAiSessions,
   listAiCallTurns,
   setAiCallQaScore,
+  setExemplarPromoted,
+  insertAiMemory,
+  getDialIntentById,
 } from './db';
+import { embed, EMBED_MODEL } from './ai-memory';
+import {
+  buildExemplarFromTurns,
+  shouldPromoteExemplar,
+  EXEMPLAR_MIN_SCORE,
+} from './ai-rag';
 import { getCarrierRaceAutoPruneConfig } from "./app-settings";import { evaluateCarrierForPruning } from "./carrier-auto-prune";
 import { getVoicemailConfig } from './campaign';
 import {
@@ -2076,6 +2085,63 @@ async function sweepAiQa(): Promise<void> {
       out.result.summary,
       out.result.flags,
     );
+    // Iter 204 — auto-curate exemplars. A near-perfect call (QA
+    // >= EXEMPLAR_MIN_SCORE) becomes a reusable exemplar in the
+    // RAG store, scoped to its campaign (or global for inbound
+    // with no dial_intent), so future calls in scope can
+    // retrieve "here is how a great call went". Idempotent
+    // (setExemplarPromoted claims atomically) + best-effort: a
+    // promotion failure never blocks QA scoring.
+    if (
+      shouldPromoteExemplar(out.result.score, false, EXEMPLAR_MIN_SCORE)
+    ) {
+      try {
+        const exemplarText = buildExemplarFromTurns(turns);
+        if (exemplarText) {
+          let scopeType = 'global';
+          let scopeId = '';
+          if (s.dial_intent_id != null) {
+            const di = getDialIntentById(s.dial_intent_id);
+            if (di?.campaign_id) {
+              scopeType = 'campaign';
+              scopeId = di.campaign_id;
+            }
+          }
+          const emb = await embed(exemplarText);
+          if (emb.ok && setExemplarPromoted(s.id)) {
+            insertAiMemory({
+              id: randomUUID(),
+              scopeType,
+              scopeId,
+              kind: 'call_exemplar',
+              title: `Exemplar call (QA ${out.result.score})`,
+              content: exemplarText,
+              embedding: emb.vector,
+              embedModel: EMBED_MODEL,
+              source: `ai_call_session:${s.id}`,
+            });
+            appendAudit({
+              actorUserId: null,
+              actorIp: null,
+              action: 'ai.exemplar_promoted',
+              targetType: 'ai_call_session',
+              targetId: s.id,
+              payload: {
+                score: out.result.score,
+                scope_type: scopeType,
+                scope_id: scopeId,
+                persona_id: s.persona_id,
+              },
+            });
+          }
+        }
+      } catch (e) {
+        console.warn(
+          `[pacing] exemplar promote failed ${s.id}:`,
+          e,
+        );
+      }
+    }
     try {
       appendAudit({
         actorUserId: null,

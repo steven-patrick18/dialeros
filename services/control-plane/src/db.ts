@@ -8476,6 +8476,8 @@ export interface AiCallSessionRow {
   qa_summary: string | null;
   qa_flags: string | null;
   qa_scored_at: string | null;
+  // Iter 204 — exemplar curation timestamp (null = not promoted).
+  exemplar_promoted_at: string | null;
 }
 
 export interface AiCallTurnRow {
@@ -8620,6 +8622,25 @@ export function listUnscoredEndedAiSessions(
         LIMIT ?`,
     )
     .all(limit) as unknown as AiCallSessionRow[];
+}
+
+/* Iter 204 — atomically claim a finished session for the
+ * RAG exemplar store. Returns true only if it stamped (the
+ * column was NULL) so the re-entrant QA sweep can never
+ * double-promote — and so two racing sweeps insert once. */
+export function setExemplarPromoted(id: string): boolean {
+  return (
+    Number(
+      getDb()
+        .prepare(
+          `UPDATE ai_call_sessions
+              SET exemplar_promoted_at =
+                  strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE id = ? AND exemplar_promoted_at IS NULL`,
+        )
+        .run(id).changes,
+    ) > 0
+  );
 }
 
 export function listAiCallTurns(sessionId: string): AiCallTurnRow[] {

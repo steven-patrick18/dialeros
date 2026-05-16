@@ -43,6 +43,14 @@ export function buildOllamaMessages(
   history: ConversationTurn[],
   callerText: string,
   maxHistory: number = MAX_HISTORY_TURNS,
+  // Iter 204 — optional RAG knowledge block (scope-relevant
+  // memory + high-QA exemplars). Injected as a SECOND system
+  // message right after identity/behaviour, before the
+  // greeting, so the model treats it as authoritative
+  // context. Undefined / blank -> not injected (zero
+  // behaviour change when the store is empty / nothing
+  // matched — inert by default).
+  knowledge?: string | null,
 ): OllamaMessage[] {
   const mapped: OllamaMessage[] = [];
   for (const t of history) {
@@ -58,7 +66,7 @@ export function buildOllamaMessages(
   const tail =
     mapped.length > maxHistory ? mapped.slice(-maxHistory) : mapped;
 
-  return [
+  const messages: OllamaMessage[] = [
     {
       role: 'system',
       content: applyIdentity(
@@ -67,10 +75,14 @@ export function buildOllamaMessages(
         persona.agent_title ?? null,
       ),
     },
-    { role: 'assistant', content: persona.greeting },
-    ...tail,
-    { role: 'user', content: callerText },
   ];
+  if (typeof knowledge === 'string' && knowledge.trim() !== '') {
+    messages.push({ role: 'system', content: knowledge.trim() });
+  }
+  messages.push({ role: 'assistant', content: persona.greeting });
+  messages.push(...tail);
+  messages.push({ role: 'user', content: callerText });
+  return messages;
 }
 
 /** Count of caller turns in the recorded history INCLUDING the

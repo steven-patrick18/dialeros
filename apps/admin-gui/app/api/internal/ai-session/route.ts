@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import {
+  aiMemoryCandidates,
   appendAiCallTurn,
   buildOllamaMessages,
+  buildRetrievalBlock,
   scrubIdentityLeak,
   callerTurnCount,
+  embed,
   endAiCallSession,
   evaluateSessionGuard,
   getAiCallSession,
   getAiPersona,
+  getDialIntentById,
   listAiCallTurns,
   parseEscalationKeywords,
+  rankBySimilarity,
   startAiCallSession,
 } from '@dialeros/control-plane';
 
@@ -199,6 +204,60 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ action: 'end', reason: guard.reason });
     }
 
+    // Iter 204 — RAG retrieval. When the Master memory store
+    // has anything in scope (the call's campaign for outbound;
+    // global always applies), embed the caller's line, rank the
+    // candidates, and inject the top matches as authoritative
+    // context. Best-effort: ANY failure (embed model down, a
+    // bad stored vector) degrades to no knowledge — a live call
+    // must NEVER break because retrieval hiccuped. Inert by
+    // default: no scoped memory -> no embed call -> the prompt
+    // is byte-identical to pre-204.
+    let knowledge: string | null = null;
+    try {
+      let scopeType = 'global';
+      let scopeId = '';
+      if (session.dial_intent_id != null) {
+        const di = getDialIntentById(session.dial_intent_id);
+        if (di?.campaign_id) {
+          scopeType = 'campaign';
+          scopeId = di.campaign_id;
+        }
+      }
+      const cands = aiMemoryCandidates(scopeType, scopeId);
+      if (cands.length > 0) {
+        const q = await embed(callerText);
+        if (q.ok) {
+          const ranked = rankBySimilarity(
+            q.vector,
+            cands
+              .map((mem) => {
+                let vec: number[] = [];
+                try {
+                  vec = JSON.parse(mem.embedding ?? '[]');
+                } catch {
+                  vec = [];
+                }
+                return { item: mem, vector: vec };
+              })
+              .filter((cv) => cv.vector.length > 0),
+            3,
+            0.5,
+          );
+          knowledge = buildRetrievalBlock(
+            ranked.map((h) => ({
+              title: h.item.title,
+              content: h.item.content,
+              score: h.score,
+            })),
+          );
+        }
+      }
+    } catch (e) {
+      console.warn('[ai-session] retrieval skipped:', e);
+      knowledge = null;
+    }
+
     const messages = buildOllamaMessages(
       {
         system_prompt: persona.system_prompt,
@@ -208,6 +267,8 @@ export async function POST(req: NextRequest) {
       },
       turns,
       callerText,
+      undefined,
+      knowledge,
     );
     const out = await ollamaReply(persona.llm_model, messages);
     if (!out.ok) {

@@ -1193,3 +1193,13 @@ export {
 export type { InGroupAiPick } from './db';
 export { resolveQueueRoute } from './ai-acd';
 export type { QueueRoute } from './ai-acd';
+
+// Iter 204 — RAG retrieval injection + auto-curated exemplars
+export {
+  buildRetrievalBlock,
+  buildExemplarFromTurns,
+  shouldPromoteExemplar,
+  EXEMPLAR_MIN_SCORE,
+} from './ai-rag';
+export type { RetrievalHit } from './ai-rag';
+export { setExemplarPromoted } from './db';
