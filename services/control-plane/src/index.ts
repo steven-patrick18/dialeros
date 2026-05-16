@@ -1164,3 +1164,23 @@ export { buildBehaviorGuard, applyBehavior } from './ai-behavior';
 // Iter 201 — Audio Center usage cross-reference
 export { listAudioUsage } from './db';
 export type { AudioUsageRow } from './db';
+
+// Iter 202 — Master RAG memory
+export {
+  insertAiMemory,
+  getAiMemory,
+  listAiMemory,
+  deleteAiMemory,
+  setAiMemoryEnabled,
+  aiMemoryCandidates,
+} from './db';
+export type { AiMemoryRow } from './db';
+export {
+  cosineSim,
+  rankBySimilarity,
+  chunkText,
+  embed,
+  EMBED_MODEL,
+  EMBED_DIM,
+} from './ai-memory';
+export type { EmbedResult } from './ai-memory';

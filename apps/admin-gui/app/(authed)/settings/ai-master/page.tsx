@@ -1,8 +1,13 @@
 import { redirect } from 'next/navigation';
-import { getAiMaster } from '@dialeros/control-plane';
+import {
+  getAiMaster,
+  listCampaigns,
+  listInGroups,
+} from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
 import { userHasPermission } from '@dialeros/control-plane';
 import { MasterToggle } from './toggle';
+import { MemoryManager } from './memory';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +48,18 @@ export default async function AiMasterPage() {
         ship.
       </p>
       <MasterToggle initialEnabled={m.enabled === 1} />
+      <MemoryManager
+        campaigns={JSON.parse(
+          JSON.stringify(
+            listCampaigns().map((c) => ({ id: c.id, name: c.name })),
+          ),
+        )}
+        inGroups={JSON.parse(
+          JSON.stringify(
+            listInGroups().map((g) => ({ id: g.id, name: g.name })),
+          ),
+        )}
+      />
     </div>
   );
 }

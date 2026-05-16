@@ -5546,6 +5546,124 @@ export function listAudioUsage(): AudioUsageRow[] {
   return rows;
 }
 
+/* Iter 202 — Master RAG memory store. Brute-force cosine
+ * over the small per-scope candidate set (fully local; no
+ * vector DB). The global scope is ALWAYS a candidate so
+ * cross-cutting knowledge applies everywhere. */
+export interface AiMemoryRow {
+  id: string;
+  scope_type: string;
+  scope_id: string;
+  kind: string;
+  title: string;
+  content: string;
+  embedding: string | null;
+  embed_model: string | null;
+  source: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function insertAiMemory(args: {
+  id: string;
+  scopeType: string;
+  scopeId: string;
+  kind: string;
+  title: string;
+  content: string;
+  embedding: number[] | null;
+  embedModel: string | null;
+  source: string;
+}): AiMemoryRow {
+  getDb()
+    .prepare(
+      `INSERT INTO ai_memory
+         (id, scope_type, scope_id, kind, title, content,
+          embedding, embed_model, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      args.id,
+      args.scopeType,
+      args.scopeId,
+      args.kind,
+      args.title,
+      args.content,
+      args.embedding ? JSON.stringify(args.embedding) : null,
+      args.embedModel,
+      args.source,
+    );
+  return getAiMemory(args.id) as AiMemoryRow;
+}
+
+export function getAiMemory(id: string): AiMemoryRow | undefined {
+  return getDb()
+    .prepare(`SELECT * FROM ai_memory WHERE id = ?`)
+    .get(id) as unknown as AiMemoryRow | undefined;
+}
+
+export function listAiMemory(
+  scopeType?: string,
+  scopeId?: string,
+): AiMemoryRow[] {
+  if (scopeType) {
+    return getDb()
+      .prepare(
+        `SELECT * FROM ai_memory
+          WHERE scope_type = ? AND scope_id = ?
+          ORDER BY created_at DESC`,
+      )
+      .all(scopeType, scopeId ?? '') as unknown as AiMemoryRow[];
+  }
+  return getDb()
+    .prepare(`SELECT * FROM ai_memory ORDER BY created_at DESC`)
+    .all() as unknown as AiMemoryRow[];
+}
+
+export function deleteAiMemory(id: string): boolean {
+  return (
+    Number(
+      getDb().prepare(`DELETE FROM ai_memory WHERE id = ?`).run(id)
+        .changes,
+    ) > 0
+  );
+}
+
+export function setAiMemoryEnabled(id: string, on: boolean): boolean {
+  return (
+    Number(
+      getDb()
+        .prepare(
+          `UPDATE ai_memory SET enabled = ?,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+           WHERE id = ?`,
+        )
+        .run(on ? 1 : 0, id).changes,
+    ) > 0
+  );
+}
+
+/* Candidate set for a retrieval: enabled rows in the requested
+ * scope PLUS all enabled global rows (global knowledge always
+ * applies). The caller scores these with cosineSim. */
+export function aiMemoryCandidates(
+  scopeType: string,
+  scopeId: string,
+): AiMemoryRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM ai_memory
+        WHERE enabled = 1
+          AND embedding IS NOT NULL
+          AND (
+            scope_type = 'global'
+            OR (scope_type = ? AND scope_id = ?)
+          )`,
+    )
+    .all(scopeType, scopeId) as unknown as AiMemoryRow[];
+}
+
 export function getAudioFileFromDb(
   id: string,
 ): AudioFileRecord | undefined {

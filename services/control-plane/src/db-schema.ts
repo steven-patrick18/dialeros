@@ -1045,6 +1045,25 @@ export const COLUMN_MIGRATIONS: string[] = [
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
   "INSERT OR IGNORE INTO ai_master (id) VALUES ('global')",
+  // Iter 202 — Master RAG memory. One global Master;
+  // rows scoped by (scope_type, scope_id): 'global' /
+  // 'campaign':<id> / 'in_group':<id>. embedding = JSON
+  // float[] (all-minilm, 384-dim) for in-process cosine.
+  `CREATE TABLE IF NOT EXISTS ai_memory (
+    id TEXT PRIMARY KEY,
+    scope_type TEXT NOT NULL DEFAULT 'global',
+    scope_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'knowledge',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    embedding TEXT,
+    embed_model TEXT,
+    source TEXT NOT NULL DEFAULT 'operator',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_ai_memory_scope ON ai_memory(scope_type, scope_id, enabled)",
   // Campaign binding — when ai_persona_id is set AND the persona
   // is enabled, a future iter routes the campaign's answered legs
   // into the AI loop instead of an agent bridge.
