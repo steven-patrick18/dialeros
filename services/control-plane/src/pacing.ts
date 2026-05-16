@@ -56,6 +56,12 @@ import { parseCidGroupIds, parseCidPool } from './route-plan';
 import { getAiLiveEnabled } from './app-settings';
 import { shouldRouteCallToAi } from './ai-routing';
 import { getAiPersona } from './ai-persona';
+import { gradeTranscript } from './ai-qa';
+import {
+  listUnscoredEndedAiSessions,
+  listAiCallTurns,
+  setAiCallQaScore,
+} from './db';
 import { getCarrierRaceAutoPruneConfig } from "./app-settings";import { evaluateCarrierForPruning } from "./carrier-auto-prune";
 import { getVoicemailConfig } from './campaign';
 import {
@@ -1415,6 +1421,7 @@ export function resumeActivePacers(): { started: number } {
   ensureRecordingRetentionSweep();
   // Iter 187 — race auto-prune sweeper (runs every 60s).
   ensureAutoPruneSweeper();
+  ensureAiQaSweeper();
   // Iter 77 — boot-time + periodic sweep for stale dial_intents.
   // Without this, a live call whose FS event listener missed the
   // CHANNEL_DESTROY can pin a remote-agent line / carrier port
@@ -1995,6 +2002,71 @@ async function sweepCarrierRaceAutoPrune(): Promise<void> {
           console.error('[pacing] race-paused audit failed:', e);
         }
       }
+    }
+  }
+}
+
+// Iter 197 — Post-call QA sweeper. Every 120s grade up to 5
+// ended-but-unscored AI sessions via the local LLM. Bounded +
+// idempotent (qa_scored_at latches). No-op until AI calls exist.
+let _aiQaSweepTimer: NodeJS.Timeout | null = null;
+function ensureAiQaSweeper(): void {
+  if (_aiQaSweepTimer) return;
+  _aiQaSweepTimer = setInterval(() => {
+    void sweepAiQa().catch((e) =>
+      console.error('[pacing] ai-qa sweep failed:', e),
+    );
+  }, 120_000);
+  _aiQaSweepTimer.unref();
+}
+
+async function sweepAiQa(): Promise<void> {
+  const pending = listUnscoredEndedAiSessions(5);
+  for (const s of pending) {
+    const persona = getAiPersona(s.persona_id);
+    if (!persona) {
+      // Persona gone — mark scored with a sentinel so we don't
+      // re-attempt forever.
+      setAiCallQaScore(s.id, 0, 'persona deleted; not graded', [
+        'ungradeable',
+      ]);
+      continue;
+    }
+    const turns = listAiCallTurns(s.id).map((t) => ({
+      role: t.role,
+      text: t.text,
+    }));
+    const out = await gradeTranscript(
+      persona.llm_model,
+      { name: persona.name, system_prompt: persona.system_prompt },
+      turns,
+    );
+    if (!out.ok) {
+      // Leave unscored — next sweep retries (Ollama may be down).
+      console.warn(`[pacing] ai-qa grade failed ${s.id}: ${out.detail}`);
+      continue;
+    }
+    setAiCallQaScore(
+      s.id,
+      out.result.score,
+      out.result.summary,
+      out.result.flags,
+    );
+    try {
+      appendAudit({
+        actorUserId: null,
+        actorIp: null,
+        action: 'ai.qa_scored',
+        targetType: 'ai_call_session',
+        targetId: s.id,
+        payload: {
+          score: out.result.score,
+          flags: out.result.flags,
+          persona_id: s.persona_id,
+        },
+      });
+    } catch (e) {
+      console.error('[pacing] ai-qa audit failed:', e);
     }
   }
 }

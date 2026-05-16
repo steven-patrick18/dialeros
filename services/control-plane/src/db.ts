@@ -8246,6 +8246,11 @@ export interface AiCallSessionRow {
   started_at: string;
   ended_at: string | null;
   end_reason: string | null;
+  // Iter 197 — QA scoring.
+  qa_score: number | null;
+  qa_summary: string | null;
+  qa_flags: string | null;
+  qa_scored_at: string | null;
 }
 
 export interface AiCallTurnRow {
@@ -8354,6 +8359,40 @@ export function listAiCallSessions(limit = 100): AiCallSessionRow[] {
     .prepare(
       `SELECT * FROM ai_call_sessions
         ORDER BY started_at DESC LIMIT ?`,
+    )
+    .all(limit) as unknown as AiCallSessionRow[];
+}
+
+/* Iter 197 — post-call QA. setAiCallQaScore persists the
+ * grade; listUnscoredEndedAiSessions feeds the sweeper (ended
+ * sessions with no grade yet, oldest first, bounded). */
+export function setAiCallQaScore(
+  id: string,
+  score: number,
+  summary: string,
+  flags: string[],
+): boolean {
+  const r = getDb()
+    .prepare(
+      `UPDATE ai_call_sessions
+          SET qa_score = ?, qa_summary = ?, qa_flags = ?,
+              qa_scored_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?`,
+    )
+    .run(score, summary, JSON.stringify(flags), id);
+  return Number(r.changes) > 0;
+}
+
+export function listUnscoredEndedAiSessions(
+  limit = 5,
+): AiCallSessionRow[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM ai_call_sessions
+        WHERE ended_at IS NOT NULL
+          AND qa_scored_at IS NULL
+        ORDER BY ended_at ASC
+        LIMIT ?`,
     )
     .all(limit) as unknown as AiCallSessionRow[];
 }

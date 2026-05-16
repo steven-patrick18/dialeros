@@ -12,6 +12,9 @@ interface Session {
   started_at: string;
   ended_at: string | null;
   end_reason: string | null;
+  qa_score: number | null;
+  qa_summary: string | null;
+  qa_flags: string | null;
 }
 interface Turn {
   id: number;
@@ -145,6 +148,7 @@ export function AiCallsClient() {
               <th className="px-3 py-2">Persona</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Turns</th>
+              <th className="px-3 py-2">QA</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -173,6 +177,24 @@ export function AiCallsClient() {
                   <td className="px-3 py-2 tabular-nums">
                     {s.turn_count}
                   </td>
+                  <td className="px-3 py-2 text-xs">
+                    {s.qa_score == null ? (
+                      <span className="text-fg-subtle">—</span>
+                    ) : (
+                      <span
+                        title={s.qa_summary ?? undefined}
+                        className={
+                          s.qa_score >= 70
+                            ? 'text-success'
+                            : s.qa_score >= 40
+                              ? 'text-warn'
+                              : 'text-error'
+                        }
+                      >
+                        {s.qa_score}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right">
                     <button
                       type="button"
@@ -185,7 +207,7 @@ export function AiCallsClient() {
                 </tr>
                 {openId === s.id && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-2 bg-card/50">
+                    <td colSpan={7} className="px-3 py-2 bg-card/50">
                       {turns.length === 0 ? (
                         <span className="text-xs text-fg-subtle">
                           Loading transcript…

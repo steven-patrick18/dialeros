@@ -1130,3 +1130,16 @@ export { getAiLiveEnabled, setAiLiveEnabled } from './app-settings';
 // Iter 196 — supervisor AI monitor
 export { aiSessionMonitorState } from './ai-monitor';
 export type { AiMonitorState } from './ai-monitor';
+
+// Iter 197 — post-call QA scoring
+export {
+  buildQaPrompt,
+  parseQaResponse,
+  gradeTranscript,
+  QA_FLAG_VOCAB,
+} from './ai-qa';
+export type { QaResult, QaTurn } from './ai-qa';
+export {
+  setAiCallQaScore,
+  listUnscoredEndedAiSessions,
+} from './db';

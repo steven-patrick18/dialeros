@@ -1065,6 +1065,13 @@ export const COLUMN_MIGRATIONS: string[] = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
   "CREATE INDEX IF NOT EXISTS idx_ai_turns_session ON ai_call_turns(session_id, turn_index)",
+  // Iter 197 — post-call QA scoring (LLM grades the
+  // transcript against the persona's instructions).
+  "ALTER TABLE ai_call_sessions ADD COLUMN qa_score INTEGER",
+  "ALTER TABLE ai_call_sessions ADD COLUMN qa_summary TEXT",
+  "ALTER TABLE ai_call_sessions ADD COLUMN qa_flags TEXT",
+  "ALTER TABLE ai_call_sessions ADD COLUMN qa_scored_at TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_ai_sessions_unscored ON ai_call_sessions(qa_scored_at, ended_at) WHERE qa_scored_at IS NULL AND ended_at IS NOT NULL",
   // Iter 192 — ViciDial-style numeric user level (1-9). Nullable
   // for the ALTER, backfilled immediately from role so every row
   // has a sane value; permissions.ts also falls back to the
