@@ -16,6 +16,15 @@ interface Session {
   qa_summary: string | null;
   qa_flags: string | null;
 }
+interface AbStat {
+  persona_id: string;
+  count: number;
+  completed_pct: number;
+  escalated_pct: number;
+  avg_turns: number;
+  avg_qa: number | null;
+  graded: number;
+}
 interface Turn {
   id: number;
   turn_index: number;
@@ -36,6 +45,7 @@ function statusTone(s: string): string {
 
 export function AiCallsClient() {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [ab, setAb] = useState<AbStat[]>([]);
   const [live, setLive] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -54,9 +64,11 @@ export function AiCallsClient() {
       const j = (await r.json()) as {
         live_enabled: boolean;
         sessions: Session[];
+        ab_summary?: AbStat[];
       };
       setLive(j.live_enabled);
       setSessions(j.sessions);
+      setAb(j.ab_summary ?? []);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
@@ -134,6 +146,49 @@ export function AiCallsClient() {
       </div>
 
       {err && <p className="text-error text-xs">{err}</p>}
+
+      {ab.length > 1 && (
+        <div className="border border-border rounded p-4">
+          <h2 className="text-sm font-semibold mb-2">
+            A/B by persona
+          </h2>
+          <table className="w-full text-xs">
+            <thead className="text-left text-fg-subtle">
+              <tr>
+                <th className="py-1">Persona</th>
+                <th>Calls</th>
+                <th>Completed</th>
+                <th>Escalated</th>
+                <th>Avg turns</th>
+                <th>Avg QA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ab.map((v) => (
+                <tr
+                  key={v.persona_id}
+                  className="border-t border-border/40"
+                >
+                  <td className="py-1 font-mono">{v.persona_id}</td>
+                  <td className="tabular-nums">{v.count}</td>
+                  <td className="tabular-nums">{v.completed_pct}%</td>
+                  <td className="tabular-nums">{v.escalated_pct}%</td>
+                  <td className="tabular-nums">{v.avg_turns}</td>
+                  <td className="tabular-nums">
+                    {v.avg_qa == null ? '\u2014' : v.avg_qa}
+                    {v.graded > 0 && (
+                      <span className="text-fg-subtle">
+                        {' '}
+                        (n={v.graded})
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {sessions.length === 0 ? (
         <p className="text-sm text-fg-subtle">

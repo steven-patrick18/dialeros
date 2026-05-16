@@ -55,6 +55,7 @@ import {
 import { parseCidGroupIds, parseCidPool } from './route-plan';
 import { getAiLiveEnabled } from './app-settings';
 import { shouldRouteCallToAi } from './ai-routing';
+import { pickAbPersona } from './ai-ab';
 import { getAiPersona } from './ai-persona';
 import { gradeTranscript } from './ai-qa';
 import {
@@ -935,7 +936,30 @@ export async function paceCampaignOnce(
       amdAction: campaign.amd_action,
     });
     if (routeToAi && aiPersona) {
-      amdChannelVars.push(`dialeros_ai_persona_id=${aiPersona.id}`);
+      // Iter 198 — persona A/B. Weighted pick between the
+      // bound persona (A) and the campaign's challenger (B).
+      // If B is missing/disabled the pick collapses to A so
+      // a half-set experiment never drops calls.
+      const camp = campaign as {
+        ai_persona_id: string;
+        ai_persona_id_b?: string | null;
+        ai_ab_pct?: number;
+      };
+      const chosenId = pickAbPersona(
+        camp.ai_persona_id,
+        camp.ai_persona_id_b ?? null,
+        camp.ai_ab_pct ?? 0,
+        Math.random(),
+      );
+      const chosen =
+        chosenId === aiPersona.id
+          ? aiPersona
+          : getAiPersona(chosenId);
+      const effective =
+        chosen && chosen.enabled === 1 ? chosen : aiPersona;
+      amdChannelVars.push(
+        `dialeros_ai_persona_id=${effective.id}`,
+      );
       bridgeApp =
         '&execute_extension(dialeros-ai-agent XML default)';
     } else if (campaign.amd_action === 'drop') {

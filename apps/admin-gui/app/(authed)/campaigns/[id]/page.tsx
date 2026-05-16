@@ -23,6 +23,7 @@ import {
   listRemoteAgentsWithCapacity,
   parseDialableStatuses,
   totalIntentsFor,
+  listAiPersonas,
 } from '@dialeros/control-plane';
 import { StatusToggle } from './status-toggle';
 import { DeleteCampaignButton } from './delete-button';
@@ -33,6 +34,7 @@ import { PacingPanel } from './pacing-panel';
 import { VoicemailPanel } from './voicemail-panel';
 import { VoicemailTuningCard } from './voicemail-tuning-card';
 import { OnAnswerCard } from './on-answer-card';
+import { AiPersonaCard } from './ai-persona-card';
 import { HopperResetButton } from './hopper-reset-button';
 import { CampaignTabs, parseCampaignTab } from './campaign-tabs';
 import { AttachmentPicker } from '@/components/attachment-picker';
@@ -640,6 +642,15 @@ function DetailTab({
   activeAgents: ReturnType<typeof getActiveAgentsForCampaign>;
   dialableStatuses: string[];
 }) {
+  const aiPersonas = JSON.parse(
+    JSON.stringify(
+      listAiPersonas('default').map((p) => ({
+        id: p.id,
+        name: p.name,
+        enabled: p.enabled,
+      })),
+    ),
+  ) as Array<{ id: string; name: string; enabled: number }>;
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mb-6">
@@ -731,6 +742,21 @@ function DetailTab({
             amd_machine_audio_path: c.amd_machine_audio_path,
             no_agent_call_menu_id: c.no_agent_call_menu_id,
             recording_notice_audio_path: c.recording_notice_audio_path,
+          }}
+        />
+
+        <AiPersonaCard
+          campaignId={c.id}
+          personas={aiPersonas}
+          initial={{
+            ai_persona_id:
+              (c as { ai_persona_id?: string | null })
+                .ai_persona_id ?? null,
+            ai_persona_id_b:
+              (c as { ai_persona_id_b?: string | null })
+                .ai_persona_id_b ?? null,
+            ai_ab_pct:
+              (c as { ai_ab_pct?: number }).ai_ab_pct ?? 0,
           }}
         />
 

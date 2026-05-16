@@ -1027,6 +1027,10 @@ export const COLUMN_MIGRATIONS: string[] = [
   // is enabled, a future iter routes the campaign's answered legs
   // into the AI loop instead of an agent bridge.
   "ALTER TABLE campaigns ADD COLUMN ai_persona_id TEXT",
+  // Iter 198 — persona A/B. _b is the challenger; ai_ab_pct
+  // is the % of AI-routed calls sent to B (0 = experiment off).
+  "ALTER TABLE campaigns ADD COLUMN ai_persona_id_b TEXT",
+  "ALTER TABLE campaigns ADD COLUMN ai_ab_pct INTEGER NOT NULL DEFAULT 0",
   // Iter 190 — AI call session tracking. The media bridge daemon
   // POSTs session lifecycle + each transcribed turn through the
   // token-gated /api/internal/ai-session/* endpoints (same

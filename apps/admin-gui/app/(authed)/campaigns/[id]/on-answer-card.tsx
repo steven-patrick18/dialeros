@@ -94,7 +94,7 @@ export function OnAnswerCard({ campaignId, initial }: Props) {
     setSuccess(false);
     try {
       const res = await fetch(`/api/campaigns/${campaignId}`, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({

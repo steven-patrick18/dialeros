@@ -1143,3 +1143,7 @@ export {
   setAiCallQaScore,
   listUnscoredEndedAiSessions,
 } from './db';
+
+// Iter 198 — persona A/B testing
+export { pickAbPersona, summarizeAbResults } from './ai-ab';
+export type { AbSessionRow, AbVariantStat } from './ai-ab';

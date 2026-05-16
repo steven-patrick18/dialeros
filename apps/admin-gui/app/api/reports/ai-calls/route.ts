@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   getAiLiveEnabled,
   listAiCallSessions,
+  summarizeAbResults,
   userHasPermission,
 } from '@dialeros/control-plane';
 import { getCurrentUser } from '@/lib/session';
@@ -21,8 +22,18 @@ export async function GET() {
       { status: 403 },
     );
   }
+  const sessions = listAiCallSessions(200);
+  const ab_summary = summarizeAbResults(
+    sessions.map((s) => ({
+      persona_id: s.persona_id,
+      status: s.status,
+      turn_count: s.turn_count,
+      qa_score: s.qa_score,
+    })),
+  );
   return NextResponse.json({
     live_enabled: getAiLiveEnabled(),
-    sessions: JSON.parse(JSON.stringify(listAiCallSessions(200))),
+    sessions: JSON.parse(JSON.stringify(sessions)),
+    ab_summary,
   });
 }

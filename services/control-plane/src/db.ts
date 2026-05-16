@@ -6822,6 +6822,9 @@ export interface CampaignRecord {
   // ai.live_enabled, the pacer routes the answered leg to the
   // dialeros-ai-agent extension instead of an agent bridge.
   ai_persona_id: string | null;
+  // Iter 198 — A/B challenger + split percent.
+  ai_persona_id_b: string | null;
+  ai_ab_pct: number;
   created_at: string;
   updated_at: string;
 }
@@ -7109,6 +7112,9 @@ export function updateCampaignFields(
     list_order: string;
     dialable_statuses: string;
     voicemail_config: string | null;
+    ai_persona_id: string | null;
+    ai_persona_id_b: string | null;
+    ai_ab_pct: number;
   }>,
 ): boolean {
   const fields: string[] = [];

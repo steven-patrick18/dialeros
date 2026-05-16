@@ -349,6 +349,12 @@ export const CampaignUpdateInputSchema = z
         'audio_drop',
       ])
       .optional(),
+    // Iter 198 — AI persona binding + A/B.
+    ai_persona_id: z.string().nullable().optional()
+      .or(z.literal('').transform(() => null)),
+    ai_persona_id_b: z.string().nullable().optional()
+      .or(z.literal('').transform(() => null)),
+    ai_ab_pct: z.number().int().min(0).max(100).optional(),
     on_answer_call_menu_id: z.string().nullable().optional()
       .or(z.literal('').transform(() => null)),
     audio_drop_path: z.string().nullable().optional()
@@ -499,6 +505,15 @@ export function updateCampaign(
   }
   if (input.voicemail_config !== undefined) {
     updates.voicemail_config = input.voicemail_config;
+  }
+  if (input.ai_persona_id !== undefined) {
+    updates.ai_persona_id = input.ai_persona_id;
+  }
+  if (input.ai_persona_id_b !== undefined) {
+    updates.ai_persona_id_b = input.ai_persona_id_b;
+  }
+  if (input.ai_ab_pct !== undefined) {
+    updates.ai_ab_pct = input.ai_ab_pct;
   }
   return updateCampaignFields(id, updates);
 }
