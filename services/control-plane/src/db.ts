@@ -6088,6 +6088,7 @@ export function pickAvailableAgentForInGroup(
          LEFT JOIN agent_status s ON s.user_id = u.id
         WHERE uig.in_group_id = ?
           AND u.is_active = 1
+          AND u.is_ai_agent = 0
           AND COALESCE(s.status, 'AVAILABLE') = 'AVAILABLE'
           AND NOT EXISTS (
             SELECT 1 FROM dial_intents di
@@ -6187,6 +6188,56 @@ export function getQueuedCallByCallId(
 /** Mark a queued row as dispatched to an agent. Idempotent on a
  * row that's already been dispatched — caller is expected to
  * re-check the result and bridge based on the now-set extension. */
+/* Iter 203 — Resolve an AI-agent user assigned to this
+ * in-group (user_in_groups, exactly like a human) whose persona
+ * is enabled. Not capacity-gated — one persona fields many
+ * concurrent callers. Used as overflow when no human is free. */
+export interface InGroupAiPick {
+  user_id: string;
+  persona_id: string;
+}
+export function pickAiAgentForInGroup(
+  inGroupId: string,
+): InGroupAiPick | undefined {
+  return db()
+    .prepare(
+      `SELECT u.id AS user_id, u.ai_persona_id AS persona_id
+         FROM user_in_groups uig
+         JOIN users u ON u.id = uig.user_id
+         JOIN ai_personas p ON p.id = u.ai_persona_id
+        WHERE uig.in_group_id = ?
+          AND u.is_active = 1
+          AND u.is_ai_agent = 1
+          AND u.ai_persona_id IS NOT NULL
+          AND p.enabled = 1
+        ORDER BY RANDOM()
+        LIMIT 1`,
+    )
+    .get(inGroupId) as InGroupAiPick | undefined;
+}
+
+/* Claim a queued row for an AI agent. dispatched_extension is a
+ * sentinel `ai:<persona>` so the supervisor queued-calls view +
+ * position math treat it as handled (same as a human dispatch). */
+export function dispatchQueuedCallToAi(
+  callId: string,
+  userId: string,
+  personaId: string,
+): boolean {
+  const result = db()
+    .prepare(
+      `UPDATE inbound_queue
+          SET dispatched_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+              dispatched_to_user_id = ?,
+              dispatched_extension = ?
+        WHERE call_id = ?
+          AND dispatched_at IS NULL
+          AND expired_at IS NULL`,
+    )
+    .run(userId, `ai:${personaId}`, callId);
+  return Number(result.changes) > 0;
+}
+
 export function dispatchQueuedCall(
   callId: string,
   userId: string,

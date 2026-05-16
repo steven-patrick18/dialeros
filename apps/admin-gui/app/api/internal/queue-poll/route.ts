@@ -15,6 +15,9 @@ import {
   insertCallbackRequest,
   isHighestPriorityWaiter,
   pickAvailableAgentForInGroup,
+  pickAiAgentForInGroup,
+  dispatchQueuedCallToAi,
+  getAiLiveEnabled,
 } from '@dialeros/control-plane';
 
 export const runtime = 'nodejs';
@@ -200,6 +203,40 @@ export async function POST(req: NextRequest) {
 
   const agent = pickAvailableAgentForInGroup(row.in_group_id, strategy);
   if (!agent) {
+    // Iter 203 — AI overflow. No human free → if an enabled
+    // AI-agent user is assigned to this in-group AND the master
+    // live switch is on, hand the caller to the AI instead of
+    // holding. Atomic claim mirrors the human path.
+    if (getAiLiveEnabled()) {
+      const ai = pickAiAgentForInGroup(row.in_group_id);
+      if (ai) {
+        const aiClaimed = dispatchQueuedCallToAi(
+          row.call_id,
+          ai.user_id,
+          ai.persona_id,
+        );
+        if (aiClaimed) {
+          appendAudit({
+            actorUserId: null,
+            actorIp: null,
+            action: 'inbound.dispatched_to_ai',
+            targetType: 'in_group',
+            targetId: row.in_group_id,
+            payload: {
+              call_id: row.call_id,
+              ai_user_id: ai.user_id,
+              persona_id: ai.persona_id,
+            },
+          });
+          return NextResponse.json({
+            action: 'ai',
+            persona_id: ai.persona_id,
+            correlation_id: row.call_id,
+            call_id: row.call_id,
+          });
+        }
+      }
+    }
     // Iter 177 — position + ETA + announce flag.
     // Iter 178 — callback_enabled + callback_dtmf so the FS Lua
     // knows whether/which DTMF to listen for.

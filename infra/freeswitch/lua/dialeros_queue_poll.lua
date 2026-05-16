@@ -4,6 +4,7 @@
 -- polling /api/internal/queue-poll every QUEUE_POLL_SEC seconds.
 -- Responds to `action`:
 --   forward    → bridge to target_uri
+--   ai         → transfer to dialeros-ai-agent (Worker AI)
 --   hold       → keep playing MOH
 --   abandoned  → hangup (caller already gone / row expired)
 --   unknown    → hangup (this Call-ID isn't in the queue table)
@@ -86,6 +87,20 @@ while session:ready() and elapsed < MAX_WAIT_SEC do
     if ok and j then
       if j.action == "forward" and j.target_uri then
         session:execute("bridge", j.target_uri)
+        return
+      elseif j.action == "ai" and j.persona_id then
+        -- Iter 203 — AI agent took the queued caller. Stamp the
+        -- persona + correlation, then transfer the (already
+        -- answered) leg into the iter-195 dialeros-ai-agent
+        -- extension, which audio_stream-forks to the media
+        -- bridge daemon. The AI now owns the call; leave the
+        -- poll loop.
+        session:execute("set", "dialeros_ai_persona_id=" .. j.persona_id)
+        session:execute(
+          "set",
+          "dialeros_correlation_id=" .. (j.correlation_id or call_id)
+        )
+        session:execute("transfer", "dialeros-ai-agent XML default")
         return
       elseif j.action == "abandoned" or j.action == "unknown" then
         break

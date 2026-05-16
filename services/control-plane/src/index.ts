@@ -1184,3 +1184,12 @@ export {
   EMBED_DIM,
 } from './ai-memory';
 export type { EmbedResult } from './ai-memory';
+
+// Iter 203 — AI as inbound ACD agent
+export {
+  pickAiAgentForInGroup,
+  dispatchQueuedCallToAi,
+} from './db';
+export type { InGroupAiPick } from './db';
+export { resolveQueueRoute } from './ai-acd';
+export type { QueueRoute } from './ai-acd';
