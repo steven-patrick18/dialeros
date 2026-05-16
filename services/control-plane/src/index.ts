@@ -1110,3 +1110,14 @@ export {
   grantedPermissions,
 } from './permissions';
 export type { PermissionDef, UserLevelDef } from './permissions';
+
+// Iter 194 — AI conversation assembly
+export {
+  buildOllamaMessages,
+  callerTurnCount,
+  MAX_HISTORY_TURNS,
+} from './ai-conversation';
+export type {
+  ConversationTurn,
+  OllamaMessage,
+} from './ai-conversation';

@@ -43,6 +43,7 @@ Env:
 """
 import asyncio
 import audioop
+import base64
 import json
 import logging
 import os
@@ -74,6 +75,8 @@ WHISPER_MODEL = os.environ.get(
 ADMIN_URL = os.environ.get("ADMIN_URL", "http://127.0.0.1:1111")
 INBOUND_TOKEN = os.environ.get("KAMAILIO_INBOUND_TOKEN", "")
 IN_RATE = int(os.environ.get("AI_BRIDGE_SAMPLE_RATE", "8000"))
+# Iter 194 — Coqui TTS daemon (iter 162, running on 11123).
+COQUI_URL = os.environ.get("COQUI_TTS_URL", "http://127.0.0.1:11123")
 
 # --- VAD tunables (energy-based; no extra deps) ----------------------------
 # RMS of signed-16 PCM ranges 0..32767. Phone speech is ~1000-8000;
@@ -213,6 +216,76 @@ async def api_post(path: str, payload: dict) -> dict | None:
         return None
 
 
+
+async def synth_and_play(ws, text: str, engine: str, voice) -> int:
+    """Iter 194 — synthesize `text` to speech + stream it to
+    mod_audio_stream. Returns synthesis ms. Coqui path is live +
+    verifiable (the iter-162 daemon runs on 11123); piper is a
+    documented follow-up (subprocess) — unknown engines fall
+    back to Coqui's default speaker.
+
+    Playback protocol is amigniter/mod_audio_stream's text
+    control frame: {"type":"streamAudio","data":{...,"audioData":
+    "<base64 L16>"}}. End-to-end audio TO the caller requires
+    mod_audio_stream compiled (scripts/install-audio-fork.sh —
+    operator step, not yet run on this box). The synthesis +
+    framing here are exercised regardless; only the final WS
+    delivery is gated on the FS module being present.
+    """
+    t0 = time.time()
+    wav_bytes = b""
+    try:
+        body = {"text": text[:2000], "language": "en"}
+        if engine == "coqui" and voice:
+            body["speaker_wav"] = voice
+        async with ClientSession(
+            timeout=ClientTimeout(total=30)
+        ) as cs:
+            async with cs.post(f"{COQUI_URL}/tts", json=body) as r:
+                if r.status == 200:
+                    wav_bytes = await r.read()
+                else:
+                    LOG.warning(
+                        json.dumps(f"tts HTTP {r.status}")
+                    )
+    except Exception as e:
+        LOG.warning(json.dumps(f"tts synth failed: {e}"))
+        return int((time.time() - t0) * 1000)
+
+    if not wav_bytes:
+        return int((time.time() - t0) * 1000)
+
+    # WAV (Coqui native rate) -> L16 mono @ IN_RATE for FS.
+    try:
+        import io as _io
+
+        with wave.open(_io.BytesIO(wav_bytes), "rb") as w:
+            rate = w.getframerate()
+            ch = w.getnchannels()
+            pcm = w.readframes(w.getnframes())
+        if ch == 2:
+            pcm = audioop.tomono(pcm, 2, 0.5, 0.5)
+        if rate != IN_RATE:
+            pcm, _ = audioop.ratecv(pcm, 2, 1, rate, IN_RATE, None)
+        b64 = base64.b64encode(pcm).decode("ascii")
+        # mod_audio_stream playback control frame.
+        await ws.send_str(
+            json.dumps(
+                {
+                    "type": "streamAudio",
+                    "data": {
+                        "audioDataType": "raw",
+                        "sampleRate": IN_RATE,
+                        "audioData": b64,
+                    },
+                }
+            )
+        )
+    except Exception as e:
+        LOG.warning(json.dumps(f"tts stream-back failed: {e}"))
+    return int((time.time() - t0) * 1000)
+
+
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
@@ -275,8 +348,52 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                                 "stt_ms": stt_ms,
                             },
                         )
-                    # iter 191 hooks the LLM reply + TTS playback
-                    # here; iter 190 is STT-only.
+                    # Iter 194 — response leg: ask the brain, then
+                    # speak. respond persists the 'ai' turn +
+                    # applies the iter-190 guard server-side.
+                    if session_id:
+                        r = await api_post(
+                            "/api/internal/ai-session?op=respond",
+                            {
+                                "session_id": session_id,
+                                "caller_text": text,
+                            },
+                        )
+                        action = (r or {}).get("action")
+                        if action == "speak":
+                            reply = (r or {}).get("reply") or ""
+                            if reply:
+                                LOG.info(
+                                    json.dumps(
+                                        f"ai turn: {reply[:160]}"
+                                    )
+                                )
+                                # respond already persisted the
+                                # 'ai' turn (with llm_ms);
+                                # synth_and_play just voices it.
+                                await synth_and_play(
+                                    ws,
+                                    reply,
+                                    (r or {}).get("tts_engine")
+                                    or "coqui",
+                                    (r or {}).get("tts_voice"),
+                                )
+                        elif action in ("escalate", "end"):
+                            LOG.info(
+                                json.dumps(
+                                    f"session {action}: "
+                                    f"{(r or {}).get('reason')}"
+                                )
+                            )
+                            # FS dialplan owns the transfer /
+                            # hangup once the WS closes (iter-190
+                            # design). escalate -> the bound
+                            # campaign's no-AI fallback bridges a
+                            # human; end -> normal clearing.
+                            break
+                        # action == 'hold' (LLM glitch): say
+                        # nothing, wait for the caller's next
+                        # utterance; the turn is already logged.
         elif msg.type in (
             web.WSMsgType.CLOSE,
             web.WSMsgType.CLOSING,
