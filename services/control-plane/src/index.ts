@@ -1126,3 +1126,7 @@ export type {
 export { shouldRouteCallToAi } from './ai-routing';
 export type { AiRoutingInput } from './ai-routing';
 export { getAiLiveEnabled, setAiLiveEnabled } from './app-settings';
+
+// Iter 196 — supervisor AI monitor
+export { aiSessionMonitorState } from './ai-monitor';
+export type { AiMonitorState } from './ai-monitor';

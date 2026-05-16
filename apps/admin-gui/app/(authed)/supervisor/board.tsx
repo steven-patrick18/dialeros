@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 interface ActiveCall {
   id: number;
@@ -26,6 +26,22 @@ interface AgentRow {
   dispositions_today: number;
 }
 
+interface AiTurn {
+  role: string;
+  text: string;
+  turn_index: number;
+}
+interface AiSession {
+  id: string;
+  persona_id: string;
+  from_phone: string | null;
+  status: string;
+  turn_count: number;
+  started_at: string;
+  state: { monitorable: boolean; seizable: boolean; reason: string };
+  last_turns: AiTurn[];
+}
+
 type Mode = 'monitor' | 'whisper' | 'barge';
 
 // Iter 193 — ViciDial-style supervisor board. Two panels:
@@ -41,6 +57,8 @@ type Mode = 'monitor' | 'whisper' | 'barge';
 export function SupervisorBoard({ initial }: { initial: ActiveCall[] }) {
   const [calls, setCalls] = useState<ActiveCall[]>(initial);
   const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [aiSessions, setAiSessions] = useState<AiSession[]>([]);
+  const [openAi, setOpenAi] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(
     null,
@@ -49,9 +67,10 @@ export function SupervisorBoard({ initial }: { initial: ActiveCall[] }) {
   useEffect(() => {
     async function tick() {
       try {
-        const [c, a] = await Promise.all([
+        const [c, a, ai] = await Promise.all([
           fetch('/api/supervisor/active-calls', { cache: 'no-store' }),
           fetch('/api/supervisor/agents', { cache: 'no-store' }),
+          fetch('/api/supervisor/ai-sessions', { cache: 'no-store' }),
         ]);
         if (c.ok) {
           const j = (await c.json()) as { calls: ActiveCall[] };
@@ -60,6 +79,10 @@ export function SupervisorBoard({ initial }: { initial: ActiveCall[] }) {
         if (a.ok) {
           const j = (await a.json()) as { agents: AgentRow[] };
           setAgents(j.agents);
+        }
+        if (ai.ok) {
+          const j = (await ai.json()) as { sessions: AiSession[] };
+          setAiSessions(j.sessions);
         }
       } catch {
         /* network blip — skip this tick */
@@ -139,6 +162,36 @@ export function SupervisorBoard({ initial }: { initial: ActiveCall[] }) {
     });
   }
 
+  async function aiAction(
+    sessionId: string,
+    kind: 'monitor' | 'seize',
+  ) {
+    const k = `ai-${kind}-${sessionId}`;
+    setBusyKey(k);
+    setMsg(null);
+    const res = await fetch(`/api/supervisor/ai-${kind}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    setBusyKey(null);
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      setMsg({
+        tone: 'err',
+        text: j.error ?? `${kind} failed (${res.status})`,
+      });
+      return;
+    }
+    setMsg({
+      tone: 'ok',
+      text:
+        kind === 'monitor'
+          ? 'Listening — your softphone is answering the eavesdrop leg.'
+          : 'Seized — the caller is being bridged to your softphone; AI dropped.',
+    });
+  }
+
   return (
     <div className="space-y-8">
       {msg && (
@@ -150,6 +203,146 @@ export function SupervisorBoard({ initial }: { initial: ActiveCall[] }) {
           {msg.text}
         </div>
       )}
+
+      {/* ---- Live AI calls ---- */}
+      <section>
+        <h2 className="text-sm font-semibold mb-2">
+          AI calls{' '}
+          <span className="text-fg-subtle font-normal">
+            ({aiSessions.length} live · monitor or seize-to-human)
+          </span>
+        </h2>
+        {aiSessions.length === 0 ? (
+          <div className="border border-dashed border-border rounded p-4 text-sm text-fg-subtle">
+            No live AI calls.
+          </div>
+        ) : (
+          <table className="w-full text-sm max-w-5xl">
+            <thead className="text-left text-fg-subtle border-b border-border">
+              <tr>
+                <th className="py-2 font-medium">From</th>
+                <th className="font-medium">Persona</th>
+                <th className="font-medium tabular-nums">Turns</th>
+                <th className="font-medium tabular-nums">Dur</th>
+                <th className="font-medium">Last line</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {aiSessions.map((a) => {
+                const last = a.last_turns[a.last_turns.length - 1];
+                return (
+                  <Fragment key={a.id}>
+                    <tr className="border-b border-border/40">
+                      <td className="py-2 font-mono text-xs">
+                        {a.from_phone ?? '—'}
+                      </td>
+                      <td className="font-mono text-xs text-fg-muted">
+                        {a.persona_id}
+                      </td>
+                      <td className="tabular-nums text-xs">
+                        {a.turn_count}
+                      </td>
+                      <td className="text-fg-muted tabular-nums text-xs">
+                        {formatDuration(a.started_at)}
+                      </td>
+                      <td className="text-xs">
+                        {last ? (
+                          <span
+                            className={
+                              last.role === 'ai'
+                                ? 'text-accent'
+                                : 'text-fg'
+                            }
+                          >
+                            {last.role === 'ai' ? 'AI: ' : 'Caller: '}
+                            {last.text.slice(0, 60)}
+                          </span>
+                        ) : (
+                          <span className="text-fg-subtle">…</span>
+                        )}
+                      </td>
+                      <td>
+                        <div className="flex justify-end gap-1.5">
+                          <SupButton
+                            onClick={() =>
+                              setOpenAi(
+                                openAi === a.id ? null : a.id,
+                              )
+                            }
+                            busy={false}
+                            label={
+                              openAi === a.id ? 'Hide' : 'Transcript'
+                            }
+                            tone="neutral"
+                          />
+                          <SupButton
+                            onClick={() => aiAction(a.id, 'monitor')}
+                            busy={busyKey === `ai-monitor-${a.id}`}
+                            disabled={!a.state.monitorable}
+                            label="Monitor"
+                            tone="neutral"
+                            title={
+                              a.state.monitorable
+                                ? 'Listen to the AI call'
+                                : a.state.reason
+                            }
+                          />
+                          <SupButton
+                            onClick={() => aiAction(a.id, 'seize')}
+                            busy={busyKey === `ai-seize-${a.id}`}
+                            disabled={!a.state.seizable}
+                            label="Seize"
+                            tone="error"
+                            title={
+                              a.state.seizable
+                                ? 'Take the caller off the AI onto your phone'
+                                : a.state.reason
+                            }
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                    {openAi === a.id && (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-3 py-2 bg-card/50"
+                        >
+                          <div className="space-y-1">
+                            {a.last_turns.map((t) => (
+                              <div
+                                key={t.turn_index + '-' + t.role}
+                                className="text-xs"
+                              >
+                                <span
+                                  className={
+                                    t.role === 'ai'
+                                      ? 'text-accent'
+                                      : 'text-fg'
+                                  }
+                                >
+                                  <strong>
+                                    {t.role === 'ai'
+                                      ? 'AI'
+                                      : 'Caller'}
+                                    :
+                                  </strong>{' '}
+                                  {t.text}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       {/* ---- Agent roster ---- */}
       <section>
