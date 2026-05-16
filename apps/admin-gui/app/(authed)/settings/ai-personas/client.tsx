@@ -29,6 +29,13 @@ type TestResult =
   | { ok: true; reply: string; model: string; latency_ms: number }
   | { ok: false; reason: string; detail: string };
 
+const STT_MODELS = [
+  'tiny.en',
+  'base.en',
+  'small.en',
+  'medium.en',
+] as const;
+
 const BLANK = {
   name: '',
   agent_name: '',
@@ -297,22 +304,35 @@ export function AiPersonasClient({
             onChange={(e) => setForm({ ...form, greeting: e.target.value })}
           />
           <div className="grid grid-cols-2 gap-2">
-            <input
+            <select
               className="border border-border rounded bg-bg px-2 py-1 text-xs font-mono"
-              placeholder="llm_model"
               value={form.llm_model}
               onChange={(e) =>
                 setForm({ ...form, llm_model: e.target.value })
               }
-            />
-            <input
+            >
+              {(health?.ollama.models?.length
+                ? health.ollama.models
+                : [form.llm_model || 'qwen2.5:3b']
+              ).map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <select
               className="border border-border rounded bg-bg px-2 py-1 text-xs font-mono"
-              placeholder="stt_model"
               value={form.stt_model}
               onChange={(e) =>
                 setForm({ ...form, stt_model: e.target.value })
               }
-            />
+            >
+              {STT_MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
             <select
               className="border border-border rounded bg-bg px-2 py-1 text-xs"
               value={form.tts_engine}

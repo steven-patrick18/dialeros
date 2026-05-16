@@ -50,10 +50,16 @@ export const CreateUserInputSchema = z.object({
     .email()
     .optional()
     .or(z.literal('').transform(() => undefined)),
-  password: z.string().min(8, 'Minimum 8 characters.'),
+  // Iter 200 — optional: AI-agent users never log in, the
+  // server mints an unusable hash. Humans still require it
+  // (enforced in createUser).
+  password: z.string().min(8, 'Minimum 8 characters.').optional(),
   role: RoleSchema.default('agent'),
   display_name: z.string().max(120).optional(),
   skill_tier: SkillTierSchema.default('new'),
+  is_ai_agent: z.boolean().optional(),
+  ai_persona_id: z.string().nullable().optional()
+    .or(z.literal('').transform(() => null)),
 });
 export type CreateUserInput = z.infer<typeof CreateUserInputSchema>;
 
@@ -82,6 +88,9 @@ export const UpdateUserInputSchema = z.object({
   // Iter 192 — ViciDial-style level (admin-only, like role;
   // non-admin editors get it stripped by the route guard).
   user_level: z.number().int().min(1).max(9).optional(),
+  is_ai_agent: z.boolean().optional(),
+  ai_persona_id: z.string().nullable().optional()
+    .or(z.literal('').transform(() => null)),
 });
 export type UpdateUserInput = z.infer<typeof UpdateUserInputSchema>;
 
@@ -93,15 +102,24 @@ export function createUser(input: CreateUserInput): CreateUserResult {
   if (getUserByUsername(input.username)) {
     throw new Error(`Username "${input.username}" is already taken.`);
   }
+  const isAi = input.is_ai_agent === true;
+  if (!isAi && (!input.password || input.password.length < 8)) {
+    throw new Error('Password (min 8 chars) is required for a human user.');
+  }
   const id = randomUUID();
   insertUser({
     id,
     username: input.username,
     email: input.email ?? null,
-    password_hash: hashPassword(input.password),
+    // AI agents never authenticate; mint an unusable hash.
+    password_hash: hashPassword(
+      isAi ? `ai:${randomUUID()}` : (input.password as string),
+    ),
     role: input.role,
     display_name: input.display_name ?? null,
     skill_tier: input.skill_tier,
+    is_ai_agent: isAi,
+    ai_persona_id: isAi ? (input.ai_persona_id ?? null) : null,
   });
   // Iter 63 — give every new user a primary phone immediately. The
   // extension is the username if it's already digits (3-6 chars) and

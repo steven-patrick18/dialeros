@@ -31,6 +31,7 @@ export interface OllamaMessage {
 export const MAX_HISTORY_TURNS = 16;
 
 import { applyIdentity } from './ai-identity';
+import { applyBehavior } from './ai-behavior';
 
 export function buildOllamaMessages(
   persona: {
@@ -61,7 +62,7 @@ export function buildOllamaMessages(
     {
       role: 'system',
       content: applyIdentity(
-        persona.system_prompt,
+        applyBehavior(persona.system_prompt),
         persona.agent_name ?? '',
         persona.agent_title ?? null,
       ),

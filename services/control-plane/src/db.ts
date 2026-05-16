@@ -341,6 +341,9 @@ export interface UserRecord {
   updated_at: string;
   // Iter 192 — ViciDial-style numeric access level (1-9).
   user_level: number;
+  // Iter 200 — AI agent flag + bound persona.
+  is_ai_agent: number;
+  ai_persona_id: string | null;
   // Iter 181 — Multi-org foundation. Every user belongs to one
   // org; legacy rows are backfilled to 'default' via migration.
   // string here (not nullable) because the migration UPDATE
@@ -372,13 +375,13 @@ export function insertUser(rec: {
   role: string;
   display_name?: string | null;
   skill_tier?: string;
-  // Iter 181 — optional; defaults to 'default'. New tenants
-  // call this with their own org_id to scope creation.
   org_id?: string;
+  is_ai_agent?: boolean;
+  ai_persona_id?: string | null;
 }): void {
   db()
     .prepare(
-      `INSERT INTO users (id, username, email, password_hash, role, display_name, skill_tier, org_id, user_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (id, username, email, password_hash, role, display_name, skill_tier, org_id, user_level, is_ai_agent, ai_persona_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       rec.id,
@@ -391,6 +394,8 @@ export function insertUser(rec: {
       rec.org_id ?? 'default',
       // Iter 192 — level from role; 1 if unknown.
       rec.role === 'admin' ? 9 : rec.role === 'supervisor' ? 6 : rec.role === 'operator' ? 5 : 1,
+      rec.is_ai_agent ? 1 : 0,
+      rec.ai_persona_id ?? null,
     );
 }
 
@@ -413,6 +418,8 @@ export function updateUserFields(
     manual_dial: boolean;
     permissions: string | null;
     user_level: number;
+    is_ai_agent: boolean;
+    ai_persona_id: string | null;
   }>,
 ): boolean {
   const fields: string[] = [];

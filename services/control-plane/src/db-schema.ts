@@ -919,6 +919,13 @@ export const COLUMN_MIGRATIONS: string[] = [
   "ALTER TABLE users ADD COLUMN org_id TEXT",
   "UPDATE users SET org_id = 'default' WHERE org_id IS NULL",
   "CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id)",
+  // Iter 200 — an AI-agent user is a normal user row
+  // flagged is_ai_agent + bound to a persona, so the
+  // existing user→campaign/in-group assignment machinery
+  // treats it exactly like a human agent.
+  "ALTER TABLE users ADD COLUMN is_ai_agent INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE users ADD COLUMN ai_persona_id TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_users_ai ON users(is_ai_agent) WHERE is_ai_agent = 1",
   // Iter 182 — Cross-cluster recording awareness. Each recording's
   // .wav lives on the node whose FreeSWITCH ran the call. In
   // single-node deploys this is the admin-gui node (current),

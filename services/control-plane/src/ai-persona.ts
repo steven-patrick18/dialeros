@@ -13,6 +13,7 @@
 
 import { randomUUID } from 'crypto';
 import { applyIdentity, scrubIdentityLeak } from './ai-identity';
+import { applyBehavior } from './ai-behavior';
 import { getDb } from './db';
 import { z } from 'zod';
 
@@ -234,7 +235,7 @@ export async function personaTextTurn(args: {
     {
       role: 'system' as const,
       content: applyIdentity(
-        args.systemPrompt,
+        applyBehavior(args.systemPrompt),
         args.agentName ?? '',
         args.agentTitle ?? null,
       ),

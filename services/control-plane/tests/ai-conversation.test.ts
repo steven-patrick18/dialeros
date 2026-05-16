@@ -14,10 +14,12 @@ const PERSONA = {
 describe('buildOllamaMessages — structure', () => {
   it('system first, greeting as opening assistant msg, caller line last', () => {
     const m = buildOllamaMessages(PERSONA, [], 'who is this?');
-    expect(m[0]).toEqual({
-      role: 'system',
-      content: PERSONA.system_prompt,
-    });
+    // Iter 200 — system msg now wraps the persona prompt with
+    // the always-on behaviour guard (+ identity guard). Assert
+    // role + that the persona script is contained, not raw-equal.
+    expect(m[0].role).toBe('system');
+    expect(m[0].content).toContain(PERSONA.system_prompt);
+    expect(m[0].content).toContain('BEHAVIOR (strict');
     expect(m[1]).toEqual({
       role: 'assistant',
       content: PERSONA.greeting,

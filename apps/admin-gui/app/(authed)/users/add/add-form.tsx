@@ -14,11 +14,17 @@ const ROLE_HINTS: Record<(typeof ROLES)[number], string> = {
   operator: 'API/integration role. No GUI session.',
 };
 
-export function AddUserForm() {
+export function AddUserForm({
+  personas,
+}: {
+  personas: Array<{ id: string; name: string; enabled: number }>;
+}) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<(typeof ROLES)[number]>('agent');
+  const [isAi, setIsAi] = useState(false);
+  const [personaId, setPersonaId] = useState('');
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -29,11 +35,16 @@ export function AddUserForm() {
     const body = {
       username: String(fd.get('username') ?? ''),
       email: String(fd.get('email') ?? '').trim() || undefined,
-      password: String(fd.get('password') ?? ''),
+      // AI agents never log in — omit password entirely.
+      password: isAi
+        ? undefined
+        : String(fd.get('password') ?? ''),
       role,
       display_name:
         String(fd.get('display_name') ?? '').trim() || undefined,
       skill_tier: String(fd.get('skill_tier') ?? 'new'),
+      is_ai_agent: isAi,
+      ai_persona_id: isAi ? personaId || null : null,
     };
 
     const res = await fetch('/api/users', {
@@ -66,6 +77,39 @@ export function AddUserForm() {
         <input name="email" type="email" className="input" autoComplete="off" />
       </Field>
 
+      <Field
+        label="Account type"
+        hint="AI agent = a Worker AI driven by a persona. It never logs in; assign it to campaigns / in-groups exactly like a human.">
+        <select
+          value={isAi ? 'ai' : 'human'}
+          onChange={(e) => setIsAi(e.target.value === 'ai')}
+          className="input"
+        >
+          <option value="human">Human</option>
+          <option value="ai">AI agent</option>
+        </select>
+      </Field>
+
+      {isAi ? (
+        <Field
+          label="Persona"
+          hint="The Worker AI persona that drives this agent (name, designation, script, voice). Manage on /settings/ai-personas.">
+          <select
+            value={personaId}
+            onChange={(e) => setPersonaId(e.target.value)}
+            required
+            className="input"
+          >
+            <option value="">— select a persona —</option>
+            {personas.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.enabled ? '' : ' (disabled)'}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : (
       <Field label="Initial password" hint="Minimum 8 characters.">
         <input
           name="password"
@@ -76,6 +120,7 @@ export function AddUserForm() {
           autoComplete="new-password"
         />
       </Field>
+      )}
 
       <Field label="Role" hint={ROLE_HINTS[role]}>
         <select

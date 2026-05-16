@@ -111,6 +111,8 @@ export async function PATCH(
     delete parsed.data.password;
     delete parsed.data.permissions;
     delete parsed.data.user_level;
+    delete parsed.data.is_ai_agent;
+    delete parsed.data.ai_persona_id;
   }
 
   const result = updateUser(id, parsed.data);
