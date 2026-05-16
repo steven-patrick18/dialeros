@@ -54,7 +54,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
       { href: '/in-groups', label: 'In-Groups' },
       { href: '/dids', label: 'DIDs' },
       { href: '/call-menus', label: 'Call Menus (IVR)' },
-      { href: '/sound-board', label: 'Sound Board' },
+      { href: '/audio-center', label: 'Audio Center' },
       { href: '/supervisor/callbacks', label: 'Inbound callbacks' },
     ],
   },

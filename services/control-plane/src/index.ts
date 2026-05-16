@@ -1160,3 +1160,7 @@ export type { AiMasterRow } from './ai-master';
 
 // Iter 200 — Worker AI behaviour guard
 export { buildBehaviorGuard, applyBehavior } from './ai-behavior';
+
+// Iter 201 — Audio Center usage cross-reference
+export { listAudioUsage } from './db';
+export type { AudioUsageRow } from './db';

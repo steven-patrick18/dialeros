@@ -5503,6 +5503,49 @@ export function listAudioFilesFromDb(
     .all() as unknown as AudioFileRecord[];
 }
 
+/* Iter 201 — Audio usage cross-reference. Every place an
+ * audio file path is consumed: campaigns (voicemail / audio-drop
+ * / recording-notice / amd-machine) + call menus (prompt /
+ * invalid / timeout). Matched by the on-disk path the audio_files
+ * row stores. Drives the Audio Center 'used by' chips + the
+ * delete guard (don't silently orphan a live prompt). */
+export interface AudioUsageRow {
+  audio_path: string;
+  ref_type: string; // 'campaign' | 'call_menu'
+  ref_id: string;
+  ref_name: string;
+  field: string;
+}
+
+export function listAudioUsage(): AudioUsageRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT voicemail_path AS audio_path, 'campaign' AS ref_type,
+              id AS ref_id, name AS ref_name, 'voicemail' AS field
+         FROM campaigns WHERE voicemail_path IS NOT NULL AND voicemail_path != ''
+       UNION ALL
+       SELECT audio_drop_path, 'campaign', id, name, 'audio_drop'
+         FROM campaigns WHERE audio_drop_path IS NOT NULL AND audio_drop_path != ''
+       UNION ALL
+       SELECT recording_notice_audio_path, 'campaign', id, name, 'recording_notice'
+         FROM campaigns WHERE recording_notice_audio_path IS NOT NULL AND recording_notice_audio_path != ''
+       UNION ALL
+       SELECT amd_machine_audio_path, 'campaign', id, name, 'amd_machine'
+         FROM campaigns WHERE amd_machine_audio_path IS NOT NULL AND amd_machine_audio_path != ''
+       UNION ALL
+       SELECT prompt_path, 'call_menu', id, name, 'prompt'
+         FROM call_menus WHERE prompt_path IS NOT NULL AND prompt_path != ''
+       UNION ALL
+       SELECT invalid_audio_path, 'call_menu', id, name, 'invalid'
+         FROM call_menus WHERE invalid_audio_path IS NOT NULL AND invalid_audio_path != ''
+       UNION ALL
+       SELECT timeout_audio_path, 'call_menu', id, name, 'timeout'
+         FROM call_menus WHERE timeout_audio_path IS NOT NULL AND timeout_audio_path != ''`,
+    )
+    .all() as unknown as AudioUsageRow[];
+  return rows;
+}
+
 export function getAudioFileFromDb(
   id: string,
 ): AudioFileRecord | undefined {
