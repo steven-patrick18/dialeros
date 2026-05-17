@@ -9,6 +9,7 @@ import {
   getUserCampaignIds,
   getUserInGroupIds,
   listCampaigns,
+  listAiPersonas,
   listInGroups,
   listNodesFromDb,
   parseNodeRoles,
@@ -19,6 +20,7 @@ import { DeactivateButton } from './deactivate-button';
 import { AttachmentsForm } from './attachments-form';
 import { PhonesPanel } from './phones-panel';
 import { AccessPanel } from './access-panel';
+import { AiAgentPanel } from './ai-agent-panel';
 import { UserActivityPanel } from './activity-panel';
 import { getUserSkills } from '@dialeros/control-plane';
 import { SkillEditor } from '@/components/skill-editor';
@@ -158,6 +160,27 @@ export default async function UserDetail({
           initialLevel={userLevel(u)}
           initialGranted={effectivePermissions(u)}
           initialOverridden={u.permissions !== null}
+        />
+      </div>
+
+      <div className="border border-border rounded p-4 max-w-3xl mb-6">
+        <h2 className="text-xs uppercase tracking-wide text-fg-muted mb-3">
+          AI agent
+        </h2>
+        <AiAgentPanel
+          userId={u.id}
+          isAdmin={me.role === 'admin'}
+          initialIsAi={u.is_ai_agent === 1}
+          initialPersonaId={u.ai_persona_id}
+          personas={JSON.parse(
+            JSON.stringify(
+              listAiPersonas(u.org_id).map((p) => ({
+                id: p.id,
+                name: p.name,
+                enabled: p.enabled,
+              })),
+            ),
+          )}
         />
       </div>
 

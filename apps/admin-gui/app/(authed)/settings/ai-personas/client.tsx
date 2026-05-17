@@ -37,6 +37,7 @@ const STT_MODELS = [
 ] as const;
 
 const BLANK = {
+  enabled: true,
   name: '',
   agent_name: '',
   agent_title: '',
@@ -105,6 +106,7 @@ export function AiPersonasClient({
       /* ignore */
     }
     setForm({
+      enabled: p.enabled === 1,
       name: p.name,
       agent_name: p.agent_name ?? '',
       agent_title: p.agent_title ?? '',
@@ -123,6 +125,7 @@ export function AiPersonasClient({
 
   function payload() {
     return {
+      enabled: form.enabled,
       name: form.name,
       agent_name: form.agent_name || null,
       agent_title: form.agent_title || null,
@@ -168,6 +171,32 @@ export function AiPersonasClient({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function toggleEnabled(p: Persona) {
+    setErr(null);
+    const res = await fetch(
+      `/api/settings/ai-personas/${p.id}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ enabled: p.enabled !== 1 }),
+      },
+    );
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      setErr(j.error ?? `HTTP ${res.status}`);
+      return;
+    }
+    const lr = await fetch('/api/settings/ai-personas', {
+      credentials: 'same-origin',
+    });
+    if (lr.ok)
+      setRows(((await lr.json()) as { rows: Persona[] }).rows);
+    router.refresh();
   }
 
   async function del(id: string) {
@@ -287,6 +316,20 @@ export function AiPersonasClient({
               }
             />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(e) =>
+                setForm({ ...form, enabled: e.target.checked })
+              }
+              className="h-4 w-4"
+            />
+            <span>
+              Enabled — the Worker AI can take live calls with this
+              persona (off = saved but inert)
+            </span>
+          </label>
           <textarea
             className="w-full border border-border rounded bg-bg px-2 py-1 text-xs font-mono"
             rows={6}
@@ -511,6 +554,17 @@ export function AiPersonasClient({
                     )}
                   </td>
                   <td className="px-3 py-2 text-right text-xs space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => void toggleEnabled(p)}
+                      className={
+                        p.enabled
+                          ? 'text-warn hover:underline'
+                          : 'text-success hover:underline'
+                      }
+                    >
+                      {p.enabled ? 'Disable' : 'Enable'}
+                    </button>
                     <button
                       type="button"
                       onClick={() => loadInto(p)}

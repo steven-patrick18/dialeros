@@ -427,7 +427,12 @@ export function updateUserFields(
   for (const [key, value] of Object.entries(updates)) {
     if (value === undefined) continue;
     fields.push(`${key} = ?`);
-    if (key === 'is_active' || key === 'manual_dial') values.push(value ? 1 : 0);
+    if (
+      key === 'is_active' ||
+      key === 'manual_dial' ||
+      key === 'is_ai_agent'
+    )
+      values.push(value ? 1 : 0);
     else values.push(value as string | null);
   }
   if (fields.length === 0) return false;
