@@ -1219,3 +1219,21 @@ export {
   setTransferMined,
   listEscalatedUnminedAiSessions,
 } from './db';
+
+// Iter 206 — portable / stackable brain
+export {
+  PACK_SCHEMA_VERSION,
+  contentHash,
+  dedupeKey,
+  validatePackItem,
+  buildMemoryPack,
+  serializeMemoryPack,
+  parseMemoryPack,
+  embedModelMatches,
+  remapScope,
+} from './ai-pack';
+export type {
+  PackItem,
+  MemoryPack,
+  ParseResult,
+} from './ai-pack';

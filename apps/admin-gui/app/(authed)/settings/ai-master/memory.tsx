@@ -33,6 +33,10 @@ export function MemoryManager({
   const [scopeId, setScopeId] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [packFile, setPackFile] = useState<File | null>(null);
+  const [collapse, setCollapse] = useState('keep');
+  const [packMsg, setPackMsg] = useState<string | null>(null);
+  const [packBusy, setPackBusy] = useState(false);
 
   const load = useCallback(async () => {
     const r = await fetch('/api/ai/memory', { credentials: 'same-origin' });
@@ -98,6 +102,51 @@ export function MemoryManager({
       credentials: 'same-origin',
     });
     await load();
+  }
+
+  function exportBrain() {
+    window.location.assign('/api/ai/memory/pack');
+  }
+  async function runImport(dry: boolean) {
+    if (!packFile) {
+      setPackMsg('Choose a pack file first');
+      return;
+    }
+    setPackBusy(true);
+    setPackMsg(null);
+    try {
+      const text = await packFile.text();
+      const r = await fetch('/api/ai/memory/pack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          pack: text,
+          scope_remap:
+            collapse === 'global' ? { '*': 'global' } : null,
+          dry_run: dry,
+        }),
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        imported?: number;
+        skipped?: number;
+        total?: number;
+        dry_run?: boolean;
+      };
+      if (!r.ok) {
+        setPackMsg(j.error ?? `HTTP ${r.status}`);
+        return;
+      }
+      setPackMsg(
+        `${j.dry_run ? 'Preview — would import' : 'Imported'} ` +
+          `${j.imported}, skipped ${j.skipped} dupe(s) of ` +
+          `${j.total}.`,
+      );
+      if (!j.dry_run) await load();
+    } finally {
+      setPackBusy(false);
+    }
   }
 
   function scopeLabel(m: Mem): string {
@@ -179,6 +228,70 @@ export function MemoryManager({
           </button>
         </div>
         {msg && <p className="text-xs text-fg-subtle">{msg}</p>}
+      </div>
+
+      <div className="border border-border rounded p-3 bg-bg space-y-2">
+        <div>
+          <h3 className="text-xs font-semibold">
+            Portable brain (export / stack)
+          </h3>
+          <p className="text-[11px] text-fg-subtle mt-0.5">
+            Export this cluster's learned memory as one
+            pack file, or stack a pack from another
+            cluster. Re-importing is idempotent (dupes
+            skipped). Vectors only match within the same
+            local embed model.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <button
+            type="button"
+            onClick={exportBrain}
+            className="bg-card border border-border px-3 py-1.5 rounded text-sm"
+          >
+            Export brain
+          </button>
+          <input
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) =>
+              setPackFile(e.target.files?.[0] ?? null)
+            }
+            className="text-xs"
+          />
+          <div>
+            <label className="block text-[11px] text-fg-subtle mb-1">
+              Import scope
+            </label>
+            <select
+              value={collapse}
+              onChange={(e) => setCollapse(e.target.value)}
+              className="border border-border rounded bg-bg px-2 py-1 text-sm"
+            >
+              <option value="keep">Keep original scope</option>
+              <option value="global">Collapse all → global</option>
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={() => void runImport(true)}
+            disabled={packBusy}
+            className="bg-card border border-border px-3 py-1.5 rounded text-sm disabled:opacity-50"
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            onClick={() => void runImport(false)}
+            disabled={packBusy}
+            className="bg-primary text-on-primary px-3 py-1.5 rounded text-sm disabled:opacity-50"
+          >
+            {packBusy ? "Working…" : "Import + stack"}
+          </button>
+        </div>
+        {packMsg && (
+          <p className="text-xs text-fg-subtle">{packMsg}</p>
+        )}
       </div>
 
       {rows.length > 0 && (
