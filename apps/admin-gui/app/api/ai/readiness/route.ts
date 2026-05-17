@@ -2,8 +2,11 @@ import { NextResponse } from 'next/server';
 import { existsSync } from 'node:fs';
 import {
   aiBindingCounts,
+  buildModelsRequest,
   evaluateAiReadiness,
   getAiLiveEnabled,
+  getLlmProvider,
+  parseModelsResponse,
   listAiPersonas,
   probeAiStack,
   EMBED_MODEL,
@@ -34,7 +37,26 @@ export async function GET() {
     );
   }
 
-  const stack = await probeAiStack();
+  const stack = await probeAiStack(); // Coqui (+ default Ollama)
+
+  // Iter 209 — probe the CONFIGURED provider, not a hardcoded
+  // URL, so readiness stays honest under a custom local engine.
+  const prov = getLlmProvider();
+  let llmUp = false;
+  let models: string[] = [];
+  try {
+    const mr = buildModelsRequest(prov);
+    const mres = await fetch(mr.url, {
+      headers: mr.headers,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (mres.ok) {
+      llmUp = true;
+      models = parseModelsResponse(prov, await mres.json());
+    }
+  } catch {
+    llmUp = false;
+  }
 
   let audioForkLoaded = false;
   try {
@@ -60,8 +82,8 @@ export async function GET() {
   const counts = aiBindingCounts();
 
   const report = evaluateAiReadiness({
-    ollamaUp: stack.ollama.up,
-    models: stack.ollama.models,
+    ollamaUp: llmUp,
+    models,
     llmModelsConfigured,
     embedModel: EMBED_MODEL,
     coquiUp: stack.coqui.up,

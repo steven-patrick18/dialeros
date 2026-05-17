@@ -1265,3 +1265,25 @@ export type {
   AiReadinessReport,
 } from './ai-readiness';
 export { aiBindingCounts } from './db';
+
+// Iter 209 — pluggable LOCAL LLM provider
+export {
+  defaultLlmProvider,
+  parseLlmProvider,
+  resolveLlmModel,
+  isLocalLlmUrl,
+  validateLlmProvider,
+  buildChatRequest,
+  parseChatReply,
+  buildModelsRequest,
+  parseModelsResponse,
+  DEFAULT_OLLAMA_URL,
+} from './ai-llm';
+export type {
+  LlmKind,
+  LlmProvider,
+  ChatRequest,
+  ModelsRequest,
+  ValidateResult,
+} from './ai-llm';
+export { getLlmProvider, setLlmProvider } from './app-settings';

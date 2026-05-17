@@ -15,9 +15,13 @@ import {
   getAiPersona,
   getAiPerfConfig,
   getDialIntentById,
+  buildChatRequest,
+  getLlmProvider,
   listAiCallTurns,
   parseEscalationKeywords,
   rankBySimilarity,
+  parseChatReply,
+  resolveLlmModel,
   resolveOllamaOptions,
   resolveTransfer,
   resolveTtsSpeed,
@@ -40,7 +44,6 @@ function tokenOk(req: NextRequest): boolean {
 }
 
 
-const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434';
 
 // Iter 194 — one LLM round-trip for the live call loop. Mirrors
 // ai-persona.ts personaTextTurn but operates on the persisted
@@ -61,25 +64,32 @@ async function ollamaReply(
 > {
   const t0 = Date.now();
   try {
-    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+    // Iter 209 — pluggable LOCAL provider. Default => the exact
+    // pre-209 Ollama /api/chat request (byte-identical).
+    const prov = getLlmProvider();
+    const reqd = buildChatRequest(
+      prov,
+      resolveLlmModel(prov, model),
+      messages,
+      options,
+      keepAlive,
+    );
+    const res = await fetch(reqd.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: false,
-        options,
-        ...(keepAlive ? { keep_alive: keepAlive } : {}),
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...reqd.headers,
+      },
+      body: JSON.stringify(reqd.body),
       signal: AbortSignal.timeout(25_000),
     });
     if (!res.ok) {
-      return { ok: false, detail: `ollama HTTP ${res.status}` };
+      return { ok: false, detail: `llm HTTP ${res.status}` };
     }
-    const j = (await res.json()) as { message?: { content?: string } };
+    const j = await res.json();
     return {
       ok: true,
-      reply: (j.message?.content ?? '').trim(),
+      reply: parseChatReply(prov, j),
       ms: Date.now() - t0,
     };
   } catch (e) {

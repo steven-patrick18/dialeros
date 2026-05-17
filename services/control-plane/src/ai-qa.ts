@@ -11,7 +11,12 @@
 // fragile parts worth unit-testing). gradeTranscript wires them
 // to Ollama.
 
-const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434';
+import { getLlmProvider } from './app-settings';
+import {
+  buildChatRequest,
+  parseChatReply,
+  resolveLlmModel,
+} from './ai-llm';
 
 export interface QaTurn {
   role: string; // 'caller' | 'ai'
@@ -163,26 +168,32 @@ export async function gradeTranscript(
 > {
   const messages = buildQaPrompt(persona, turns);
   const t0 = Date.now();
+  const prov = getLlmProvider();
   try {
-    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+    // Iter 209 — pluggable LOCAL provider (default == Ollama).
+    // Low temp — grading should be stable, not creative.
+    const reqd = buildChatRequest(
+      prov,
+      resolveLlmModel(prov, model),
+      messages,
+      { temperature: 0.1 },
+    );
+    const res = await fetch(reqd.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: false,
-        // Low temp — grading should be stable, not creative.
-        options: { temperature: 0.1 },
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...reqd.headers,
+      },
+      body: JSON.stringify(reqd.body),
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {
-      return { ok: false, detail: `ollama HTTP ${res.status}` };
+      return { ok: false, detail: `llm HTTP ${res.status}` };
     }
-    const j = (await res.json()) as { message?: { content?: string } };
+    const j = await res.json();
     return {
       ok: true,
-      result: parseQaResponse(j.message?.content ?? ''),
+      result: parseQaResponse(parseChatReply(prov, j)),
       ms: Date.now() - t0,
     };
   } catch (e) {

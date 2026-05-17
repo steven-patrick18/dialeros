@@ -9,6 +9,7 @@ import { userHasPermission } from '@dialeros/control-plane';
 import { MasterToggle } from './toggle';
 import { MemoryManager } from './memory';
 import { ReadinessPanel } from './readiness';
+import { LlmProviderPanel } from './llm-provider';
 import { PerfPanel } from './perf';
 
 export const dynamic = 'force-dynamic';
@@ -51,6 +52,7 @@ export default async function AiMasterPage() {
       </p>
       <MasterToggle initialEnabled={m.enabled === 1} />
       <ReadinessPanel />
+      <LlmProviderPanel />
       <MemoryManager
         campaigns={JSON.parse(
           JSON.stringify(

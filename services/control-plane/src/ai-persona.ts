@@ -15,6 +15,12 @@ import { randomUUID } from 'crypto';
 import { applyIdentity, scrubIdentityLeak } from './ai-identity';
 import { applyBehavior } from './ai-behavior';
 import { getDb } from './db';
+import { getLlmProvider } from './app-settings';
+import {
+  buildChatRequest,
+  parseChatReply,
+  resolveLlmModel,
+} from './ai-llm';
 import { z } from 'zod';
 
 export interface AiPersonaRow {
@@ -247,31 +253,35 @@ export async function personaTextTurn(args: {
     { role: 'user' as const, content: args.customerLine },
   ];
   const started = Date.now();
+  const prov = getLlmProvider();
   try {
-    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+    // Iter 209 — pluggable LOCAL provider (default == Ollama).
+    const reqd = buildChatRequest(
+      prov,
+      resolveLlmModel(prov, args.model),
+      messages,
+      { temperature: 0.6 },
+    );
+    const res = await fetch(reqd.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: args.model,
-        messages,
-        stream: false,
-        options: { temperature: 0.6 },
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...reqd.headers,
+      },
+      body: JSON.stringify(reqd.body),
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {
-      // 404 from Ollama = model not pulled; surface it precisely.
+      // non-2xx = model not pulled / server error; surface it.
       const body = await res.text().catch(() => '');
       return {
         ok: false,
         reason: 'llm_error',
-        detail: `Ollama HTTP ${res.status}${body ? ` — ${body.slice(0, 200)}` : ''}`,
+        detail: `LLM HTTP ${res.status}${body ? ` — ${body.slice(0, 200)}` : ''}`,
       };
     }
-    const j = (await res.json()) as {
-      message?: { content?: string };
-    };
-    const reply = j.message?.content?.trim() ?? '';
+    const j = await res.json();
+    const reply = parseChatReply(prov, j);
     return {
       ok: true,
       reply,
@@ -288,8 +298,8 @@ export async function personaTextTurn(args: {
       ok: false,
       reason: 'llm_offline',
       detail:
-        'Ollama unreachable at ' +
-        OLLAMA_URL +
+        'LLM unreachable at ' +
+        prov.base_url +
         ' — install the local LLM via scripts/install-ai-stack.sh, then `ollama pull ' +
         args.model +
         '`.',

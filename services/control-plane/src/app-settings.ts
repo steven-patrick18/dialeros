@@ -6,6 +6,7 @@ import {
 } from './db';
 import { decryptSecret, encryptSecret } from './secrets';
 import { parsePerfConfig, type PerfConfig } from './ai-perf';
+import { parseLlmProvider, type LlmProvider } from './ai-llm';
 
 /**
  * Iter 28 — encrypted key/value settings. Used today for the SignalWire
@@ -507,4 +508,15 @@ export function getAiPerfConfig(): PerfConfig {
 }
 export function setAiPerfConfig(cfg: PerfConfig): void {
   setAppSetting(AI_PERF_KEY, JSON.stringify(cfg ?? {}));
+}
+
+// Iter 209 — pluggable LOCAL LLM provider. JSON blob;
+// default / malformed => Ollama 127.0.0.1:11434 => the
+// loop is byte-identical to pre-209.
+const AI_LLM_PROVIDER_KEY = 'ai.llm_provider';
+export function getLlmProvider(): LlmProvider {
+  return parseLlmProvider(getAppSetting(AI_LLM_PROVIDER_KEY));
+}
+export function setLlmProvider(p: LlmProvider): void {
+  setAppSetting(AI_LLM_PROVIDER_KEY, JSON.stringify(p));
 }
