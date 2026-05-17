@@ -31,13 +31,14 @@ echo "[install-audio-fork] installing build deps"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential cmake git libfreeswitch-dev libssl-dev \
-  libwebsockets-dev || true
+  libwebsockets-dev libspeexdsp-dev libevent-dev || true
 
 if [ ! -d "$SRC" ]; then
-  git clone --depth 1 \
+  git clone --depth 1 --recurse-submodules \
     https://github.com/amigniter/mod_audio_stream.git "$SRC"
 else
   git -C "$SRC" pull --ff-only || true
+  git -C "$SRC" submodule update --init --recursive || true
 fi
 
 (
