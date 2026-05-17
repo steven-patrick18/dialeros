@@ -18,7 +18,7 @@ interface Line {
   text: string;
   ms?: number;
   kb?: boolean;
-  audio?: string | null; // base64 wav (audio mode)
+  audio?: string | null;
 }
 
 export function MockCallPanel({
@@ -35,52 +35,62 @@ export function MockCallPanel({
   const [scopeType, setScopeType] = useState('global');
   const [scopeId, setScopeId] = useState('');
   const [started, setStarted] = useState(false);
+  const [phase, setPhase] = useState<'' | 'greet' | 'listen' | 'think' | 'speak'>(
+    '',
+  );
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const [recording, setRecording] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  const activeRef = useRef(false);
+  const streamRef = useRef<MediaStream | null>(null);
+  const acRef = useRef<AudioContext | null>(null);
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const vadRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const histRef = useRef<Line[]>([]);
 
   const persona = personas.find((p) => p.id === personaId);
   const scopeBad = scopeType !== 'global' && !scopeId;
 
-  function start() {
-    if (!persona) {
-      setMsg('Pick a persona');
-      return;
-    }
-    setMsg(null);
-    setLines([{ who: 'ai', text: persona.greeting }]);
-    setStarted(true);
+  function pushLine(l: Line) {
+    histRef.current = [...histRef.current, l];
+    setLines([...histRef.current]);
   }
-  function hangup() {
-    if (recRef.current && recording) recRef.current.stop();
-    setStarted(false);
-    setRecording(false);
-    setLines([]);
-    setDraft('');
-    setMsg(null);
-  }
-
-  function historyPayload(extra: Line[]) {
-    return [...lines, ...extra]
+  function historyPayload() {
+    return histRef.current
       .slice(1) // drop the opening greeting (live seeds it itself)
       .map((l) => ({
         role: l.who === 'you' ? 'caller' : 'ai',
         text: l.text,
       }));
   }
-
-  function playB64(b64: string) {
+  function playB64(b64: string, onDone?: () => void) {
     try {
       const a = new Audio(`data:audio/wav;base64,${b64}`);
-      void a.play();
+      audioElRef.current = a;
+      a.onended = () => onDone?.();
+      a.onerror = () => onDone?.();
+      void a.play().catch(() => onDone?.());
     } catch {
-      /* autoplay may be blocked; the bubble still has audio */
+      onDone?.();
     }
+  }
+
+  // ---------- TEXT MODE ----------
+  async function start() {
+    if (!persona) {
+      setMsg('Pick a persona');
+      return;
+    }
+    setMsg(null);
+    histRef.current = [{ who: 'ai', text: persona.greeting }];
+    setLines([...histRef.current]);
+    setStarted(true);
+    activeRef.current = true;
+    if (io === 'audio') void beginAudioCall();
   }
 
   async function sendText() {
@@ -88,8 +98,7 @@ export function MockCallPanel({
     if (!line || !persona) return;
     setBusy(true);
     setMsg(null);
-    const youLine: Line = { who: 'you', text: line };
-    setLines((c) => [...c, youLine]);
+    pushLine({ who: 'you', text: line });
     setDraft('');
     try {
       const r = await fetch('/api/ai/mock-call', {
@@ -98,7 +107,7 @@ export function MockCallPanel({
         credentials: 'same-origin',
         body: JSON.stringify({
           persona_id: personaId,
-          history: historyPayload([youLine]),
+          history: historyPayload(),
           customer_line: line,
           scope_type: scopeType,
           scope_id: scopeType === 'global' ? '' : scopeId,
@@ -115,57 +124,146 @@ export function MockCallPanel({
         setMsg(j.error ?? `HTTP ${r.status}`);
         return;
       }
-      setLines((c) => [
-        ...c,
-        { who: 'ai', text: j.reply ?? '', ms: j.ms, kb: j.used_knowledge },
-      ]);
+      pushLine({
+        who: 'ai',
+        text: j.reply ?? '',
+        ms: j.ms,
+        kb: j.used_knowledge,
+      });
     } finally {
       setBusy(false);
     }
   }
 
-  async function startRec() {
+  // ---------- AUDIO LIVE CALL ----------
+  async function beginAudioCall() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
       });
-      chunksRef.current = [];
-      const mr = new MediaRecorder(stream);
-      mr.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      mr.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        void sendAudio(
-          new Blob(chunksRef.current, {
-            type: mr.mimeType || 'audio/webm',
-          }),
-        );
-      };
-      recRef.current = mr;
-      mr.start();
-      setRecording(true);
-      setMsg(null);
+      streamRef.current = stream;
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      acRef.current = new AC();
     } catch {
-      setMsg('Microphone permission denied / unavailable');
+      setMsg('Microphone permission denied — audio call needs mic access');
+      hangup();
+      return;
     }
-  }
-  function stopRec() {
-    if (recRef.current && recording) {
-      recRef.current.stop();
-      setRecording(false);
+    // Speak the greeting, then start listening.
+    setPhase('greet');
+    try {
+      const fd = new FormData();
+      fd.append('persona_id', personaId);
+      fd.append('greet', '1');
+      const r = await fetch('/api/ai/mock-call/audio', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        audio_wav_base64?: string | null;
+      };
+      if (!activeRef.current) return;
+      if (j.audio_wav_base64) {
+        playB64(j.audio_wav_base64, () => listen());
+      } else {
+        listen();
+      }
+    } catch {
+      if (activeRef.current) listen();
     }
   }
 
-  async function sendAudio(blob: Blob) {
-    if (!persona || blob.size === 0) return;
-    setBusy(true);
-    setMsg('Transcribing + thinking (CPU box — a few seconds)…');
+  function listen() {
+    if (!activeRef.current || !streamRef.current || !acRef.current) return;
+    setPhase('listen');
+    chunksRef.current = [];
+    const stream = streamRef.current;
+    let mime = '';
+    if (typeof MediaRecorder !== 'undefined') {
+      if (MediaRecorder.isTypeSupported('audio/webm')) mime = 'audio/webm';
+    }
+    const rec = mime
+      ? new MediaRecorder(stream, { mimeType: mime })
+      : new MediaRecorder(stream);
+    recRef.current = rec;
+    rec.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    rec.onstop = () => {
+      if (vadRef.current) {
+        clearInterval(vadRef.current);
+        vadRef.current = null;
+      }
+      const blob = new Blob(chunksRef.current, {
+        type: rec.mimeType || 'audio/webm',
+      });
+      if (activeRef.current) void sendTurn(blob);
+    };
+    rec.start();
+
+    // Energy VAD: end the turn ~1.3s after the caller stops.
+    const ac = acRef.current;
+    const src = ac.createMediaStreamSource(stream);
+    const an = ac.createAnalyser();
+    an.fftSize = 2048;
+    src.connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    const t0 = Date.now();
+    let spoke = false;
+    let lastVoice = Date.now();
+    vadRef.current = setInterval(() => {
+      an.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i]! - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / buf.length);
+      const now = Date.now();
+      if (rms > 0.025) {
+        if (now - t0 > 250) spoke = true;
+        lastVoice = now;
+      }
+      const silenceFor = now - lastVoice;
+      const tooLong = now - t0 > 15000;
+      if (
+        recRef.current &&
+        recRef.current.state === 'recording' &&
+        ((spoke && silenceFor > 1300) || tooLong)
+      ) {
+        try {
+          src.disconnect();
+        } catch {
+          /* noop */
+        }
+        recRef.current.stop();
+      }
+    }, 100);
+  }
+
+  function stopTurnManual() {
+    if (recRef.current && recRef.current.state === 'recording') {
+      recRef.current.stop();
+    }
+  }
+
+  async function sendTurn(blob: Blob) {
+    if (!activeRef.current || !persona) return;
+    if (blob.size < 1200) {
+      // basically silence — keep listening
+      if (activeRef.current) listen();
+      return;
+    }
+    setPhase('think');
     try {
       const fd = new FormData();
       fd.append('audio', blob, 'turn.webm');
       fd.append('persona_id', personaId);
-      fd.append('history', JSON.stringify(historyPayload([])));
+      fd.append('history', JSON.stringify(historyPayload()));
       fd.append('scope_type', scopeType);
       fd.append('scope_id', scopeType === 'global' ? '' : scopeId);
       const r = await fetch('/api/ai/mock-call/audio', {
@@ -180,44 +278,97 @@ export function MockCallPanel({
         used_knowledge?: boolean;
         ms?: number;
         audio_wav_base64?: string | null;
+        silence?: boolean;
         error?: string;
       };
+      if (!activeRef.current) return;
       if (!r.ok || !j.ok) {
         setMsg(j.error ?? `HTTP ${r.status}`);
-        if (j.transcript)
-          setLines((c) => [...c, { who: 'you', text: j.transcript! }]);
+        listen();
         return;
       }
-      setMsg(null);
-      setLines((c) => [
-        ...c,
-        { who: 'you', text: j.transcript ?? '(unclear)' },
-        {
-          who: 'ai',
-          text: j.reply ?? '',
-          ms: j.ms,
-          kb: j.used_knowledge,
-          audio: j.audio_wav_base64 ?? null,
-        },
-      ]);
-      if (j.audio_wav_base64) playB64(j.audio_wav_base64);
-    } finally {
-      setBusy(false);
+      if (j.silence || !j.transcript) {
+        listen(); // no speech detected — just keep listening
+        return;
+      }
+      pushLine({ who: 'you', text: j.transcript });
+      pushLine({
+        who: 'ai',
+        text: j.reply ?? '',
+        ms: j.ms,
+        kb: j.used_knowledge,
+        audio: j.audio_wav_base64 ?? null,
+      });
+      if (j.audio_wav_base64) {
+        setPhase('speak');
+        playB64(j.audio_wav_base64, () => {
+          if (activeRef.current) listen();
+        });
+      } else {
+        listen();
+      }
+    } catch {
+      if (activeRef.current) listen();
     }
   }
 
+  function hangup() {
+    activeRef.current = false;
+    setStarted(false);
+    setPhase('');
+    if (vadRef.current) {
+      clearInterval(vadRef.current);
+      vadRef.current = null;
+    }
+    try {
+      if (recRef.current && recRef.current.state !== 'inactive')
+        recRef.current.stop();
+    } catch {
+      /* noop */
+    }
+    if (audioElRef.current) {
+      try {
+        audioElRef.current.pause();
+      } catch {
+        /* noop */
+      }
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (acRef.current) {
+      void acRef.current.close().catch(() => {});
+      acRef.current = null;
+    }
+    setLines([]);
+    histRef.current = [];
+    setDraft('');
+  }
+
   const sel = 'border border-border rounded bg-bg px-2 py-1 text-sm';
+  const phaseLabel =
+    phase === 'greet'
+      ? 'Agent is greeting…'
+      : phase === 'listen'
+        ? '🎤 Listening — just talk, pause when done'
+        : phase === 'think'
+          ? '…transcribing + thinking'
+          : phase === 'speak'
+            ? '🔊 Agent speaking…'
+            : '';
+
   return (
     <div className="border border-border rounded p-4 bg-card mt-6 space-y-3">
       <div>
         <h2 className="text-sm font-semibold">Mock call (test)</h2>
         <p className="text-xs text-fg-subtle mt-0.5">
-          Talk to the agent as a customer — by text or by voice.
-          Runs the REAL call pipeline (guards + retrieved trained
-          memory + the local model + identity scrub) so it
-          predicts a real call. Audio mode = your mic → whisper →
-          AI → the same Coqui voice real callers hear. Nothing is
-          saved.
+          Audio mode is a real, hands-free call: the agent greets
+          you, then just talk — it auto-detects when you stop,
+          replies in voice, and listens again. Same pipeline as a
+          live phone call (guards + trained memory + local model +
+          identity scrub). Nothing is saved. On this CPU box each
+          reply takes a few seconds.
         </p>
       </div>
 
@@ -230,9 +381,7 @@ export function MockCallPanel({
             disabled={started}
             onChange={(e) => setPersonaId(e.target.value)}
           >
-            {personas.length === 0 && (
-              <option value="">(no personas)</option>
-            )}
+            {personas.length === 0 && <option value="">(none)</option>}
             {personas.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -251,13 +400,11 @@ export function MockCallPanel({
             onChange={(e) => setIo(e.target.value as 'text' | 'audio')}
           >
             <option value="text">Text</option>
-            <option value="audio">Audio (mic + voice)</option>
+            <option value="audio">Audio (live, hands-free)</option>
           </select>
         </label>
         <label className="text-xs">
-          <span className="block text-fg-subtle mb-1">
-            Memory scope
-          </span>
+          <span className="block text-fg-subtle mb-1">Memory scope</span>
           <select
             className={sel}
             value={scopeType}
@@ -297,11 +444,11 @@ export function MockCallPanel({
         {!started ? (
           <button
             type="button"
-            onClick={start}
+            onClick={() => void start()}
             disabled={!personaId || scopeBad}
             className="self-end bg-primary text-on-primary px-3 py-1.5 rounded text-sm disabled:opacity-50"
           >
-            Start mock call
+            {io === 'audio' ? 'Start call' : 'Start mock call'}
           </button>
         ) : (
           <button
@@ -316,6 +463,22 @@ export function MockCallPanel({
 
       {started && (
         <div className="space-y-2">
+          {io === 'audio' && (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-fg-subtle">
+                {phaseLabel}
+              </span>
+              {phase === 'listen' && (
+                <button
+                  type="button"
+                  onClick={stopTurnManual}
+                  className="text-[11px] border border-border rounded px-2 py-0.5"
+                >
+                  done talking
+                </button>
+              )}
+            </div>
+          )}
           <div className="border border-border rounded bg-bg p-3 space-y-2 max-h-96 overflow-y-auto">
             {lines.map((l, i) => (
               <div
@@ -349,12 +512,9 @@ export function MockCallPanel({
                 </div>
               </div>
             ))}
-            {busy && (
-              <p className="text-xs text-fg-subtle">…working</p>
-            )}
           </div>
 
-          {io === 'text' ? (
+          {io === 'text' && (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -377,36 +537,10 @@ export function MockCallPanel({
                 {busy ? '…' : 'Send'}
               </button>
             </form>
-          ) : (
-            <div className="flex items-center gap-3">
-              {!recording ? (
-                <button
-                  type="button"
-                  onClick={() => void startRec()}
-                  disabled={busy}
-                  className="bg-primary text-on-primary px-3 py-1.5 rounded text-sm disabled:opacity-50"
-                >
-                  ● Record
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={stopRec}
-                  className="bg-error text-on-primary px-3 py-1.5 rounded text-sm animate-pulse"
-                >
-                  ■ Stop &amp; send
-                </button>
-              )}
-              <span className="text-xs text-fg-subtle">
-                {recording
-                  ? 'Recording — speak, then Stop & send'
-                  : 'Press Record, speak as the customer, then Stop'}
-              </span>
-            </div>
           )}
         </div>
       )}
-      {msg && <p className="text-xs text-fg-subtle">{msg}</p>}
+      {msg && <p className="text-xs text-error">{msg}</p>}
     </div>
   );
 }

@@ -301,7 +301,9 @@ export async function POST(req: NextRequest) {
               scored.filter(
                 (cv) => cv.item.kind !== 'transfer_rule',
               ),
-              3,
+              // Iter 214 — top-2 + 700-char block: every extra
+              // prompt token is prefill latency on a CPU box.
+              2,
               0.5,
             );
             knowledge = buildRetrievalBlock(
@@ -310,6 +312,7 @@ export async function POST(req: NextRequest) {
                 content: h.item.content,
                 score: h.score,
               })),
+              700,
             );
           }
         }

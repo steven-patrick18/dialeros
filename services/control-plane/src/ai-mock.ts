@@ -76,7 +76,11 @@ export async function runMockTurn(
               return { item: mem, vector: vec };
             })
             .filter((cv) => cv.vector.length > 0),
-          3,
+          // Top-2 + a tight 700-char block: on a CPU box every
+          // extra prompt token is prefill latency. The single
+          // most-relevant fact is what matters; more just slows
+          // the turn without improving the answer.
+          2,
           0.5,
         );
         knowledge = buildRetrievalBlock(
@@ -85,6 +89,7 @@ export async function runMockTurn(
             content: h.item.content,
             score: h.score,
           })),
+          700,
         );
       }
     }

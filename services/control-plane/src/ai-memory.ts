@@ -114,7 +114,14 @@ export async function embed(text: string): Promise<EmbedResult> {
     const res = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, prompt: text }),
+      body: JSON.stringify({
+        model: EMBED_MODEL,
+        prompt: text,
+        // Iter 214 — keep all-minilm resident; on a RAM-tight
+        // box it gets evicted between turns and a cold reload
+        // adds seconds of pure latency to every retrieval.
+        keep_alive: '30m',
+      }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) {

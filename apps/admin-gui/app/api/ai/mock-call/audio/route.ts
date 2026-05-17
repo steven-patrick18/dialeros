@@ -15,11 +15,12 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 600;
 
-// Iter 213 — AUDIO mock call. Browser mic blob → ffmpeg 16 kHz
-// mono WAV → whisper-cli (STT) → runMockTurn (the REAL live
-// pipeline) → Coqui XTTS (the same daemon real calls use) →
-// WAV back to the browser. Fully local; ephemeral (nothing
-// persisted). admin OR ai.manage.
+// Iter 213/214 — AUDIO mock call, continuous + live. Two ops on
+// one route:
+//   greet=1  → no audio in; TTS the persona greeting (call open)
+//   (default)→ mic blob → ffmpeg 16k WAV → whisper STT →
+//              runMockTurn (REAL pipeline) → Coqui XTTS out
+// Fully local; ephemeral. admin OR ai.manage.
 
 const FFMPEG = process.env.FFMPEG_BIN || '/usr/bin/ffmpeg';
 const WHISPER = process.env.WHISPER_BIN || '/usr/local/bin/whisper-cli';
@@ -49,6 +50,33 @@ function run(bin: string, args: string[]): Promise<void> {
   });
 }
 
+async function synth(
+  text: string,
+  persona: { tts_engine: string; tts_voice: string | null },
+): Promise<string | null> {
+  try {
+    const speed = resolveTtsSpeed(getAiPerfConfig());
+    const body: Record<string, unknown> = {
+      text: text.slice(0, 2000),
+      language: 'en',
+    };
+    if (persona.tts_engine === 'coqui' && persona.tts_voice) {
+      body.speaker_wav = persona.tts_voice;
+    }
+    if (speed && speed !== 1.0) body.speed = speed;
+    const tr = await fetch(`${COQUI_URL}/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!tr.ok) return null;
+    return Buffer.from(await tr.arrayBuffer()).toString('base64');
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const me = await getCurrentUser();
   if (!me)
@@ -65,25 +93,35 @@ export async function POST(req: NextRequest) {
       { error: 'multipart/form-data required' },
       { status: 400 },
     );
-  const file = form.get('audio');
-  if (!(file instanceof File) || file.size === 0) {
-    return NextResponse.json(
-      { error: 'audio required' },
-      { status: 400 },
-    );
-  }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json(
-      { error: 'audio too large (25 MB max)' },
-      { status: 400 },
-    );
-  }
   const personaId = String(form.get('persona_id') ?? '').trim();
   const persona = personaId ? getAiPersona(personaId) : undefined;
   if (!persona) {
     return NextResponse.json(
       { error: 'persona not found' },
       { status: 404 },
+    );
+  }
+
+  // ---- Call open: speak the greeting (no STT / LLM) ----
+  if (form.get('greet')) {
+    const audio = await synth(persona.greeting, persona);
+    return NextResponse.json({
+      ok: true,
+      greeting: true,
+      reply: persona.greeting,
+      audio_wav_base64: audio,
+      tts: audio ? 'ok' : 'unavailable',
+    });
+  }
+
+  const file = form.get('audio');
+  if (!(file instanceof File) || file.size === 0) {
+    return NextResponse.json({ error: 'audio required' }, { status: 400 });
+  }
+  if (file.size > MAX_BYTES) {
+    return NextResponse.json(
+      { error: 'audio too large (25 MB max)' },
+      { status: 400 },
     );
   }
   let history: Array<{ role: string; text: string }> = [];
@@ -153,11 +191,7 @@ export async function POST(req: NextRequest) {
       .trim();
     if (!transcript) {
       return NextResponse.json(
-        {
-          error:
-            'no speech detected — speak clearly and a bit longer',
-        },
-        { status: 422 },
+        { ok: true, transcript: '', reply: '', silence: true },
       );
     }
 
@@ -174,43 +208,15 @@ export async function POST(req: NextRequest) {
         { status: 502 },
       );
     }
-
-    // Voice the reply via the same Coqui XTTS daemon real calls
-    // use. Best-effort: if TTS is down we still return the text.
-    let audioB64: string | null = null;
-    try {
-      const speed = resolveTtsSpeed(getAiPerfConfig());
-      const body: Record<string, unknown> = {
-        text: turn.reply.slice(0, 2000),
-        language: 'en',
-      };
-      if (persona.tts_engine === 'coqui' && persona.tts_voice) {
-        body.speaker_wav = persona.tts_voice;
-      }
-      if (speed && speed !== 1.0) body.speed = speed;
-      const tr = await fetch(`${COQUI_URL}/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (tr.ok) {
-        audioB64 = Buffer.from(await tr.arrayBuffer()).toString(
-          'base64',
-        );
-      }
-    } catch {
-      audioB64 = null;
-    }
-
+    const audio = await synth(turn.reply, persona);
     return NextResponse.json({
       ok: true,
       transcript,
       reply: turn.reply,
       used_knowledge: turn.used_knowledge,
       ms: turn.ms,
-      audio_wav_base64: audioB64,
-      tts: audioB64 ? 'ok' : 'unavailable',
+      audio_wav_base64: audio,
+      tts: audio ? 'ok' : 'unavailable',
     });
   } catch (e) {
     return NextResponse.json(
