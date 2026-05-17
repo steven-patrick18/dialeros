@@ -5,6 +5,7 @@ import {
   setAppSettingEncrypted,
 } from './db';
 import { decryptSecret, encryptSecret } from './secrets';
+import { parsePerfConfig, type PerfConfig } from './ai-perf';
 
 /**
  * Iter 28 — encrypted key/value settings. Used today for the SignalWire
@@ -494,4 +495,16 @@ export function getAiLiveEnabled(): boolean {
 }
 export function setAiLiveEnabled(on: boolean): void {
   setAppSetting(APP_SETTING_KEYS.aiLiveEnabled, on ? '1' : '0');
+}
+
+// Iter 207 — local optimization. One JSON blob of AI
+// perf knobs. Defaults reproduce pre-207 behaviour exactly
+// (see ai-perf.ts), so the loop is byte-identical until an
+// operator tunes it.
+const AI_PERF_KEY = 'ai.perf_config';
+export function getAiPerfConfig(): PerfConfig {
+  return parsePerfConfig(getAppSetting(AI_PERF_KEY));
+}
+export function setAiPerfConfig(cfg: PerfConfig): void {
+  setAppSetting(AI_PERF_KEY, JSON.stringify(cfg ?? {}));
 }

@@ -8,6 +8,7 @@ import { getCurrentUser } from '@/lib/session';
 import { userHasPermission } from '@dialeros/control-plane';
 import { MasterToggle } from './toggle';
 import { MemoryManager } from './memory';
+import { PerfPanel } from './perf';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,6 +61,7 @@ export default async function AiMasterPage() {
           ),
         )}
       />
+      <PerfPanel />
     </div>
   );
 }

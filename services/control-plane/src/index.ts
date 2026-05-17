@@ -1237,3 +1237,18 @@ export type {
   MemoryPack,
   ParseResult,
 } from './ai-pack';
+
+// Iter 207 — local optimization (latency / perf knobs)
+export {
+  parsePerfConfig,
+  resolveOllamaOptions,
+  resolveTtsSpeed,
+  budgetMessages,
+  REPLY_LEN_TOKENS,
+  DEFAULT_TEMPERATURE,
+  KEEP_WARM_TTL,
+  TTS_SPEED_MIN,
+  TTS_SPEED_MAX,
+} from './ai-perf';
+export type { PerfConfig, OllamaOptions } from './ai-perf';
+export { getAiPerfConfig, setAiPerfConfig } from './app-settings';

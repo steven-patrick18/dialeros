@@ -4,6 +4,7 @@ import {
   aiMemoryCandidates,
   appendAiCallTurn,
   buildOllamaMessages,
+  budgetMessages,
   buildRetrievalBlock,
   scrubIdentityLeak,
   callerTurnCount,
@@ -12,11 +13,14 @@ import {
   evaluateSessionGuard,
   getAiCallSession,
   getAiPersona,
+  getAiPerfConfig,
   getDialIntentById,
   listAiCallTurns,
   parseEscalationKeywords,
   rankBySimilarity,
+  resolveOllamaOptions,
   resolveTransfer,
+  resolveTtsSpeed,
   startAiCallSession,
 } from '@dialeros/control-plane';
 
@@ -46,6 +50,11 @@ const OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://127.0.0.1:11434';
 async function ollamaReply(
   model: string,
   messages: Array<{ role: string; content: string }>,
+  // Iter 207 — operator-tunable generation options + keep-alive.
+  // Defaulted to the exact pre-207 values so any un-wired caller
+  // (and an empty perf config) is byte-identical to before.
+  options: Record<string, unknown> = { temperature: 0.6 },
+  keepAlive?: string,
 ): Promise<
   | { ok: true; reply: string; ms: number }
   | { ok: false; detail: string }
@@ -59,7 +68,8 @@ async function ollamaReply(
         model,
         messages,
         stream: false,
-        options: { temperature: 0.6 },
+        options,
+        ...(keepAlive ? { keep_alive: keepAlive } : {}),
       }),
       signal: AbortSignal.timeout(25_000),
     });
@@ -334,7 +344,24 @@ export async function POST(req: NextRequest) {
       undefined,
       knowledge,
     );
-    const out = await ollamaReply(persona.llm_model, messages);
+    // Iter 207 — apply operator perf knobs: budget the
+    // prompt (drop oldest history past a char cap; system/
+    // identity/knowledge/greeting/last-turn always kept) +
+    // resolved Ollama options + keep-alive. Empty config =>
+    // byte-identical to pre-207.
+    const perf = getAiPerfConfig();
+    const { options: llmOptions, keepAlive } =
+      resolveOllamaOptions(perf);
+    const budgeted = budgetMessages(
+      messages,
+      perf.prompt_budget_chars ?? 0,
+    );
+    const out = await ollamaReply(
+      persona.llm_model,
+      budgeted,
+      llmOptions,
+      keepAlive,
+    );
     if (!out.ok) {
       // LLM glitch — don't kill the call; tell the daemon to
       // hold (it can replay a filler + the caller can repeat).
@@ -361,6 +388,7 @@ export async function POST(req: NextRequest) {
       reply: scrubbed,
       tts_engine: persona.tts_engine,
       tts_voice: persona.tts_voice,
+      tts_speed: resolveTtsSpeed(perf),
       llm_ms: out.ms,
     });
   }

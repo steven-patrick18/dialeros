@@ -217,7 +217,9 @@ async def api_post(path: str, payload: dict) -> dict | None:
 
 
 
-async def synth_and_play(ws, text: str, engine: str, voice) -> int:
+async def synth_and_play(
+    ws, text: str, engine: str, voice, speed: float = 1.0
+) -> int:
     """Iter 194 — synthesize `text` to speech + stream it to
     mod_audio_stream. Returns synthesis ms. Coqui path is live +
     verifiable (the iter-162 daemon runs on 11123); piper is a
@@ -238,6 +240,11 @@ async def synth_and_play(ws, text: str, engine: str, voice) -> int:
         body = {"text": text[:2000], "language": "en"}
         if engine == "coqui" and voice:
             body["speaker_wav"] = voice
+        # Iter 207 — operator TTS-speed knob. Extra key is
+        # harmless if the iter-162 Coqui daemon ignores it;
+        # XTTS-v2 honors `speed` when supported.
+        if speed and speed != 1.0:
+            body["speed"] = speed
         async with ClientSession(
             timeout=ClientTimeout(total=30)
         ) as cs:
@@ -377,6 +384,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                                     (r or {}).get("tts_engine")
                                     or "coqui",
                                     (r or {}).get("tts_voice"),
+                                    (r or {}).get("tts_speed")
+                                    or 1.0,
                                 )
                         elif action in ("escalate", "end"):
                             LOG.info(
