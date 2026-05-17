@@ -1301,3 +1301,7 @@ export {
   INTERVIEW_MAX_Q,
 } from './ai-train';
 export type { TrainMode } from './ai-train';
+
+// Iter 212 — Mock Call (ephemeral live-pipeline tester)
+export { runMockTurn } from './ai-mock';
+export type { MockTurnInput, MockTurnResult } from './ai-mock';

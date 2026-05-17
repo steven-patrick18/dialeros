@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import {
   getAiMaster,
+  listAiPersonas,
   listCampaigns,
   listInGroups,
 } from '@dialeros/control-plane';
@@ -12,6 +13,7 @@ import { ReadinessPanel } from './readiness';
 import { LlmProviderPanel } from './llm-provider';
 import { PerfPanel } from './perf';
 import { TrainingPanel } from './training';
+import { MockCallPanel } from './mock-call';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +70,29 @@ export default async function AiMasterPage() {
       />
       <PerfPanel />
       <TrainingPanel
+        campaigns={JSON.parse(
+          JSON.stringify(
+            listCampaigns().map((c) => ({ id: c.id, name: c.name })),
+          ),
+        )}
+        inGroups={JSON.parse(
+          JSON.stringify(
+            listInGroups().map((g) => ({ id: g.id, name: g.name })),
+          ),
+        )}
+      />
+      <MockCallPanel
+        personas={JSON.parse(
+          JSON.stringify(
+            listAiPersonas(me.org_id).map((p) => ({
+              id: p.id,
+              name: p.name,
+              greeting: p.greeting,
+              agent_name: p.agent_name,
+              agent_title: p.agent_title,
+            })),
+          ),
+        )}
         campaigns={JSON.parse(
           JSON.stringify(
             listCampaigns().map((c) => ({ id: c.id, name: c.name })),
