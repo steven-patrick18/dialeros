@@ -1287,3 +1287,17 @@ export type {
   ValidateResult,
 } from './ai-llm';
 export { getLlmProvider, setLlmProvider } from './app-settings';
+
+// Iter 211 — Master AI Training Center
+export {
+  trainingSource,
+  sanitizeUploadName,
+  trainingTitle,
+  buildInterviewPrompt,
+  parseInterviewQuestions,
+  buildQaTrainingDoc,
+  TRAINING_KIND,
+  TRAINING_MAX_TITLE,
+  INTERVIEW_MAX_Q,
+} from './ai-train';
+export type { TrainMode } from './ai-train';

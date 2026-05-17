@@ -11,6 +11,7 @@ import { MemoryManager } from './memory';
 import { ReadinessPanel } from './readiness';
 import { LlmProviderPanel } from './llm-provider';
 import { PerfPanel } from './perf';
+import { TrainingPanel } from './training';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,6 +67,18 @@ export default async function AiMasterPage() {
         )}
       />
       <PerfPanel />
+      <TrainingPanel
+        campaigns={JSON.parse(
+          JSON.stringify(
+            listCampaigns().map((c) => ({ id: c.id, name: c.name })),
+          ),
+        )}
+        inGroups={JSON.parse(
+          JSON.stringify(
+            listInGroups().map((g) => ({ id: g.id, name: g.name })),
+          ),
+        )}
+      />
     </div>
   );
 }
