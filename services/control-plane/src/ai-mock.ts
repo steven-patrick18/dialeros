@@ -80,8 +80,15 @@ export async function runMockTurn(
           // extra prompt token is prefill latency. The single
           // most-relevant fact is what matters; more just slows
           // the turn without improving the answer.
+          // minScore 0.35: all-minilm is a weak embedder — a
+          // relevant fact phrased differently from the caller
+          // ("refund window" vs "Refunds are available within
+          // 30 days") often scores ~0.35–0.5. A small model
+          // that deflects ("I don't have access") on a missed
+          // retrieval is far worse CX than injecting a slightly
+          // looser-but-relevant fact.
           2,
-          0.5,
+          0.35,
         );
         knowledge = buildRetrievalBlock(
           ranked.map((h) => ({

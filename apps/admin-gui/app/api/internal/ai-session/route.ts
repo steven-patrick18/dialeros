@@ -303,8 +303,12 @@ export async function POST(req: NextRequest) {
               ),
               // Iter 214 — top-2 + 700-char block: every extra
               // prompt token is prefill latency on a CPU box.
+              // Iter 215 — minScore 0.35: all-minilm is weak; a
+              // paraphrased-but-relevant fact often scores
+              // ~0.35-0.5. Deflecting on a missed retrieval is
+              // worse CX than a looser-but-relevant fact.
               2,
-              0.5,
+              0.35,
             );
             knowledge = buildRetrievalBlock(
               ranked.map((h) => ({
