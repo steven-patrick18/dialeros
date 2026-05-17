@@ -1252,3 +1252,16 @@ export {
 } from './ai-perf';
 export type { PerfConfig, OllamaOptions } from './ai-perf';
 export { getAiPerfConfig, setAiPerfConfig } from './app-settings';
+
+// Iter 208 — AI stack readiness preflight
+export {
+  modelPresent,
+  evaluateAiReadiness,
+} from './ai-readiness';
+export type {
+  AiCheckStatus,
+  AiReadinessProbe,
+  AiReadinessItem,
+  AiReadinessReport,
+} from './ai-readiness';
+export { aiBindingCounts } from './db';

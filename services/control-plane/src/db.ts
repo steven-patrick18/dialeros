@@ -8682,6 +8682,33 @@ export function listEscalatedUnminedAiSessions(
     .all(limit) as unknown as AiCallSessionRow[];
 }
 
+/* Iter 208 — readiness preflight inputs: how many AI
+ * personas are enabled, and how many of those are bound
+ * to an AI-agent user or a campaign (A or B slot). One
+ * round-trip, read-only. */
+export function aiBindingCounts(): {
+  enabled_personas: number;
+  bound_personas: number;
+} {
+  return getDb()
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM ai_personas WHERE enabled = 1)
+           AS enabled_personas,
+         (SELECT COUNT(*) FROM ai_personas p
+           WHERE p.enabled = 1
+             AND (
+               EXISTS (SELECT 1 FROM users u
+                        WHERE u.is_ai_agent = 1
+                          AND u.ai_persona_id = p.id)
+               OR EXISTS (SELECT 1 FROM campaigns c
+                           WHERE c.ai_persona_id = p.id
+                              OR c.ai_persona_id_b = p.id)
+             )) AS bound_personas`,
+    )
+    .get() as { enabled_personas: number; bound_personas: number };
+}
+
 export function listAiCallTurns(sessionId: string): AiCallTurnRow[] {
   return getDb()
     .prepare(
