@@ -87,6 +87,7 @@ const ADMIN_GROUPS: NavGroupDef[] = [
   {
     label: 'Settings',
     items: [
+      { href: '/docs', label: 'Documentation' },
       { href: '/settings/orgs', label: 'Organizations' },
       { href: '/settings/telephony', label: 'Telephony' },
       { href: '/settings/pacing', label: 'Pacing curve' },
